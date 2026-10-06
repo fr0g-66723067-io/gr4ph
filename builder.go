@@ -69,12 +69,19 @@ var (
 	ErrUnknownParent         = errors.New("gr4ph: parent ttp not registered")
 	ErrNonContiguousChild    = errors.New("gr4ph: child must be registered immediately after its parent's child block")
 	ErrDepthExceeded         = errors.New("gr4ph: hierarchy deeper than two levels")
+	ErrEmptyKey              = errors.New("gr4ph: empty node or relation key")
+	ErrUnknownDomain         = errors.New("gr4ph: unknown domain")
+	ErrBuilderUsed           = errors.New("gr4ph: builder already built")
 )
 
 // Builder accumulates the cold-path graph: node keys (id, label, aliases),
 // domains, the technique hierarchy, and the three edge families as SoA slices.
 // It is single-goroutine; the Engine it produces is immutable and safe for
 // concurrent queries.
+//
+// A Builder is single-use: Build marks it built and every later Add* call
+// returns ErrBuilderUsed, so a live Engine can never be mutated through its
+// builder.
 type Builder struct {
 	ttpIDs        []string
 	ttpLabels     []string
@@ -105,6 +112,8 @@ type Builder struct {
 	defEdgeR           []uint8
 
 	defendsC, defendsT []uint16
+
+	built bool
 }
 
 // NewBuilder returns an empty builder.
@@ -141,7 +150,13 @@ func claim(m map[string]uint16, key string, id uint16) {
 // AddRel registers an offensive relation predicate and returns its plane id
 // (1..255). Idempotent on the normalised name.
 func (b *Builder) AddRel(name string) (Rel, error) {
+	if b.built {
+		return 0, ErrBuilderUsed
+	}
 	key := normalize(name)
+	if key == "" {
+		return 0, ErrEmptyKey
+	}
 	if r, ok := b.relIndex[key]; ok {
 		return r, nil
 	}
@@ -157,7 +172,13 @@ func (b *Builder) AddRel(name string) (Rel, error) {
 // AddDefRel registers a defensive relation predicate and returns its plane id
 // (1..255). Idempotent on the normalised name.
 func (b *Builder) AddDefRel(name string) (DefRel, error) {
+	if b.built {
+		return 0, ErrBuilderUsed
+	}
 	key := normalize(name)
+	if key == "" {
+		return 0, ErrEmptyKey
+	}
 	if dr, ok := b.defRelIndex[key]; ok {
 		return dr, nil
 	}
@@ -173,9 +194,20 @@ func (b *Builder) AddDefRel(name string) (DefRel, error) {
 // AddTTP registers a technique and returns its dense id. Idempotent on the
 // normalised id (a second call returns the stored id and does not touch the
 // hierarchy). parent must be NoParent or an already-registered top-level
-// technique whose child block the new node extends contiguously.
+// technique whose child block the new node extends contiguously. An id that
+// normalises to the empty string returns ErrEmptyKey; a dom other than the four
+// Domain constants returns ErrUnknownDomain.
 func (b *Builder) AddTTP(id, label string, dom Domain, parent TTP, aliases ...string) (TTP, error) {
+	if b.built {
+		return 0, ErrBuilderUsed
+	}
 	key := normalize(id)
+	if key == "" {
+		return 0, ErrEmptyKey
+	}
+	if dom > DomainSPARTA {
+		return 0, ErrUnknownDomain
+	}
 	if t, ok := b.ttpIndex[key]; ok {
 		return TTP(t), nil
 	}
@@ -217,7 +249,13 @@ func (b *Builder) AddTTP(id, label string, dom Domain, parent TTP, aliases ...st
 // AddArtifact registers an artifact and returns its dense id. Idempotent on the
 // normalised name; the label is registered as a lookup key too.
 func (b *Builder) AddArtifact(name, label string) (Artifact, error) {
+	if b.built {
+		return 0, ErrBuilderUsed
+	}
 	key := normalize(name)
+	if key == "" {
+		return 0, ErrEmptyKey
+	}
 	if a, ok := b.artIndex[key]; ok {
 		return Artifact(a), nil
 	}
@@ -235,7 +273,13 @@ func (b *Builder) AddArtifact(name, label string) (Artifact, error) {
 // AddCountermeasure registers a countermeasure and returns its dense id.
 // Idempotent on the normalised id; label and aliases are lookup keys.
 func (b *Builder) AddCountermeasure(id, label string, aliases ...string) (Countermeasure, error) {
+	if b.built {
+		return 0, ErrBuilderUsed
+	}
 	key := normalize(id)
+	if key == "" {
+		return 0, ErrEmptyKey
+	}
 	if cm, ok := b.cmIndex[key]; ok {
 		return Countermeasure(cm), nil
 	}
@@ -256,6 +300,9 @@ func (b *Builder) AddCountermeasure(id, label string, aliases ...string) (Counte
 // AddEdge records technique -> artifact under relation r. r must be a
 // registered predicate (not RelAny). Duplicate edges are harmless.
 func (b *Builder) AddEdge(t TTP, a Artifact, r Rel) error {
+	if b.built {
+		return ErrBuilderUsed
+	}
 	if int(t) >= len(b.ttpIDs) {
 		return ErrUnknownTTP
 	}
@@ -274,6 +321,9 @@ func (b *Builder) AddEdge(t TTP, a Artifact, r Rel) error {
 // AddDefEdge records countermeasure -> artifact under defensive relation dr.
 // dr must be a registered predicate (not DefRelAny).
 func (b *Builder) AddDefEdge(cm Countermeasure, a Artifact, dr DefRel) error {
+	if b.built {
+		return ErrBuilderUsed
+	}
 	if int(cm) >= len(b.cmIDs) {
 		return ErrUnknownCountermeasure
 	}
@@ -292,6 +342,9 @@ func (b *Builder) AddDefEdge(cm Countermeasure, a Artifact, dr DefRel) error {
 // AddDefendsEdge records countermeasure -> technique (defends-against). The
 // family has a single inferred predicate, so no relation id is taken.
 func (b *Builder) AddDefendsEdge(cm Countermeasure, t TTP) error {
+	if b.built {
+		return ErrBuilderUsed
+	}
 	if int(cm) >= len(b.cmIDs) {
 		return ErrUnknownCountermeasure
 	}
@@ -326,8 +379,13 @@ func wordsFor(n int) int { return (n + 63) / 64 }
 // Build freezes the graph into an immutable Engine: it materialises all six
 // matrix blocks, folds each union plane 0 from the predicate planes, and
 // transposes the countermeasure -> technique block. The builder must not be
-// used afterwards.
+// used afterwards: every Add* then returns ErrBuilderUsed, and a second Build
+// returns ErrBuilderUsed too.
 func (b *Builder) Build() (*Engine, error) {
+	if b.built {
+		return nil, ErrBuilderUsed
+	}
+	b.built = true
 	e := &Engine{
 		nTTP: len(b.ttpIDs),
 		nArt: len(b.artNames),
@@ -400,7 +458,7 @@ func (e *Engine) foldUnion(block []uint64, planes, rows, stride int) {
 	}
 	for p := 1; p < planes; p++ {
 		base := p * rows * stride
-		for r := 0; r < rows; r++ {
+		for r := range rows {
 			off := base + r*stride
 			orRowInto(block[r*stride:r*stride+stride], block[off:off+stride])
 		}

@@ -84,6 +84,9 @@ func TestZeroAllocSynthetic(t *testing.T) {
 		}},
 	}
 
+	if len(cases) != 29 {
+		t.Fatalf("hot-method coverage = %d cases, want 29 (same set as the ontology package)", len(cases))
+	}
 	for _, c := range cases {
 		if n := testing.AllocsPerRun(200, c.fn); n != 0 {
 			t.Errorf("%s: %v allocs/op, want 0", c.name, n)

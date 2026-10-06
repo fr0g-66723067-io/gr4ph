@@ -117,6 +117,135 @@ func TestBuilderAliasFirstWins(t *testing.T) {
 	}
 }
 
+// TestBuilderValidation pins the cold-path input contract: an empty (or
+// whitespace-only) key and an unknown domain are rejected without touching the
+// builder's state.
+func TestBuilderValidation(t *testing.T) {
+	b := NewBuilder()
+
+	if _, err := b.AddTTP("", "L", DomainEnterprise, NoParent); !errors.Is(err, ErrEmptyKey) {
+		t.Fatalf("AddTTP empty id: %v", err)
+	}
+	if _, err := b.AddTTP("   ", "L", DomainEnterprise, NoParent); !errors.Is(err, ErrEmptyKey) {
+		t.Fatalf("AddTTP blank id: %v", err)
+	}
+	if _, err := b.AddArtifact("", "L"); !errors.Is(err, ErrEmptyKey) {
+		t.Fatalf("AddArtifact empty name: %v", err)
+	}
+	if _, err := b.AddCountermeasure(" ", "L"); !errors.Is(err, ErrEmptyKey) {
+		t.Fatalf("AddCountermeasure blank id: %v", err)
+	}
+	if _, err := b.AddRel(""); !errors.Is(err, ErrEmptyKey) {
+		t.Fatalf("AddRel empty name: %v", err)
+	}
+	if _, err := b.AddDefRel(" \t"); !errors.Is(err, ErrEmptyKey) {
+		t.Fatalf("AddDefRel blank name: %v", err)
+	}
+	if b.TTPCount() != 0 || b.ArtifactCount() != 0 || b.CountermeasureCount() != 0 ||
+		b.RelCount() != 0 || b.DefRelCount() != 0 {
+		t.Fatalf("rejected keys changed counts: %d %d %d %d %d", b.TTPCount(), b.ArtifactCount(),
+			b.CountermeasureCount(), b.RelCount(), b.DefRelCount())
+	}
+
+	if _, err := b.AddTTP("T1", "L", Domain(4), NoParent); !errors.Is(err, ErrUnknownDomain) {
+		t.Fatalf("AddTTP domain 4: %v", err)
+	}
+	if _, err := b.AddTTP("T1", "L", Domain(255), NoParent); !errors.Is(err, ErrUnknownDomain) {
+		t.Fatalf("AddTTP domain 255: %v", err)
+	}
+	if b.TTPCount() != 0 {
+		t.Fatalf("rejected domain registered a node: TTPCount = %d", b.TTPCount())
+	}
+
+	for i, dom := range []Domain{DomainEnterprise, DomainICS, DomainMobile, DomainSPARTA} {
+		id := "T" + strconv.Itoa(i)
+		if _, err := b.AddTTP(id, "label "+id, dom, NoParent); err != nil {
+			t.Fatalf("AddTTP %s domain %d: %v", id, dom, err)
+		}
+	}
+
+	// An empty label is not an error, but it claims no lookup key.
+	t9, err := b.AddTTP("T9", "", DomainEnterprise, NoParent)
+	if err != nil {
+		t.Fatalf("AddTTP empty label: %v", err)
+	}
+	if t9 != 4 {
+		t.Fatalf("id with empty label = %d, want 4", t9)
+	}
+	e, err := b.Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if _, ok := e.Incident(""); ok {
+		t.Fatal("empty label must not become a lookup key")
+	}
+	if got := e.TTPLabel(t9); got != "" {
+		t.Fatalf("TTPLabel = %q, want empty", got)
+	}
+}
+
+// TestBuilderSingleUse is the regression test for the shared-backing-array
+// hazard: after Build, no Add* may reach the live engine's slices.
+func TestBuilderSingleUse(t *testing.T) {
+	b := NewBuilder()
+	t0, _ := b.AddTTP("T1003", "OS Credential Dumping", DomainEnterprise, NoParent)
+	c1, _ := b.AddTTP("T1003.001", "LSASS Memory", DomainEnterprise, t0)
+	a0, _ := b.AddArtifact("Process", "Process")
+	cm0, _ := b.AddCountermeasure("CredentialHardening", "Credential Hardening")
+	r, _ := b.AddRel("accesses")
+	dr, _ := b.AddDefRel("hardens")
+	b.AddEdge(c1, a0, r)
+	b.AddDefEdge(cm0, a0, dr)
+	b.AddDefendsEdge(cm0, c1)
+
+	e, err := b.Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	if _, err := b.AddRel("later"); !errors.Is(err, ErrBuilderUsed) {
+		t.Fatalf("AddRel after Build: %v", err)
+	}
+	if _, err := b.AddDefRel("later"); !errors.Is(err, ErrBuilderUsed) {
+		t.Fatalf("AddDefRel after Build: %v", err)
+	}
+	if _, err := b.AddTTP("T1059", "later", DomainEnterprise, NoParent); !errors.Is(err, ErrBuilderUsed) {
+		t.Fatalf("AddTTP after Build: %v", err)
+	}
+	if _, err := b.AddArtifact("later", "later"); !errors.Is(err, ErrBuilderUsed) {
+		t.Fatalf("AddArtifact after Build: %v", err)
+	}
+	if _, err := b.AddCountermeasure("later", "later"); !errors.Is(err, ErrBuilderUsed) {
+		t.Fatalf("AddCountermeasure after Build: %v", err)
+	}
+	if err := b.AddEdge(t0, a0, r); !errors.Is(err, ErrBuilderUsed) {
+		t.Fatalf("AddEdge after Build: %v", err)
+	}
+	if err := b.AddDefEdge(cm0, a0, dr); !errors.Is(err, ErrBuilderUsed) {
+		t.Fatalf("AddDefEdge after Build: %v", err)
+	}
+	if err := b.AddDefendsEdge(cm0, t0); !errors.Is(err, ErrBuilderUsed) {
+		t.Fatalf("AddDefendsEdge after Build: %v", err)
+	}
+	if e2, err := b.Build(); !errors.Is(err, ErrBuilderUsed) || e2 != nil {
+		t.Fatalf("second Build = %v, %v; want nil, ErrBuilderUsed", e2, err)
+	}
+
+	if got := e.TTPCount(); got != 2 {
+		t.Fatalf("TTPCount = %d, want 2", got)
+	}
+	if got := e.TTPChildCount(t0); got != 1 {
+		t.Fatalf("TTPChildCount = %d, want 1", got)
+	}
+	buf := make([]Artifact, 2)
+	if n := e.Artifacts(c1, buf); n != 1 || buf[0] != a0 {
+		t.Fatalf("Artifacts = %d %v, want 1 [%d]", n, buf[:n], a0)
+	}
+	if !e.Defends(cm0, c1) {
+		t.Fatal("defends edge lost")
+	}
+}
+
 func TestBuilderBoundsEdges(t *testing.T) {
 	b := NewBuilder()
 	b.AddTTP("T1003", "OS Credential Dumping", DomainEnterprise, NoParent)
@@ -202,6 +331,38 @@ func TestBuilderBoundsRels(t *testing.T) {
 	if b.RelCount() != 255 {
 		t.Fatalf("RelCount = %d, want 255", b.RelCount())
 	}
+
+	for i := range 255 {
+		if _, err := b.AddDefRel("defrel" + strconv.Itoa(i)); err != nil {
+			t.Fatalf("AddDefRel #%d: %v", i, err)
+		}
+	}
+	if _, err := b.AddDefRel("one-too-many"); !errors.Is(err, ErrTooManyRels) {
+		t.Fatalf("AddDefRel past 255: %v", err)
+	}
+	if b.DefRelCount() != 255 {
+		t.Fatalf("DefRelCount = %d, want 255", b.DefRelCount())
+	}
+}
+
+// TestBuilderCountermeasureAliases: a countermeasure's label and aliases are
+// lookup keys, exactly as a technique's are.
+func TestBuilderCountermeasureAliases(t *testing.T) {
+	b := NewBuilder()
+	c0, err := b.AddCountermeasure("DE-0001", "Credential Hardening", "Credential Hardening Alias", "CH")
+	if err != nil {
+		t.Fatalf("AddCountermeasure: %v", err)
+	}
+	e, err := b.Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	for _, key := range []string{"de-0001", "credential hardening", "credential hardening alias", "ch"} {
+		got, ok := e.Countermeasure(key)
+		if !ok || got != c0 {
+			t.Fatalf("Countermeasure(%q) = %d,%v want %d,true", key, got, ok, c0)
+		}
+	}
 }
 
 func TestBuilderBoundsNodes(t *testing.T) {
@@ -220,6 +381,30 @@ func TestBuilderBoundsNodes(t *testing.T) {
 	}
 	if _, err := b.AddTTP("T-overflow", "x", DomainEnterprise, NoParent); !errors.Is(err, ErrTooManyNodes) {
 		t.Fatalf("AddTTP past cap: %v", err)
+	}
+	for i := range MaxNodes {
+		id := "A" + strconv.Itoa(i)
+		if _, err := b.AddArtifact(id, "label "+id); err != nil {
+			t.Fatalf("AddArtifact #%d: %v", i, err)
+		}
+	}
+	if b.ArtifactCount() != MaxNodes {
+		t.Fatalf("ArtifactCount = %d, want %d", b.ArtifactCount(), MaxNodes)
+	}
+	if _, err := b.AddArtifact("A-overflow", "x"); !errors.Is(err, ErrTooManyNodes) {
+		t.Fatalf("AddArtifact past cap: %v", err)
+	}
+	for i := range MaxNodes {
+		id := "C" + strconv.Itoa(i)
+		if _, err := b.AddCountermeasure(id, "label "+id); err != nil {
+			t.Fatalf("AddCountermeasure #%d: %v", i, err)
+		}
+	}
+	if b.CountermeasureCount() != MaxNodes {
+		t.Fatalf("CountermeasureCount = %d, want %d", b.CountermeasureCount(), MaxNodes)
+	}
+	if _, err := b.AddCountermeasure("C-overflow", "x"); !errors.Is(err, ErrTooManyNodes) {
+		t.Fatalf("AddCountermeasure past cap: %v", err)
 	}
 }
 
@@ -278,9 +463,10 @@ func TestBuilderHierarchy(t *testing.T) {
 	if p, ok := e.TTPParent(p0); ok {
 		t.Fatalf("TTPParent(top-level) = %d,%v want 0,false", p, ok)
 	}
-	// A fresh builder must see the same parent for a node registered by id.
-	if _, err := b.AddTTP("T1003.001", "ignored", DomainICS, NoParent); err != nil {
-		t.Fatalf("idempotent re-add: %v", err)
+	// The builder is single-use: a re-add after Build is rejected and must not
+	// touch the engine's slices.
+	if _, err := b.AddTTP("T1003.001", "ignored", DomainICS, NoParent); !errors.Is(err, ErrBuilderUsed) {
+		t.Fatalf("post-Build re-add: %v", err)
 	}
 	if n := e.TTPChildCount(p0); n != 2 {
 		t.Fatalf("re-add changed hierarchy: child count %d, want 2", n)

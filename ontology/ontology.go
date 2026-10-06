@@ -10,10 +10,15 @@
 package ontology
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/fr0g-66723067/gr4ph"
 )
+
+// ErrBuilderNotEmpty is returned by Register when the builder already holds
+// relations or nodes.
+var ErrBuilderNotEmpty = errors.New("ontology: Register requires a fresh builder")
 
 // Register adds every relation, node, hierarchy link and edge of the frozen
 // tables to b, and returns the first error.
@@ -27,9 +32,17 @@ import (
 //     valid direct index (parents sort before, and register before, their
 //     children) and keeps every child block contiguous.
 //
+// Register requires a fresh builder: pre-registered relations or nodes would
+// shift every dense id and silently misalign the tables, so a non-empty builder
+// returns ErrBuilderNotEmpty.
+//
 // Callers own the builder; use NewBuilder, Register, Build for the frozen
 // engine.
 func Register(b *gr4ph.Builder) error {
+	if b.TTPCount() != 0 || b.ArtifactCount() != 0 || b.CountermeasureCount() != 0 ||
+		b.RelCount() != 0 || b.DefRelCount() != 0 {
+		return ErrBuilderNotEmpty
+	}
 	for _, name := range RelNames {
 		if _, err := b.AddRel(name); err != nil {
 			return fmt.Errorf("relation %s: %w", name, err)

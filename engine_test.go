@@ -46,7 +46,7 @@ func buildSynthetic(t *testing.T) *Engine {
 
 	art := func(name string) Artifact {
 		t.Helper()
-		v, err := b.AddArtifact(name, name)
+		v, err := b.AddArtifact(name, name+" Artifact")
 		if err != nil {
 			t.Fatalf("AddArtifact(%s): %v", name, err)
 		}
@@ -59,7 +59,7 @@ func buildSynthetic(t *testing.T) *Engine {
 
 	cm := func(id string) Countermeasure {
 		t.Helper()
-		v, err := b.AddCountermeasure(id, id)
+		v, err := b.AddCountermeasure(id, id+" Label")
 		if err != nil {
 			t.Fatalf("AddCountermeasure(%s): %v", id, err)
 		}
@@ -294,6 +294,45 @@ func TestSyntheticLayout(t *testing.T) {
 	if got := popcountRow(e.row(e.cmTTP, e.cmTTPOff(1), e.wTTP)); got != 2 {
 		t.Fatalf("cmTTP[cm 1] has %d bits, want 2", got)
 	}
+
+	// Union-plane cardinalities: the technique-major and artifact-major blocks
+	// must agree on the number of distinct pairs. The 7 offensive triples
+	// collapse to 6 pairs, the defensive edges are 3 pairs and the
+	// defends-against family is 4 pairs.
+	var sumDegree, sumArtDegree int
+	for t := range e.TTPCount() {
+		sumDegree += e.Degree(TTP(t), RelAny)
+	}
+	for a := range e.ArtifactCount() {
+		sumArtDegree += e.ArtifactDegree(Artifact(a), RelAny)
+	}
+	if sumDegree != 6 || sumArtDegree != 6 {
+		t.Fatalf("offensive union pairs = %d (ttp-major) / %d (artifact-major), want 6 / 6",
+			sumDegree, sumArtDegree)
+	}
+	bufC := make([]Countermeasure, 4)
+	bufA := make([]Artifact, 4)
+	var sumCmForArt, sumArtForCm int
+	for a := range e.ArtifactCount() {
+		sumCmForArt += e.CountermeasuresForArtifact(Artifact(a), DefRelAny, bufC)
+	}
+	for cm := range e.CountermeasureCount() {
+		sumArtForCm += e.ArtifactsForCountermeasure(Countermeasure(cm), DefRelAny, bufA)
+	}
+	if sumCmForArt != 3 || sumArtForCm != 3 {
+		t.Fatalf("defensive union pairs = %d (artifact-major) / %d (cm-major), want 3 / 3",
+			sumCmForArt, sumArtForCm)
+	}
+	bufT := make([]TTP, 4)
+	var sumCmDegree, sumTTPsForCm int
+	for cm := range e.CountermeasureCount() {
+		sumCmDegree += e.CountermeasureDegree(Countermeasure(cm))
+		sumTTPsForCm += e.TTPsForCountermeasure(Countermeasure(cm), bufT)
+	}
+	if sumCmDegree != 4 || sumTTPsForCm != 4 {
+		t.Fatalf("defends-against pairs = %d (cm-major) / %d (ttp-major), want 4 / 4",
+			sumCmDegree, sumTTPsForCm)
+	}
 }
 
 func TestSyntheticTraversal(t *testing.T) {
@@ -526,8 +565,31 @@ func TestSyntheticColdPath(t *testing.T) {
 	if got, ok := e.Artifact("process"); !ok || got != 0 {
 		t.Fatalf("Artifact(process) = %v,%v", got, ok)
 	}
+	// The label is a lookup key as well as an accessor: the two must not be
+	// conflated (they differ in this graph by construction).
+	if got, ok := e.Artifact("process artifact"); !ok || got != 0 {
+		t.Fatalf("Artifact(label key) = %v,%v", got, ok)
+	}
+	if got := e.ArtifactName(0); got != "Process" {
+		t.Fatalf("ArtifactName(0) = %q, want Process", got)
+	}
+	if got := e.ArtifactLabel(0); got != "Process Artifact" {
+		t.Fatalf("ArtifactLabel(0) = %q, want Process Artifact", got)
+	}
 	if got, ok := e.Countermeasure("credentialhardening"); !ok || got != 1 {
 		t.Fatalf("Countermeasure lookup = %v,%v", got, ok)
+	}
+	if got, ok := e.Countermeasure("processisolation label"); !ok || got != 0 {
+		t.Fatalf("Countermeasure(label key) = %v,%v", got, ok)
+	}
+	if got := e.CountermeasureName(0); got != "ProcessIsolation" {
+		t.Fatalf("CountermeasureName(0) = %q, want ProcessIsolation", got)
+	}
+	if got := e.CountermeasureLabel(0); got != "ProcessIsolation Label" {
+		t.Fatalf("CountermeasureLabel(0) = %q, want ProcessIsolation Label", got)
+	}
+	if n := e.TTPChildren(TTP(99), make([]TTP, 2)); n != 0 {
+		t.Fatalf("TTPChildren(invalid) = %d, want 0", n)
 	}
 	if r, ok := e.Rel("ACCESSES"); !ok || e.RelName(r) != "accesses" {
 		t.Fatalf("Rel(ACCESSES) = %v,%v", r, ok)
@@ -556,13 +618,127 @@ func TestSyntheticColdPath(t *testing.T) {
 	if n := e.CountermeasureResponse(cdst, []Countermeasure{0, 99}); n != 2 {
 		t.Fatalf("CountermeasureResponse count = %d, want 2", n)
 	}
-	if cdst[0] != "ProcessIsolation ProcessIsolation" || cdst[1] != "<invalid cm 99>" {
+	if cdst[0] != "ProcessIsolation ProcessIsolation Label" || cdst[1] != "<invalid cm 99>" {
 		t.Fatalf("CountermeasureResponse = %q, %q", cdst[0], cdst[1])
 	}
 	// Truncation is reported by the return value, not by a panic.
 	one := make([]string, 1)
 	if n := e.Response(one, []TTP{1, 2}); n != 2 || one[0] != "T1003.001 LSASS Memory" {
 		t.Fatalf("truncated Response = %d %q", n, one)
+	}
+}
+
+// TestHotPathTolerance pins the documented totality contract: every hot-path
+// query answers an out-of-range id with 0/false instead of panicking, and skips
+// invalid members inside set operations.
+func TestHotPathTolerance(t *testing.T) {
+	e := buildSynthetic(t)
+	bufT := make([]TTP, 8)
+	bufA := make([]Artifact, 8)
+	bufC := make([]Countermeasure, 8)
+	scratchT := make([]uint64, 1)
+	scratchA := make([]uint64, 1)
+	scratchC := make([]uint64, 1)
+
+	badT, badA, badC := TTP(99), Artifact(99), Countermeasure(99)
+
+	if e.Adjacent(badT, 0) {
+		t.Fatal("Adjacent(invalid ttp) must be false")
+	}
+	if e.AdjacentRel(badT, 0, RelAny) {
+		t.Fatal("AdjacentRel(invalid ttp) must be false")
+	}
+	if n := e.Artifacts(badT, bufA); n != 0 {
+		t.Fatalf("Artifacts(invalid ttp) = %d, want 0", n)
+	}
+	if n := e.ArtifactsRel(badT, Rel(1), bufA); n != 0 {
+		t.Fatalf("ArtifactsRel(invalid ttp) = %d, want 0", n)
+	}
+	if n := e.TTPs(badA, bufT); n != 0 {
+		t.Fatalf("TTPs(invalid artifact) = %d, want 0", n)
+	}
+	if n := e.TTPsRel(badA, RelAny, bufT); n != 0 {
+		t.Fatalf("TTPsRel(invalid artifact) = %d, want 0", n)
+	}
+	if n := e.Degree(badT, RelAny); n != 0 {
+		t.Fatalf("Degree(invalid ttp) = %d, want 0", n)
+	}
+	if n := e.ArtifactDegree(badA, RelAny); n != 0 {
+		t.Fatalf("ArtifactDegree(invalid artifact) = %d, want 0", n)
+	}
+	if n := e.ArtifactsRollup(badT, scratchA, bufA); n != 0 {
+		t.Fatalf("ArtifactsRollup(invalid ttp) = %d, want 0", n)
+	}
+	if n := e.ArtifactsRollupRel(badT, Rel(1), scratchA, bufA); n != 0 {
+		t.Fatalf("ArtifactsRollupRel(invalid ttp) = %d, want 0", n)
+	}
+	if n := e.TTPsRollup(badA, scratchT, bufT); n != 0 {
+		t.Fatalf("TTPsRollup(invalid artifact) = %d, want 0", n)
+	}
+	if n := e.TTPsRollupRel(badA, Rel(1), scratchT, bufT); n != 0 {
+		t.Fatalf("TTPsRollupRel(invalid artifact) = %d, want 0", n)
+	}
+	if n := e.TTPsAny(RelAny, scratchT, bufT, []Artifact{badA}); n != 0 {
+		t.Fatalf("TTPsAny(invalid artifact) = %d, want 0", n)
+	}
+	if n := e.TTPsAll(RelAny, scratchT, bufT, []Artifact{badA}); n != 0 {
+		t.Fatalf("TTPsAll(invalid artifact) = %d, want 0", n)
+	}
+	if n := e.ArtifactsAny(RelAny, scratchA, bufA, []TTP{badT}); n != 0 {
+		t.Fatalf("ArtifactsAny(invalid ttp) = %d, want 0", n)
+	}
+	if n := e.ArtifactsAll(RelAny, scratchA, bufA, []TTP{badT}); n != 0 {
+		t.Fatalf("ArtifactsAll(invalid ttp) = %d, want 0", n)
+	}
+	if e.Defends(badC, 0) {
+		t.Fatal("Defends(invalid cm) must be false")
+	}
+	if e.Defends(0, badT) {
+		t.Fatal("Defends(invalid ttp) must be false")
+	}
+	if n := e.CountermeasuresForTTP(badT, bufC); n != 0 {
+		t.Fatalf("CountermeasuresForTTP(invalid ttp) = %d, want 0", n)
+	}
+	if n := e.CountermeasuresForTTPRollup(badT, scratchC, bufC); n != 0 {
+		t.Fatalf("CountermeasuresForTTPRollup(invalid ttp) = %d, want 0", n)
+	}
+	if n := e.CountermeasuresForArtifact(badA, DefRelAny, bufC); n != 0 {
+		t.Fatalf("CountermeasuresForArtifact(invalid artifact) = %d, want 0", n)
+	}
+	if n := e.CountermeasuresForArtifactViaTTPs(badA, scratchC, bufC); n != 0 {
+		t.Fatalf("CountermeasuresForArtifactViaTTPs(invalid artifact) = %d, want 0", n)
+	}
+	if n := e.ArtifactsForCountermeasure(badC, DefRelAny, bufA); n != 0 {
+		t.Fatalf("ArtifactsForCountermeasure(invalid cm) = %d, want 0", n)
+	}
+	if n := e.TTPsForCountermeasure(badC, bufT); n != 0 {
+		t.Fatalf("TTPsForCountermeasure(invalid cm) = %d, want 0", n)
+	}
+	if n := e.TTPsForCountermeasureRollup(badC, scratchT, bufT); n != 0 {
+		t.Fatalf("TTPsForCountermeasureRollup(invalid cm) = %d, want 0", n)
+	}
+	if n := e.CountermeasureDegree(badC); n != 0 {
+		t.Fatalf("CountermeasureDegree(invalid cm) = %d, want 0", n)
+	}
+	if p, ok := e.TTPParent(badT); ok || p != 0 {
+		t.Fatalf("TTPParent(invalid) = %d,%v want 0,false", p, ok)
+	}
+	if n := e.TTPChildCount(badT); n != 0 {
+		t.Fatalf("TTPChildCount(invalid) = %d, want 0", n)
+	}
+
+	// Set operations skip the invalid members and fold the remaining rows.
+	if n := e.TTPsAny(RelAny, scratchT, bufT, []Artifact{badA, 0}); n != 2 || bufT[0] != 1 || bufT[1] != 5 {
+		t.Fatalf("TTPsAny(invalid, Process) = %d %v, want 2 [1 5]", n, bufT[:n])
+	}
+	if n := e.ArtifactsAll(RelAny, scratchA, bufA, []TTP{badT, 1}); n != 1 || bufA[0] != 0 {
+		t.Fatalf("ArtifactsAll(invalid, T1003.001) = %d %v, want 1 [0]", n, bufA[:n])
+	}
+	if n := e.TTPsAll(RelAny, scratchT, bufT, []Artifact{badA, 0}); n != 2 {
+		t.Fatalf("TTPsAll(invalid, Process) = %d, want 2", n)
+	}
+	if n := e.ArtifactsAny(RelAny, scratchA, bufA, []TTP{badT, 5}); n != 1 || bufA[0] != 0 {
+		t.Fatalf("ArtifactsAny(invalid, T1547) = %d %v, want 1 [0]", n, bufA[:n])
 	}
 }
 
@@ -587,6 +763,15 @@ func TestSyntheticPanics(t *testing.T) {
 	mustPanic(t, "unknown kind", func() { e.WordsPerRow(Kind(9)) })
 	mustPanic(t, "cold accessor out of range", func() { e.TTPName(TTP(99)) })
 	mustPanic(t, "cold domain accessor out of range", func() { e.TTPDomain(TTP(99)) })
+	mustPanic(t, "cold artifact name out of range", func() { e.ArtifactName(Artifact(99)) })
+	mustPanic(t, "cold artifact label out of range", func() { e.ArtifactLabel(Artifact(99)) })
+	mustPanic(t, "cold countermeasure name out of range", func() { e.CountermeasureName(Countermeasure(99)) })
+	mustPanic(t, "cold countermeasure label out of range", func() { e.CountermeasureLabel(Countermeasure(99)) })
+	mustPanic(t, "cold rel name out of range", func() { e.RelName(Rel(9)) })
+	mustPanic(t, "cold defrel name out of range", func() { e.DefRelName(DefRel(9)) })
+	mustPanic(t, "defrel out of range (artifact-major)", func() {
+		e.ArtifactsForCountermeasure(0, DefRel(9), nil)
+	})
 
 	// The documented scratch sizes work.
 	e.CountermeasuresForTTPRollup(0, scratchC, bufC)

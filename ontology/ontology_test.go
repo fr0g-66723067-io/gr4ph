@@ -3,6 +3,7 @@
 package ontology
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/fr0g-66723067/gr4ph"
@@ -128,6 +129,36 @@ func cmNames(e *gr4ph.Engine, ids []gr4ph.Countermeasure) []string {
 	return out
 }
 
+// TestRegisterRequiresFreshBuilder pins the dense-id precondition: registering
+// into a builder that already holds relations or nodes would shift every plane
+// and index, so it must fail instead.
+func TestRegisterRequiresFreshBuilder(t *testing.T) {
+	b := gr4ph.NewBuilder()
+	if err := Register(b); err != nil {
+		t.Fatalf("first Register: %v", err)
+	}
+	if err := Register(b); !errors.Is(err, ErrBuilderNotEmpty) {
+		t.Fatalf("second Register = %v, want ErrBuilderNotEmpty", err)
+	}
+
+	b2 := gr4ph.NewBuilder()
+	if _, err := b2.AddRel("pre-registered"); err != nil {
+		t.Fatalf("AddRel: %v", err)
+	}
+	if err := Register(b2); !errors.Is(err, ErrBuilderNotEmpty) {
+		t.Fatalf("Register after AddRel = %v, want ErrBuilderNotEmpty", err)
+	}
+
+	b3 := gr4ph.NewBuilder()
+	if _, err := b3.AddTTP("T1", "one", gr4ph.DomainEnterprise, gr4ph.NoParent); err != nil {
+		t.Fatalf("AddTTP: %v", err)
+	}
+	if err := Register(b3); !errors.Is(err, ErrBuilderNotEmpty) {
+		t.Fatalf("Register after AddTTP = %v, want ErrBuilderNotEmpty", err)
+	}
+}
+
+// TestOntologySizes pins the frozen table sizes against the pinned release.
 func TestOntologySizes(t *testing.T) {
 	e := build(t)
 
@@ -511,6 +542,56 @@ func TestOntologyOffensiveGoldens(t *testing.T) {
 	}
 }
 
+// TestOntologyUnionPlaneIntegrity checks the six blocks against each other:
+// every offensive pair must appear exactly once in the technique-major union
+// plane and once in the artifact-major one, and the same must hold for the two
+// defensive blocks and the two defends-against blocks. A transposed or
+// half-folded plane cannot satisfy both directions at once.
+func TestOntologyUnionPlaneIntegrity(t *testing.T) {
+	e := build(t)
+	bufT := make([]gr4ph.TTP, e.TTPCount())
+	bufA := make([]gr4ph.Artifact, e.ArtifactCount())
+	bufC := make([]gr4ph.Countermeasure, e.CountermeasureCount())
+
+	// Offensive union plane: 654 distinct (technique, artifact) pairs.
+	var sumDegree, sumArtDegree int
+	for i := range e.TTPCount() {
+		sumDegree += e.Degree(gr4ph.TTP(i), gr4ph.RelAny)
+	}
+	for i := range e.ArtifactCount() {
+		sumArtDegree += e.ArtifactDegree(gr4ph.Artifact(i), gr4ph.RelAny)
+	}
+	if sumDegree != 654 || sumArtDegree != 654 {
+		t.Fatalf("offensive union pairs = %d (ttp-major) / %d (artifact-major), want 654 / 654",
+			sumDegree, sumArtDegree)
+	}
+
+	// Defensive union plane: 182 distinct (countermeasure, artifact) pairs.
+	var sumCmForArt, sumArtForCm int
+	for i := range e.ArtifactCount() {
+		sumCmForArt += e.CountermeasuresForArtifact(gr4ph.Artifact(i), gr4ph.DefRelAny, bufC)
+	}
+	for i := range e.CountermeasureCount() {
+		sumArtForCm += e.ArtifactsForCountermeasure(gr4ph.Countermeasure(i), gr4ph.DefRelAny, bufA)
+	}
+	if sumCmForArt != 182 || sumArtForCm != 182 {
+		t.Fatalf("defensive union pairs = %d (artifact-major) / %d (cm-major), want 182 / 182",
+			sumCmForArt, sumArtForCm)
+	}
+
+	// Defends-against: 4133 distinct (countermeasure, technique) pairs.
+	var sumCmDegree, sumTTPsForCm int
+	for i := range e.CountermeasureCount() {
+		id := gr4ph.Countermeasure(i)
+		sumCmDegree += e.CountermeasureDegree(id)
+		sumTTPsForCm += e.TTPsForCountermeasure(id, bufT)
+	}
+	if sumCmDegree != 4133 || sumTTPsForCm != 4133 {
+		t.Fatalf("defends-against pairs = %d (cm-major) / %d (ttp-major), want 4133 / 4133",
+			sumCmDegree, sumTTPsForCm)
+	}
+}
+
 func TestOntologyCountermeasureGoldens(t *testing.T) {
 	e := build(t)
 	bufC := make([]gr4ph.Countermeasure, e.CountermeasureCount())
@@ -636,8 +717,13 @@ func TestOntologyCountermeasureGoldens(t *testing.T) {
 	}
 }
 
-// TestOntologyZeroAlloc repeats the allocation contract against the real
-// engine: 1186x247x157 with 19/4/3-word rows must not allocate either.
+// ontologySink defeats dead-code elimination without allocating.
+var ontologySink int
+
+// TestZeroAllocOntology repeats the allocation contract against the real
+// engine: 1186x247x157 with 19/4/3-word rows must not allocate either. Every
+// result is folded into ontologySink, so an inlined pure call cannot be
+// optimised away, and the case count is pinned to the root package's.
 func TestZeroAllocOntology(t *testing.T) {
 	e := build(t)
 	bufT := make([]gr4ph.TTP, e.TTPCount())
@@ -648,37 +734,82 @@ func TestZeroAllocOntology(t *testing.T) {
 	scratchC := make([]uint64, e.WordsPerRow(gr4ph.KindCountermeasure))
 	process := art(t, e, "Process")
 	t1003 := ttp(t, e, "T1003")
+	t1003a := ttp(t, e, "T1003.001")
 	cm0 := cm(t, e, "CredentialHardening")
+	accesses := rel(t, e, "accesses")
 	arts := []gr4ph.Artifact{process, art(t, e, "File")}
+	ttps := []gr4ph.TTP{t1003, t1003a}
 
 	cases := []struct {
 		name string
 		fn   func()
 	}{
-		{"AdjacentRel", func() { e.AdjacentRel(t1003, process, gr4ph.RelAny) }},
-		{"Artifacts", func() { e.Artifacts(t1003, bufA) }},
-		{"TTPs", func() { e.TTPs(process, bufT) }},
-		{"TTPsRel", func() { e.TTPsRel(process, gr4ph.RelAny, bufT) }},
-		{"ArtifactsRollup", func() { e.ArtifactsRollup(t1003, scratchA, bufA) }},
-		{"TTPsRollup", func() { e.TTPsRollup(process, scratchT, bufT) }},
-		{"TTPsAny", func() { e.TTPsAny(gr4ph.RelAny, scratchT, bufT, arts) }},
-		{"TTPsAll", func() { e.TTPsAll(gr4ph.RelAny, scratchT, bufT, arts) }},
-		{"ArtifactsAny", func() { e.ArtifactsAny(gr4ph.RelAny, scratchA, bufA, []gr4ph.TTP{t1003}) }},
-		{"ArtifactsAll", func() { e.ArtifactsAll(gr4ph.RelAny, scratchA, bufA, []gr4ph.TTP{t1003}) }},
-		{"Degree", func() { e.Degree(t1003, gr4ph.RelAny) }},
-		{"ArtifactDegree", func() { e.ArtifactDegree(process, gr4ph.RelAny) }},
-		{"Defends", func() { e.Defends(cm0, t1003) }},
-		{"CountermeasuresForTTP", func() { e.CountermeasuresForTTP(t1003, bufC) }},
-		{"CountermeasuresForTTPRollup", func() { e.CountermeasuresForTTPRollup(t1003, scratchC, bufC) }},
-		{"CountermeasuresForArtifact", func() { e.CountermeasuresForArtifact(process, gr4ph.DefRelAny, bufC) }},
-		{"CountermeasuresForArtifactViaTTPs", func() {
-			e.CountermeasuresForArtifactViaTTPs(process, scratchC, bufC)
+		{"Adjacent", func() {
+			if e.Adjacent(t1003a, process) {
+				ontologySink++
+			}
 		}},
-		{"ArtifactsForCountermeasure", func() { e.ArtifactsForCountermeasure(cm0, gr4ph.DefRelAny, bufA) }},
-		{"TTPsForCountermeasure", func() { e.TTPsForCountermeasure(cm0, bufT) }},
-		{"TTPsForCountermeasureRollup", func() { e.TTPsForCountermeasureRollup(cm0, scratchT, bufT) }},
-		{"CountermeasureDegree", func() { e.CountermeasureDegree(cm0) }},
-		{"TTPChildren", func() { e.TTPChildren(t1003, bufT) }},
+		{"AdjacentRel", func() {
+			if e.AdjacentRel(t1003a, process, accesses) {
+				ontologySink++
+			}
+		}},
+		{"Artifacts", func() { ontologySink += e.Artifacts(t1003a, bufA) }},
+		{"ArtifactsRel", func() { ontologySink += e.ArtifactsRel(t1003a, accesses, bufA) }},
+		{"TTPs", func() { ontologySink += e.TTPs(process, bufT) }},
+		{"TTPsRel", func() { ontologySink += e.TTPsRel(process, gr4ph.RelAny, bufT) }},
+		{"Degree", func() { ontologySink += e.Degree(t1003, gr4ph.RelAny) }},
+		{"ArtifactDegree", func() { ontologySink += e.ArtifactDegree(process, gr4ph.RelAny) }},
+		{"ArtifactsRollup", func() { ontologySink += e.ArtifactsRollup(t1003, scratchA, bufA) }},
+		{"ArtifactsRollupRel", func() {
+			ontologySink += e.ArtifactsRollupRel(t1003a, accesses, scratchA, bufA)
+		}},
+		{"TTPsRollup", func() { ontologySink += e.TTPsRollup(process, scratchT, bufT) }},
+		{"TTPsRollupRel", func() {
+			ontologySink += e.TTPsRollupRel(process, accesses, scratchT, bufT)
+		}},
+		{"TTPsAny", func() { ontologySink += e.TTPsAny(gr4ph.RelAny, scratchT, bufT, arts) }},
+		{"TTPsAll", func() { ontologySink += e.TTPsAll(gr4ph.RelAny, scratchT, bufT, arts) }},
+		{"ArtifactsAny", func() { ontologySink += e.ArtifactsAny(gr4ph.RelAny, scratchA, bufA, ttps) }},
+		{"ArtifactsAll", func() { ontologySink += e.ArtifactsAll(gr4ph.RelAny, scratchA, bufA, ttps) }},
+		{"Defends", func() {
+			if e.Defends(cm0, t1003) {
+				ontologySink++
+			}
+		}},
+		{"CountermeasuresForTTP", func() { ontologySink += e.CountermeasuresForTTP(t1003a, bufC) }},
+		{"CountermeasuresForTTPRollup", func() {
+			ontologySink += e.CountermeasuresForTTPRollup(t1003, scratchC, bufC)
+		}},
+		{"CountermeasuresForArtifact", func() {
+			ontologySink += e.CountermeasuresForArtifact(process, gr4ph.DefRelAny, bufC)
+		}},
+		{"CountermeasuresForArtifactViaTTPs", func() {
+			ontologySink += e.CountermeasuresForArtifactViaTTPs(process, scratchC, bufC)
+		}},
+		{"ArtifactsForCountermeasure", func() {
+			ontologySink += e.ArtifactsForCountermeasure(cm0, gr4ph.DefRelAny, bufA)
+		}},
+		{"TTPsForCountermeasure", func() { ontologySink += e.TTPsForCountermeasure(cm0, bufT) }},
+		{"TTPsForCountermeasureRollup", func() {
+			ontologySink += e.TTPsForCountermeasureRollup(cm0, scratchT, bufT)
+		}},
+		{"CountermeasureDegree", func() { ontologySink += e.CountermeasureDegree(cm0) }},
+		{"TTPParent", func() {
+			if _, ok := e.TTPParent(t1003a); ok {
+				ontologySink++
+			}
+		}},
+		{"TTPChildCount", func() { ontologySink += e.TTPChildCount(t1003) }},
+		{"TTPChildren", func() { ontologySink += e.TTPChildren(t1003, bufT) }},
+		{"RelName", func() {
+			if e.RelName(gr4ph.RelAny) != "" {
+				ontologySink++
+			}
+		}},
+	}
+	if len(cases) != 29 {
+		t.Fatalf("hot-method coverage = %d cases, want 29 (same set as the root package)", len(cases))
 	}
 	for _, c := range cases {
 		if n := testing.AllocsPerRun(50, c.fn); n != 0 {
