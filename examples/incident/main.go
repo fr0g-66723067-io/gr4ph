@@ -14,7 +14,7 @@
 //
 //  5. response — format the ids back into a log line (cold path again).
 //
-//     go run ./examples/incident
+//     GOEXPERIMENT=simd go run ./examples/incident
 package main
 
 import (

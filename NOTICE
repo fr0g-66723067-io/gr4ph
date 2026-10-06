@@ -1,2 +1,20 @@
 gr4ph
 Copyright 2026 fr0g <fr0g@66723067.io>
+
+This product reproduces content derived from MITRE ATT&CK® and MITRE D3FEND™ in
+ontology/attack_gen.go, distributed under their terms of use:
+
+  © 2026 The MITRE Corporation. This work is reproduced and distributed with the
+  permission of The MITRE Corporation.
+  ATT&CK: https://attack.mitre.org/resources/legal-and-branding/terms-of-use/
+  D3FEND: https://d3fend.mitre.org/tou/
+
+It also reproduces SPARTA® identifiers and names that D3FEND's mapping table
+carries, under SPARTA's terms of service:
+
+  ©2023 The Aerospace Corporation. This work is reproduced and distributed with
+  the permission of The Aerospace Corporation.
+  https://sparta.aerospace.org/terms-of-service
+
+ATT&CK® is a registered trademark, and D3FEND™ a trademark, of The MITRE
+Corporation. SPARTA® is a registered trademark of The Aerospace Corporation.

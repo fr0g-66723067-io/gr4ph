@@ -4,5 +4,11 @@
 /*.json
 /*.csv
 
-# `go build ./cmd/d3fendgen` in the repo root drops the binary here.
+# `go build ./cmd/d3fendgen` drops the binary here, wherever it is run from.
 /d3fendgen
+/cmd/d3fendgen/d3fendgen
+
+# Editor and OS droppings.
+.DS_Store
+*~
+*.swp

@@ -10,7 +10,7 @@
 //     countermeasure surface to attack or evade, plus which countermeasures
 //     defend the most technique surface.
 //
-//     go run ./examples/ontology
+//     GOEXPERIMENT=simd go run ./examples/ontology
 package main
 
 import (

@@ -18,8 +18,9 @@ this artifact, directly or through the techniques that touch it".
 ## Build requirement
 
 The engine is built on Go 1.27's experimental `simd` package, whose files are all gated behind the
-`goexperiment.simd` build tag. Every file here (except `cmd/d3fendgen` and `internal/simdcheck`)
-carries the same tag, so `GOEXPERIMENT=simd` is required for the library. On a stock toolchain
+`goexperiment.simd` build tag. Every file here (except `cmd/d3fendgen`, `internal/simdcheck` and
+`internal/hotmethods`) carries the same tag, so `GOEXPERIMENT=simd` is required for the library. On a
+stock toolchain
 `go build .` fails with `build constraints exclude all Go files`, and `internal/simdcheck` makes
 `go build ./...` / `go test ./...` fail the same way — without it they would silently skip every gated
 package and report success while testing nothing. `go test ./cmd/d3fendgen` works without the
@@ -69,8 +70,9 @@ flowchart LR
    or evade, plus `TTPsForCountermeasure` and `CountermeasureDegree` to rank which countermeasures
    defend the most technique surface.
 
-`go run ./examples/incident` walks the five stages on a hand-built graph (register → wire → incident →
-evaluation → response). `go run ./examples/ontology` runs both flows against the real tables.
+`GOEXPERIMENT=simd go run ./examples/incident` walks the five stages on a hand-built graph
+(register → wire → incident → evaluation → response). `GOEXPERIMENT=simd go run ./examples/ontology`
+runs both flows against the real tables.
 
 ## Data model
 
@@ -280,3 +282,24 @@ engine.
 
 Apache License 2.0 — see [LICENSE](LICENSE). Copyright 2026 fr0g <fr0g@66723067.io>
 (see [NOTICE](NOTICE)).
+
+### Attribution
+
+`ontology/attack_gen.go` reproduces MITRE ATT&CK® and MITRE D3FEND™ content — technique ids, names,
+aliases and hierarchy, D3FEND artifact and countermeasure labels — and the SPARTA® identifiers
+D3FEND's mapping table carries, all under the upstream terms of use:
+
+* ATT&CK: <https://attack.mitre.org/resources/legal-and-branding/terms-of-use/>
+* D3FEND: <https://d3fend.mitre.org/tou/>
+* SPARTA: <https://sparta.aerospace.org/terms-of-service>
+
+The two designations the terms require are reproduced in `NOTICE`, the canonical attribution file:
+
+> © 2026 The MITRE Corporation. This work is reproduced and distributed with the permission of The
+> MITRE Corporation.
+>
+> ©2023 The Aerospace Corporation. This work is reproduced and distributed with the permission of
+> The Aerospace Corporation.
+
+ATT&CK® is a registered trademark, and D3FEND™ a trademark, of The MITRE Corporation. SPARTA® is a
+registered trademark of The Aerospace Corporation.
