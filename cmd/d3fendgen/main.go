@@ -71,6 +71,8 @@ type shape struct {
 	offEdges, defEdges, defends     int
 	offPairs                        int // distinct (ttp, artifact) pairs = offensive union-plane cardinality
 	enterprise, mobile, ics, sparta int
+	topLevel, subs, parents         int
+	maxChildren                     int
 }
 
 // pinnedShape is ATT&CK 19.2 x D3FEND 1.6.0, measured from the pinned sources.
@@ -79,6 +81,7 @@ var pinnedShape = shape{
 	offRels: 41, defRels: 38,
 	offEdges: 670, defEdges: 182, defends: 4133, offPairs: 654,
 	enterprise: 858, mobile: 176, ics: 106, sparta: 46,
+	topLevel: 605, subs: 581, parents: 148, maxChildren: 18,
 }
 
 // domain mirrors gr4ph.Domain, kept local so this package stays dependency-free.
@@ -804,8 +807,8 @@ func assemble(stix map[string]*ttpInfo, d3 *d3fendData) (*model, error) {
 }
 
 // checkShape compares the assembled graph against want and fails on any drift:
-// node/edge/relation counts, the offensive union-plane cardinality and the
-// domain histogram.
+// node/edge/relation counts, the offensive union-plane cardinality, the domain
+// histogram and the technique-hierarchy counts.
 func (m *model) checkShape(want shape) error {
 	// Caps first: a graph the tables cannot represent must never reach emit.
 	if len(m.offRelNames) > maxPlanes || len(m.defRelNames) > maxPlanes {
@@ -866,6 +869,16 @@ func (m *model) checkShape(want shape) error {
 	if e != want.enterprise || mo != want.mobile || i != want.ics || sp != want.sparta {
 		return fmt.Errorf("shape drift: domain histogram %d/%d/%d/%d (enterprise/mobile/ics/sparta), want %d/%d/%d/%d",
 			e, mo, i, sp, want.enterprise, want.mobile, want.ics, want.sparta)
+	}
+
+	// The hierarchy counts are part of the shape the report prints, and the
+	// emitted TTPParents is written from the same data: drift here must fail the
+	// gate instead of only showing up as a diff in the report.
+	topLevel, subs := m.topLevel(), len(m.ttpIDs)-m.topLevel()
+	if parents, maxChildren := m.parentCount(), m.maxChildren(); topLevel != want.topLevel || subs != want.subs ||
+		parents != want.parents || maxChildren != want.maxChildren {
+		return fmt.Errorf("shape drift: hierarchy %d top-level / %d sub-techniques / %d parents / max %d children, want %d/%d/%d/%d (upstream release changed; re-pin the sources and re-derive the expectations)",
+			topLevel, subs, parents, maxChildren, want.topLevel, want.subs, want.parents, want.maxChildren)
 	}
 	return nil
 }

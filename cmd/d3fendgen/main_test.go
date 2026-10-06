@@ -299,6 +299,38 @@ func TestCheckShapeHistogram(t *testing.T) {
 	}
 }
 
+// TestCheckShapeHierarchy covers the hierarchy arm of the shape gate: a graph
+// whose counts and domain histogram match but whose hierarchy does not must
+// still fail.
+func TestCheckShapeHierarchy(t *testing.T) {
+	d := &d3fendData{
+		ttpLabel:    map[string]map[string]bool{"T1": {"One": true}},
+		artLabel:    map[string]string{"A": "A"},
+		artOff:      map[string]bool{"A": true},
+		artDef:      map[string]bool{},
+		cmLabel:     map[string]string{"CM": "CM"},
+		offRel:      map[string]bool{"accesses": true},
+		defRel:      map[string]bool{"analyzes": true},
+		offEdge:     map[[3]string]bool{{"T1", "A", "accesses"}: true},
+		defEdge:     map[[3]string]bool{{"CM", "A", "analyzes"}: true},
+		defends:     map[[2]string]bool{{"CM", "T1"}: true},
+		parentOf:    map[string]map[string]bool{},
+		parentLabel: map[string]string{},
+	}
+	m, err := assemble(map[string]*ttpInfo{}, d)
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	// Everything matches except the hierarchy: the single technique has no
+	// parent, so topLevel is 1 and subs 0.
+	want := shape{ttps: 1, artifacts: 1, cms: 1, offRels: 1, defRels: 1,
+		offEdges: 1, defEdges: 1, defends: 1, offPairs: 1, sparta: 1,
+		topLevel: 0, subs: 1}
+	if err := m.checkShape(want); err == nil || !strings.Contains(err.Error(), "hierarchy") {
+		t.Fatalf("err = %v, want a hierarchy error", err)
+	}
+}
+
 // TestParseAttackMalformed covers the JSON error path.
 func TestParseAttackMalformed(t *testing.T) {
 	err := parseAttack([]byte("{"), domEnterprise, map[string]*ttpInfo{})
@@ -395,7 +427,8 @@ const testEnterpriseJSON = `{"objects":[
 // one mobile (T3) and two synthesised SPARTA nodes (SP-1, SP-1.1).
 var testShape = shape{ttps: 6, artifacts: 2, cms: 1, offRels: 1, defRels: 2,
 	offEdges: 2, defEdges: 2, defends: 2, offPairs: 2,
-	enterprise: 2, mobile: 1, ics: 1, sparta: 2}
+	enterprise: 2, mobile: 1, ics: 1, sparta: 2,
+	topLevel: 4, subs: 2, parents: 2, maxChildren: 1}
 
 // writeFixtures lays the fixture sources out in a fresh temp dir and returns
 // their paths plus the directory itself.
@@ -762,19 +795,25 @@ func TestEmitProducesValidGo(t *testing.T) {
 	if _, err := parser.ParseFile(token.NewFileSet(), "attack_gen.go", src, parser.AllErrors); err != nil {
 		t.Fatalf("generated source does not parse: %v", err)
 	}
+	for _, want := range []*regexp.Regexp{
+		regexp.MustCompile(`\bNTTP\s+= 4\b`),
+		regexp.MustCompile(`\bSourceD3FEND\s+= "d3fend-full-mappings\.csv@1\.6\.0"`),
+		regexp.MustCompile(`\bRelAccesses\s+gr4ph\.Rel = 1\b`),
+		regexp.MustCompile(`\bDefRelAnalyzes\s+gr4ph\.DefRel = 1\b`),
+	} {
+		if !want.Match(src) {
+			t.Errorf("generated source does not match %s", want)
+		}
+	}
 	for _, want := range []string{
 		"//go:build goexperiment.simd",
 		"package ontology",
 		`import "github.com/fr0g-66723067/gr4ph"`,
-		"RelAccesses gr4ph.Rel = 1",
-		"DefRelAnalyzes gr4ph.DefRel = 1",
 		"uint16(gr4ph.NoParent)",
 		"gr4ph.DomainEnterprise",
 		"gr4ph.DomainICS",
 		"gr4ph.DomainMobile",
 		"gr4ph.DomainSPARTA",
-		"NTTP            = 4",
-		"SourceD3FEND     = \"d3fend-full-mappings.csv@1.6.0\"",
 		"{\"A\", \"B\"}",
 	} {
 		if !strings.Contains(string(src), want) {
