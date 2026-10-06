@@ -115,6 +115,76 @@ ttp T1003.001 "LSASS Memory" domain=enterprise parent=T1003 children=0
   in  countermeasures rollup (12): Application-basedProcessIsolation "Application-based Process Isolation", Hardware-basedProcessIsolation "Hardware-based Process Isolation", HostReboot "Host Reboot", HostShutdown "Host Shutdown", Kernel-basedProcessIsolation "Kernel-based Process Isolation", ProcessLineageAnalysis "Process Lineage Analysis", ProcessSelf-ModificationDetection "Process Self-Modification Detection", ProcessSpawnAnalysis "Process Spawn Analysis", ProcessSuspension "Process Suspension", ProcessTermination "Process Termination", SystemCallFiltering "System Call Filtering", WebSessionAccessMediation "Web Session Access Mediation"
 ```
 
+### Common queries
+
+The examples below use the `./gr4ph` binary that `make build` produces. Every key is matched trimmed and
+case-insensitively, so a technique can be named the way an alert names it — `T1136` and `create account`
+are the same node — and a key that resolves to nothing is an error, never a guess. `head`/`cut` keep the
+answers readable, because a set is printed as one line whatever its length.
+
+```sh
+$ ./gr4ph ttp "create account" | head -1
+ttp T1136 "Create Account" domain=enterprise children=3
+$ ./gr4ph artifact "authentication service" | head -1
+artifact AuthenticationService "Authentication Service"
+$ ./gr4ph cm "credential hardening" | head -1
+cm CredentialHardening "Credential Hardening"
+$ ./gr4ph ttp "lsass memroy"; echo $?          # typos do not resolve
+gr4ph: no such technique: lsass memroy
+1
+```
+
+Defensive triage from the artifact an alert names: 5 techniques touch `Process`, they collapse to 3
+parents, 11 countermeasures link to it directly and 36 once the techniques that touch it are included.
+
+```sh
+$ ./gr4ph artifact Process | cut -c1-56
+artifact Process
+  in  techniques (5): T1003.001 "LSASS Memory", T1003.00
+  in  techniques rollup (3): T1003 "OS Credential Dumpin
+  in  countermeasures (11): Application-basedProcessIsol
+  in  countermeasures viaTTPs (36): Application-basedPro
+```
+
+Narrow a set to one relation plane with `-rel` (offensive) or `-defrel` (defensive): the plane is named
+in the set label, and the sets that take no relation are unchanged.
+
+```sh
+$ ./gr4ph artifact -rel accesses Process | cut -c1-56
+artifact Process
+  in  techniques (rel accesses) (1): T1003.001 "LSASS Me
+  in  techniques rollup (rel accesses) (1): T1003 "OS Cr
+  in  countermeasures (11): Application-basedProcessIsol
+  in  countermeasures viaTTPs (36): Application-basedPro
+$ ./gr4ph cm -defrel hardens CredentialHardening | cut -c1-56
+cm CredentialHardening "Credential Hardening"
+  out artifacts (defrel hardens) (1): Credential
+  out techniques (25): DE-0011 "Credentialed Evasion", P
+  out techniques rollup (16): DE-0011 "Credentialed Evas
+```
+
+`rel` walks the planes themselves — the offensive union plane holds 654 distinct technique → artifact
+pairs from 427 techniques — and `-family` picks a side when the name is registered in both.
+
+```sh
+$ ./gr4ph rel any
+rel any offensive union plane 0/41 (technique -> artifact): edges=654 sources=427
+rel any defensive union plane 0/38 (countermeasure -> artifact): edges=182 sources=157
+$ ./gr4ph rel -family def blocks
+rel blocks defensive plane 3/38 (countermeasure -> artifact): edges=6 sources=6
+$ ./gr4ph rel -family off analyzes; echo $?    # ... and an error when it is not
+gr4ph: no such offensive relation: analyzes
+1
+```
+
+`-json` prints the same answer as one object per resolved query, with the ids, the cold keys and (for
+`rel`) the plane statistics in one place — what a script wants to join on.
+
+```sh
+$ ./gr4ph -json rel blocks
+{"query":"blocks","kind":"rel","name":"blocks","planes":[{"family":"offensive","id":4,"count":41,"edges":2,"sources":2},{"family":"defensive","id":3,"count":38,"edges":6,"sources":6}]}
+```
+
 Exit status is 0 when every query resolved, 1 when a query or relation was not found (the blocks of the
 queries that did resolve are still written), and 2 for a usage error. `-json` emits one JSON object per
 resolved query instead of text.
