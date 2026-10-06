@@ -50,6 +50,18 @@ const (
 	sourceD3FEND     = "d3fend-full-mappings.csv@1.6.0"
 )
 
+// Caps the emitted tables must respect, mirroring the engine's own limits
+// (gr4ph.MaxNodes and the uint8 plane space) without importing them: this
+// package stays dependency-free.
+const (
+	// maxPlanes is the uint8 plane space of gr4ph.Rel/DefRel (1..255).
+	maxPlanes = 255
+	// maxNodes is gr4ph.MaxNodes: ids must fit uint16. Index 65535 is the
+	// NoParent sentinel and can never be a parent (a child would need index
+	// 65536, past the cap), so the emitted parent table stays unambiguous.
+	maxNodes = 65536
+)
+
 // shape is the expected graph shape of a pinned release. The generator fails
 // loudly when a run drifts from it, instead of emitting tables whose indices no
 // longer match upstream.
@@ -196,6 +208,8 @@ func load(src string) ([]byte, error) {
 type ttpInfo struct {
 	label  string
 	domain domain
+	// sub is x_mitre_is_subtechnique, checked against the id prefix in assemble.
+	sub bool
 	// bad marks a revoked or deprecated object, which is kept (D3FEND still
 	// references it) but loses its name to a live object with the same id.
 	bad bool
@@ -210,6 +224,7 @@ type stixObject struct {
 	Name               string            `json:"name"`
 	Revoked            bool              `json:"revoked"`
 	Deprecated         bool              `json:"x_mitre_deprecated"`
+	Subtechnique       bool              `json:"x_mitre_is_subtechnique"`
 	ExternalReferences []stixExternalRef `json:"external_references"`
 }
 
@@ -243,11 +258,14 @@ func parseAttack(data []byte, dom domain, out map[string]*ttpInfo) error {
 		bad := obj.Revoked || obj.Deprecated
 		prev, ok := out[id]
 		if !ok {
-			out[id] = &ttpInfo{label: obj.Name, domain: dom, bad: bad}
+			out[id] = &ttpInfo{label: obj.Name, domain: dom, sub: obj.Subtechnique, bad: bad}
 			continue
 		}
 		if prev.bad && !bad {
+			// The whole record comes from the live twin: name, flag and domain.
 			prev.label = obj.Name
+			prev.domain = dom
+			prev.sub = obj.Subtechnique
 			prev.bad = false
 		}
 	}
@@ -262,18 +280,28 @@ type d3fendData struct {
 	// Tasking" and "Modify controller Tasking"), and the alias table must be
 	// independent of row order.
 	ttpLabel map[string]map[string]bool
-	artLabel map[string]string // artifact -> label (offensive label preferred)
-	artOff   map[string]bool   // artifact appears on the offensive side
-	cmLabel  map[string]string // def_tech id -> label
-	offRel   map[string]bool
-	defRel   map[string]bool
-	offEdge  map[[3]string]bool // (ttp, artifact, rel)
-	defEdge  map[[3]string]bool // (cm, artifact, defrel)
-	defends  map[[2]string]bool // (cm, ttp)
+	// artOffLabels/artDefLabels, cmLabels and parentLabels are per-key label
+	// sets, resolved into the single-valued artLabel, cmLabel and parentLabel
+	// maps once the CSV has been read: last-write-wins would make the output
+	// depend on row order. Artifact labels prefer the offensive spelling.
+	artOffLabels map[string]map[string]bool
+	artDefLabels map[string]map[string]bool
+	cmLabels     map[string]map[string]bool
+	parentLabels map[string]map[string]bool
+
+	artLabel    map[string]string // artifact -> label (offensive label preferred)
+	cmLabel     map[string]string // def_tech id -> label
+	parentLabel map[string]string // synthesised parent id -> label
+
+	artOff  map[string]bool // artifact appears on the offensive side
+	offRel  map[string]bool
+	defRel  map[string]bool
+	offEdge map[[3]string]bool // (ttp, artifact, rel)
+	defEdge map[[3]string]bool // (cm, artifact, defrel)
+	defends map[[2]string]bool // (cm, ttp)
 	// parentOf maps a sub-technique id to its off_tech_parent local name, used
 	// to synthesise parents that exist in no ATT&CK domain.
-	parentOf    map[string]string
-	parentLabel map[string]string
+	parentOf map[string]string
 }
 
 // Column names of d3fend-full-mappings.csv@1.6.0 (SPARQL 1.1 CSV; every value
@@ -315,17 +343,18 @@ func parseD3FEND(data []byte) (*d3fendData, error) {
 	}
 
 	d := &d3fendData{
-		ttpLabel:    map[string]map[string]bool{},
-		artLabel:    map[string]string{},
-		artOff:      map[string]bool{},
-		cmLabel:     map[string]string{},
-		offRel:      map[string]bool{},
-		defRel:      map[string]bool{},
-		offEdge:     map[[3]string]bool{},
-		defEdge:     map[[3]string]bool{},
-		defends:     map[[2]string]bool{},
-		parentOf:    map[string]string{},
-		parentLabel: map[string]string{},
+		ttpLabel:     map[string]map[string]bool{},
+		artOffLabels: map[string]map[string]bool{},
+		artDefLabels: map[string]map[string]bool{},
+		cmLabels:     map[string]map[string]bool{},
+		parentLabels: map[string]map[string]bool{},
+		artOff:       map[string]bool{},
+		offRel:       map[string]bool{},
+		defRel:       map[string]bool{},
+		offEdge:      map[[3]string]bool{},
+		defEdge:      map[[3]string]bool{},
+		defends:      map[[2]string]bool{},
+		parentOf:     map[string]string{},
 	}
 	get := func(rec []string, name string) string {
 		i := col[name]
@@ -352,17 +381,16 @@ func parseD3FEND(data []byte) (*d3fendData, error) {
 		// side simply contributes nothing.
 		if offTech != "" && offArt != "" {
 			rel := localName(get(rec, colOffArtifactRel))
-			if lbl := get(rec, colOffTechLabel); lbl != "" {
-				set := d.ttpLabel[offTech]
-				if set == nil {
-					set = map[string]bool{}
-					d.ttpLabel[offTech] = set
-				}
-				set[lbl] = true
+			lbl := get(rec, colOffTechLabel)
+			if lbl == "" {
+				// An endpoint with no label cell of its own still becomes a
+				// node: the id stands in for the name, as it does for artifacts.
+				lbl = offTech
 			}
+			addLabel(d.ttpLabel, offTech, lbl)
 			d.artOff[offArt] = true
 			if lbl := get(rec, colOffArtifactLbl); lbl != "" {
-				d.artLabel[offArt] = lbl
+				addLabel(d.artOffLabels, offArt, lbl)
 			}
 			d.offRel[rel] = true
 			d.offEdge[[3]string{offTech, offArt, rel}] = true
@@ -370,19 +398,19 @@ func parseD3FEND(data []byte) (*d3fendData, error) {
 			if parent := localName(get(rec, colOffTechParent)); parent != "" {
 				d.parentOf[offTech] = parent
 				if lbl := get(rec, colOffTechParLbl); lbl != "" {
-					d.parentLabel[parent] = lbl
+					addLabel(d.parentLabels, parent, lbl)
 				}
 			}
 		}
 		if defTech != "" && defArt != "" {
 			dr := localName(get(rec, colDefArtifactRel))
-			if lbl := get(rec, colDefTechLabel); lbl != "" {
-				d.cmLabel[defTech] = lbl
+			lbl := get(rec, colDefTechLabel)
+			if lbl == "" {
+				lbl = defTech
 			}
+			addLabel(d.cmLabels, defTech, lbl)
 			if lbl := get(rec, colDefArtifactLbl); lbl != "" {
-				if !d.artOff[defArt] {
-					d.artLabel[defArt] = lbl
-				}
+				addLabel(d.artDefLabels, defArt, lbl)
 			}
 			d.defRel[dr] = true
 			d.defEdge[[3]string{defTech, defArt, dr}] = true
@@ -391,7 +419,56 @@ func parseD3FEND(data []byte) (*d3fendData, error) {
 			}
 		}
 	}
+	d.artLabel = make(map[string]string, len(d.artOffLabels))
+	for art, set := range d.artOffLabels {
+		if label := pickLabel(set); label != "" {
+			d.artLabel[art] = label
+		}
+	}
+	for art, set := range d.artDefLabels {
+		if _, ok := d.artLabel[art]; ok {
+			continue
+		}
+		if label := pickLabel(set); label != "" {
+			d.artLabel[art] = label
+		}
+	}
+	d.cmLabel = pickAll(d.cmLabels)
+	d.parentLabel = pickAll(d.parentLabels)
 	return d, nil
+}
+
+// addLabel records one spelling of key in a label set.
+func addLabel(sets map[string]map[string]bool, key, label string) {
+	set := sets[key]
+	if set == nil {
+		set = map[string]bool{}
+		sets[key] = set
+	}
+	set[label] = true
+}
+
+// pickLabel returns the byte-smallest spelling in a set, or "" when it is empty.
+// Choosing from a set keeps the result independent of CSV row order.
+func pickLabel(set map[string]bool) string {
+	best := ""
+	for label := range set {
+		if best == "" || label < best {
+			best = label
+		}
+	}
+	return best
+}
+
+// pickAll resolves every spelling set of a map to one label.
+func pickAll(sets map[string]map[string]bool) map[string]string {
+	out := make(map[string]string, len(sets))
+	for key, set := range sets {
+		if label := pickLabel(set); label != "" {
+			out[key] = label
+		}
+	}
+	return out
 }
 
 // ttpLabels returns the distinct D3FEND labels for an off_tech id, sorted so
@@ -502,11 +579,17 @@ func assemble(stix map[string]*ttpInfo, d3 *d3fendData) (*model, error) {
 		}
 		prefix := id[:strings.LastIndexByte(id, '.')]
 		if _, inSTIX := stix[prefix]; inSTIX {
+			// The prefix is a node, so it is the parent and off_tech_parent is
+			// ignored: D3FEND's mapping may differ from ATT&CK's hierarchy
+			// (T1499.002 carries off_tech_parent T1498 in 1.6.0, while ATT&CK
+			// makes it a child of T1499).
 			continue
 		}
 		if _, inOff := d3.ttpLabel[prefix]; inOff {
 			continue
 		}
+		// Only here is off_tech_parent load-bearing, because it is the sole
+		// source of the parent: it must agree with the id prefix.
 		if parent := d3.parentOf[id]; parent != "" && parent != prefix {
 			return nil, fmt.Errorf("sub-technique %s: off_tech_parent %q disagrees with its id prefix %q", id, parent, prefix)
 		}
@@ -550,8 +633,8 @@ func assemble(stix map[string]*ttpInfo, d3 *d3fendData) (*model, error) {
 			label = synth[id]
 			m.ttpDomains = append(m.ttpDomains, domSPARTA)
 		default:
-			// No ATT&CK object: the D3FEND label is the only name. (Only
-			// T0821 has two spellings, and it is an ATT&CK technique.)
+			// No ATT&CK object: the byte-smallest D3FEND spelling is the name
+			// (ttpLabels is sorted), and any other spelling becomes an alias.
 			label = d3.ttpLabels(id)[0]
 			m.ttpDomains = append(m.ttpDomains, domSPARTA)
 		}
@@ -560,13 +643,12 @@ func assemble(stix map[string]*ttpInfo, d3 *d3fendData) (*model, error) {
 		}
 		m.ttpLabels = append(m.ttpLabels, label)
 
-		// Aliases: every D3FEND spelling that differs from the ATT&CK name.
+		// Aliases: every D3FEND spelling that differs from the chosen label,
+		// whatever the node's provenance, so a second spelling is never dropped.
 		var aliases []string
-		if info != nil {
-			for _, variant := range d3.ttpLabels(id) {
-				if variant != label {
-					aliases = append(aliases, variant)
-				}
+		for _, variant := range d3.ttpLabels(id) {
+			if variant != label {
+				aliases = append(aliases, variant)
 			}
 		}
 		m.ttpAliases = append(m.ttpAliases, aliases)
@@ -575,15 +657,27 @@ func assemble(stix map[string]*ttpInfo, d3 *d3fendData) (*model, error) {
 		// authoritative (it agrees with x_mitre_is_subtechnique on every node
 		// of 19.2).
 		parent := -1
-		if dot := strings.LastIndexByte(id, '.'); dot >= 0 {
+		dot := strings.LastIndexByte(id, '.')
+		if dot >= 0 {
 			if p, ok := index[id[:dot]]; ok {
 				parent = p
 			}
 		}
 		m.ttpParents[i] = parent
 
+		// The prefix rule must agree with the STIX flag (measured: 1140/1140
+		// attack-patterns in 19.2), the tree may only be two levels deep, and no
+		// dotted id may be left without a parent node. Depth is reported before
+		// the orphan check: a three-level id whose intermediate node is missing
+		// is a depth error, which is the more specific diagnostic.
+		if info := stix[id]; info != nil && info.sub != (dot >= 0) {
+			return nil, fmt.Errorf("technique %s: x_mitre_is_subtechnique=%v disagrees with its id prefix", id, info.sub)
+		}
 		if strings.Count(id, ".") > 1 {
 			return nil, fmt.Errorf("technique %s is deeper than two levels", id)
+		}
+		if dot >= 0 && parent < 0 {
+			return nil, fmt.Errorf("technique %s: sub-technique has no parent node (orphan)", id)
 		}
 	}
 	for _, p := range m.ttpParents {
@@ -706,6 +800,16 @@ func assemble(stix map[string]*ttpInfo, d3 *d3fendData) (*model, error) {
 // node/edge/relation counts, the offensive union-plane cardinality and the
 // domain histogram.
 func (m *model) checkShape(want shape) error {
+	// Caps first: a graph the tables cannot represent must never reach emit.
+	if len(m.offRelNames) > maxPlanes || len(m.defRelNames) > maxPlanes {
+		return fmt.Errorf("shape drift: %d/%d relation planes exceed the %d-plane space",
+			len(m.offRelNames), len(m.defRelNames), maxPlanes)
+	}
+	if len(m.ttpIDs) > maxNodes || len(m.artNames) > maxNodes || len(m.cmIDs) > maxNodes {
+		return fmt.Errorf("shape drift: node count exceeds %d (techniques %d, artifacts %d, countermeasures %d)",
+			maxNodes, len(m.ttpIDs), len(m.artNames), len(m.cmIDs))
+	}
+
 	counts := []struct {
 		name string
 		got  int
@@ -829,7 +933,6 @@ func emit(m *model) ([]byte, error) {
 	writeAliases(&b, "TTPAliases", "D3FEND labels that differ from the ATT&CK name, else nil.", m.ttpAliases)
 	writeDomains(&b, "TTPDomains", "ATT&CK domain of each technique.", m.ttpDomains)
 	writeParents(&b, "TTPParents", "Parent index for each technique, or gr4ph.NoParent.", m.ttpParents)
-	writeInts(&b, "TTPChildCount", "uint16", "Number of direct sub-techniques; children occupy indices i+1..i+count.", m.ttpChildCount, 8)
 	writeStrings(&b, "ArtifactNames", "Artifact names, sorted byte-wise.", m.artNames)
 	writeStrings(&b, "ArtifactLabels", "Artifact labels, index-parallel to ArtifactNames.", m.artLabels)
 	writeStrings(&b, "CountermeasureIDs", "Countermeasure local names, sorted byte-wise.", m.cmIDs)

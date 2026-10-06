@@ -214,8 +214,8 @@ func TestAssembleRejectsBadHierarchy(t *testing.T) {
 
 	deep := map[string]*ttpInfo{
 		"T1":     {label: "one"},
-		"T1.1":   {label: "one-one"},
-		"T1.1.1": {label: "three levels"},
+		"T1.1":   {label: "one-one", sub: true},
+		"T1.1.1": {label: "three levels", sub: true},
 	}
 	if _, err := assemble(deep, empty); err == nil || !strings.Contains(err.Error(), "deeper than two levels") {
 		t.Fatalf("err = %v, want a depth error", err)
@@ -226,7 +226,7 @@ func TestAssembleRejectsBadHierarchy(t *testing.T) {
 	gap := map[string]*ttpInfo{
 		"T1":   {label: "one"},
 		"T1-9": {label: "intruder"},
-		"T1.2": {label: "one-two"},
+		"T1.2": {label: "one-two", sub: true},
 	}
 	if _, err := assemble(gap, empty); err == nil || !strings.Contains(err.Error(), "child block") {
 		t.Fatalf("err = %v, want a contiguity error", err)
@@ -375,7 +375,7 @@ const testCSV = "def_tech_label,def_artifact_rel_label,def_artifact_label,off_ar
 const testEnterpriseJSON = `{"objects":[
   {"type":"attack-pattern","name":"One",
    "external_references":[{"source_name":"mitre-attack","external_id":"T1"}]},
-  {"type":"attack-pattern","name":"One One",
+  {"type":"attack-pattern","name":"One One","x_mitre_is_subtechnique":true,
    "external_references":[{"source_name":"mitre-attack","external_id":"T1.1"}]}]}`
 
 // testShape is the shape of the graph the fixtures produce: sorted ids
@@ -511,9 +511,12 @@ func TestRunErrorPaths(t *testing.T) {
 	}
 
 	// A structurally invalid graph (three hierarchy levels) fails inside run,
-	// before anything is emitted.
+	// before anything is emitted. The chain is otherwise valid: D-1.1 is a
+	// proper two-level node, so D-1.1.1 is what makes it three.
 	deep := write("deep.csv", testCSV+
-		"CM One,analyzes,A One,A Three,accesses,Deep,Deep Two,"+
+		"CM One,analyzes,A One,A Three,accesses,Deep One,Deep,"+
+		"http://x#CM1,http://x#analyzes,http://x#A1,http://x#A3,http://x#accesses,http://x#D-1.1,http://x#D-1\n"+
+		"CM One,analyzes,A One,A Three,accesses,Deep Two,Deep One,"+
 		"http://x#CM1,http://x#analyzes,http://x#A1,http://x#A3,http://x#accesses,http://x#D-1.1.1,http://x#D-1.1\n")
 	if err := run(ent, ics, mob, deep, out, io.Discard, testShape); err == nil ||
 		!strings.Contains(err.Error(), "deeper than two levels") {
@@ -722,5 +725,220 @@ func TestEmitProducesValidGo(t *testing.T) {
 		if !strings.Contains(string(src), want) {
 			t.Errorf("generated source is missing %q", want)
 		}
+	}
+	// The child-count table duplicated TTPParents and had no reader; it must not
+	// come back.
+	if strings.Contains(string(src), "TTPChildCount") {
+		t.Error("generated source must not carry the dead TTPChildCount table")
+	}
+}
+
+// --- label resolution and node derivation ---
+
+// csvHeader is the 14-column header of d3fend-full-mappings.csv@1.6.0, in the
+// order the column constants list.
+const csvHeader = "def_tech_label,def_artifact_rel_label,def_artifact_label,off_artifact_label," +
+	"off_artifact_rel_label,off_tech_label,off_tech_parent_label," +
+	"def_tech,def_artifact_rel,def_artifact,off_artifact,off_artifact_rel,off_tech,off_tech_parent\n"
+
+// csvRow joins fields into one CSV record. Column order:
+// def_tech_label, def_artifact_rel_label, def_artifact_label, off_artifact_label,
+// off_artifact_rel_label, off_tech_label, off_tech_parent_label, def_tech,
+// def_artifact_rel, def_artifact, off_artifact, off_artifact_rel, off_tech,
+// off_tech_parent.
+func csvRow(fields ...string) string { return strings.Join(fields, ",") + "\n" }
+
+// TestParseD3FENDLabelOrder pins the order-independence of label resolution: an
+// artifact that appears on both sides must resolve to the same label whichever
+// row the CSV lists first.
+func TestParseD3FENDLabelOrder(t *testing.T) {
+	defensive := csvRow("CM", "analyzes", "Defensive Name", "", "", "", "",
+		"http://x#CM", "http://x#analyzes", "http://x#A", "", "", "", "")
+	// The offensive row carries no label of its own, so the defensive spelling
+	// is the only candidate; with a label, the offensive spelling must win.
+	offensiveUnlabelled := csvRow("", "", "", "", "", "One", "",
+		"", "", "", "http://x#A", "http://x#accesses", "http://x#T1", "")
+	offensiveLabelled := csvRow("", "", "", "Offensive Name", "", "One", "",
+		"", "", "", "http://x#A", "http://x#accesses", "http://x#T1", "")
+
+	for _, tc := range []struct {
+		name string
+		rows []string
+		want string
+	}{
+		{"defensive first, no offensive label", []string{defensive, offensiveUnlabelled}, "Defensive Name"},
+		{"offensive first, no offensive label", []string{offensiveUnlabelled, defensive}, "Defensive Name"},
+		{"defensive first, offensive label", []string{defensive, offensiveLabelled}, "Offensive Name"},
+		{"offensive first, offensive label", []string{offensiveLabelled, defensive}, "Offensive Name"},
+	} {
+		d, err := parseD3FEND([]byte(csvHeader + strings.Join(tc.rows, "")))
+		if err != nil {
+			t.Fatalf("%s: parseD3FEND: %v", tc.name, err)
+		}
+		if got := d.artLabel["A"]; got != tc.want {
+			t.Fatalf("%s: artLabel[A] = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestParseD3FENDUnlabelledEndpoint pins the symmetric node rule: an edge
+// endpoint whose own label cell is empty still becomes a node, named by its id
+// (the same fallback artifacts get), instead of aborting the run.
+func TestParseD3FENDUnlabelledEndpoint(t *testing.T) {
+	// off_tech_label and def_tech_label are both empty.
+	csv := csvHeader + csvRow("", "analyzes", "A Label", "A Label", "accesses", "", "",
+		"http://x#CM", "http://x#analyzes", "http://x#A", "http://x#A", "http://x#accesses", "http://x#T1", "")
+
+	d, err := parseD3FEND([]byte(csv))
+	if err != nil {
+		t.Fatalf("parseD3FEND: %v", err)
+	}
+	if got := pickLabel(d.ttpLabel["T1"]); got != "T1" {
+		t.Fatalf("ttpLabel[T1] = %q, want T1 (the id stands in for the missing label)", got)
+	}
+	if got := d.cmLabel["CM"]; got != "CM" {
+		t.Fatalf("cmLabel[CM] = %q, want CM", got)
+	}
+	m, err := assemble(map[string]*ttpInfo{}, d)
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if len(m.ttpIDs) != 1 || m.ttpIDs[0] != "T1" {
+		t.Fatalf("ttpIDs = %v, want [T1] (A is an artifact, not a technique)", m.ttpIDs)
+	}
+	if len(m.ttpLabels) != 1 || m.ttpLabels[0] != "T1" {
+		t.Fatalf("ttpLabels = %v, want [T1]", m.ttpLabels)
+	}
+	if len(m.cmIDs) != 1 || m.cmIDs[0] != "CM" || m.cmLabels[0] != "CM" {
+		t.Fatalf("cmIDs/labels = %v/%v, want [CM]/[CM]", m.cmIDs, m.cmLabels)
+	}
+}
+
+// TestAssembleParentPrecedence pins which hierarchy source wins. Where the id
+// prefix is a node, it is the parent and D3FEND's off_tech_parent is ignored
+// (real case: T1499.002 carries off_tech_parent T1498 in 1.6.0 while ATT&CK makes
+// it a child of T1499). Where the prefix is no node, off_tech_parent is the only
+// source and must agree with the prefix.
+func TestAssembleParentPrecedence(t *testing.T) {
+	// T1.1's prefix T1 is a node, and the CSV names a different parent: the tree
+	// must follow the prefix.
+	agreeing := csvRow("", "", "", "", "", "One One", "Two", "",
+		"", "", "http://x#A1", "http://x#accesses", "http://x#T1.1", "http://x#T2")
+	d, err := parseD3FEND([]byte(testCSV + agreeing))
+	if err != nil {
+		t.Fatalf("parseD3FEND: %v", err)
+	}
+	stix := map[string]*ttpInfo{
+		"T1":   {label: "One"},
+		"T1.1": {label: "One One", sub: true},
+		"T2":   {label: "Two"},
+	}
+	m, err := assemble(stix, d)
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	i := indexOf(m.ttpIDs, "T1.1")
+	if i < 0 {
+		t.Fatalf("T1.1 missing from %v", m.ttpIDs)
+	}
+	if got := m.ttpParents[i]; got != indexOf(m.ttpIDs, "T1") {
+		t.Fatalf("TTPParents[T1.1] = %d, want the prefix parent T1 (%d)", got, indexOf(m.ttpIDs, "T1"))
+	}
+
+	// A synthesised parent is the only source of the hierarchy, so a
+	// contradictory off_tech_parent is an error.
+	bad := csvRow("", "", "", "", "", "D One One", "Other", "",
+		"", "", "http://x#A1", "http://x#accesses", "http://x#D-1.1", "http://x#D-2")
+	badD, err := parseD3FEND([]byte(csvHeader + bad))
+	if err != nil {
+		t.Fatalf("parseD3FEND: %v", err)
+	}
+	if _, err := assemble(map[string]*ttpInfo{}, badD); err == nil ||
+		!strings.Contains(err.Error(), "disagrees with its id prefix") {
+		t.Fatalf("synthesised-parent err = %v, want a prefix-disagreement error", err)
+	}
+}
+
+// indexOf returns the position of s in ids, or -1.
+func indexOf(ids []string, s string) int {
+	for i, id := range ids {
+		if id == s {
+			return i
+		}
+	}
+	return -1
+}
+
+// TestAssembleSubtechniqueFlagMismatch pins the hierarchy agreement checks: the
+// id prefix must agree with x_mitre_is_subtechnique, and a dotted id must have a
+// parent node.
+func TestAssembleSubtechniqueFlagMismatch(t *testing.T) {
+	csv := csvHeader + csvRow("", "", "A", "A", "accesses", "One One", "One", "",
+		"", "", "http://x#A", "http://x#accesses", "http://x#T1.1", "http://x#T1")
+	d, err := parseD3FEND([]byte(csv))
+	if err != nil {
+		t.Fatalf("parseD3FEND: %v", err)
+	}
+
+	// A dotted id whose flag is false.
+	stix := map[string]*ttpInfo{"T1": {label: "One"}, "T1.1": {label: "One One"}}
+	if _, err := assemble(stix, d); err == nil || !strings.Contains(err.Error(), "x_mitre_is_subtechnique") {
+		t.Fatalf("dot without the flag: err = %v, want a flag-disagreement error", err)
+	}
+
+	// A dotless id whose flag is true.
+	stix = map[string]*ttpInfo{"T1": {label: "One", sub: true}}
+	if _, err := assemble(stix, d); err == nil || !strings.Contains(err.Error(), "x_mitre_is_subtechnique") {
+		t.Fatalf("flag without a dot: err = %v, want a flag-disagreement error", err)
+	}
+
+	// A dotted id that is in no D3FEND row and whose prefix is no node at all:
+	// nothing synthesises the parent, so the tree would have an orphan.
+	orphanCSV := csvHeader + csvRow("", "", "A", "A", "accesses", "Two", "", "",
+		"", "", "http://x#A", "http://x#accesses", "http://x#T2", "")
+	orphanD, err := parseD3FEND([]byte(orphanCSV))
+	if err != nil {
+		t.Fatalf("parseD3FEND: %v", err)
+	}
+	stix = map[string]*ttpInfo{"T1.1": {label: "One One", sub: true}}
+	if _, err := assemble(stix, orphanD); err == nil || !strings.Contains(err.Error(), "orphan") {
+		t.Fatalf("orphan: err = %v, want an orphan error", err)
+	}
+}
+
+// TestCheckShapeCaps pins the generator-side limits: a graph whose relation or
+// node count cannot be represented in the emitted tables must fail before emit.
+func TestCheckShapeCaps(t *testing.T) {
+	m := &model{offRelNames: make([]string, maxPlanes+1)}
+	if err := m.checkShape(shape{}); err == nil || !strings.Contains(err.Error(), "relation planes exceed") {
+		t.Fatalf("plane cap err = %v, want a plane-space error", err)
+	}
+
+	m = &model{ttpIDs: make([]string, maxNodes+1)}
+	if err := m.checkShape(shape{}); err == nil || !strings.Contains(err.Error(), "node count exceeds") {
+		t.Fatalf("node cap err = %v, want a node-count error", err)
+	}
+}
+
+// TestParseAttackUpgradeCarriesDomain: a live twin in another domain replaces the
+// whole record, so the label and the domain always come from the same object.
+func TestParseAttackUpgradeCarriesDomain(t *testing.T) {
+	out := map[string]*ttpInfo{}
+	revoked := []byte(`{"objects":[{"type":"attack-pattern","name":"Revoked Name","revoked":true,
+	  "external_references":[{"source_name":"mitre-attack","external_id":"T9"}]}]}`)
+	if err := parseAttack(revoked, domICS, out); err != nil {
+		t.Fatalf("parseAttack: %v", err)
+	}
+	live := []byte(`{"objects":[{"type":"attack-pattern","name":"Live Name",
+	  "external_references":[{"source_name":"mitre-attack","external_id":"T9"}]}]}`)
+	if err := parseAttack(live, domMobile, out); err != nil {
+		t.Fatalf("parseAttack: %v", err)
+	}
+	got := out["T9"]
+	if got.label != "Live Name" {
+		t.Fatalf("label = %q, want Live Name", got.label)
+	}
+	if got.domain != domMobile {
+		t.Fatalf("domain = %v, want the live object's domain (%v)", got.domain, domMobile)
 	}
 }
