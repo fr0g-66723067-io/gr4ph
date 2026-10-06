@@ -4,7 +4,7 @@ package gr4ph
 
 import "testing"
 
-func TestBitsSetTestClear(t *testing.T) {
+func TestBitsSetTest(t *testing.T) {
 	row := make([]uint64, 3)
 	for _, i := range []int{0, 63, 64, 65, 127, 191} {
 		setBit(row, i)
@@ -22,16 +22,13 @@ func TestBitsSetTestClear(t *testing.T) {
 	if got := popcountRow(row); got != 6 {
 		t.Fatalf("popcountRow = %d, want 6", got)
 	}
-	clearBit(row, 64)
-	if testBit(row, 64) {
-		t.Fatal("clearBit(64) did not clear the bit")
+	// The clear() builtin is what the engine uses to reset a scratch row.
+	clear(row[:1])
+	if got := popcountRow(row); got != 4 {
+		t.Fatalf("popcountRow after clear(row[:1]) = %d, want 4 (bits 64, 65, 127, 191 survive)", got)
 	}
-	if got := popcountRow(row); got != 5 {
-		t.Fatalf("popcountRow after clear = %d, want 5", got)
-	}
-	// Bits in other words must be untouched.
-	if !testBit(row, 63) || !testBit(row, 65) {
-		t.Fatal("clearBit crossed a word boundary")
+	if !testBit(row, 64) || !testBit(row, 65) || !testBit(row, 127) {
+		t.Fatal("clear(row[:1]) must not touch the other words")
 	}
 }
 

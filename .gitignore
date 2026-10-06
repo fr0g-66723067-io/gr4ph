@@ -1,4 +1,4 @@
-# Generated data inputs are never committed (the generator fetches them).
+# Raw upstream data never enters git: the generator fetches the pinned sources
+# on demand and only the generated Go tables are committed.
 *.json
 *.csv
-/tmp/

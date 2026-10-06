@@ -17,11 +17,6 @@ func setBit(row []uint64, i int) {
 	row[i>>6] |= 1 << uint(i&63)
 }
 
-// clearBit clears bit i of row.
-func clearBit(row []uint64, i int) {
-	row[i>>6] &^= 1 << uint(i&63)
-}
-
 // testBit reports whether bit i of row is set.
 func testBit(row []uint64, i int) bool {
 	return row[i>>6]&(1<<uint(i&63)) != 0
