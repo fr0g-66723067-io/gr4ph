@@ -74,6 +74,51 @@ flowchart LR
 (register → wire → incident → evaluation → response). `GOEXPERIMENT=simd go run ./examples/ontology`
 runs both flows against the real tables.
 
+## Command line
+
+`cmd/gr4ph` answers lookup questions over the frozen tables from a shell: a cold key — technique id,
+label or alias; artifact name or label; countermeasure id, label or alias; relation name — resolves to
+its dense id, and every relation of that node is printed in both directions.
+
+```sh
+GOEXPERIMENT=simd go run ./cmd/gr4ph <command> [flags] <query> [<query>...]
+GOEXPERIMENT=simd go build ./cmd/gr4ph     # produces a `gr4ph` binary
+```
+
+The command carries the library's build tag, so `GOEXPERIMENT=simd` is required for it exactly as it is
+for the library. Flags may precede or follow the queries (`-json` may also precede the command), and
+`gr4ph help` prints the usage text.
+
+| command | query | flags | prints |
+|---|---|---|---|
+| `ttp` | technique id, label or alias | `-rel <name>`, `-json` | `out artifacts`, `out artifacts rollup`, `in countermeasures`, `in countermeasures rollup` |
+| `artifact` | artifact name or label | `-rel <name>`, `-defrel <name>`, `-json` | `in techniques`, `in techniques rollup`, `in countermeasures`, `in countermeasures viaTTPs` |
+| `cm` | countermeasure id, label or alias | `-defrel <name>`, `-json` | `out artifacts`, `out techniques`, `out techniques rollup` |
+| `rel` | relation name | `-family <off\|def>`, `-json` | one line per family the name is registered in: plane id, distinct edges, sources |
+
+`ttp` prints the artifacts a technique touches and the countermeasures that defend it, exact and rolled
+up (the roll-up adds its direct sub-techniques). `artifact` prints the techniques that touch it and the
+countermeasures linked to it, directly and via those techniques. `cm` prints the artifacts and techniques
+a countermeasure covers. `rel` walks a plane instead of a node. `-rel` (default `any`, the union plane)
+picks the offensive plane of the `ttp` and `artifact` sets, `-defrel` the defensive one; the sets that
+take no relation are the roll-ups of `cm` and `in countermeasures viaTTPs`, which is the direct links
+unioned with the links of the techniques touching the artifact. Relations exist in the two families
+independently — 11 names, `blocks` among them, are registered in both — so `rel` prints one line per
+family and `-family` narrows it.
+
+```sh
+GOEXPERIMENT=simd go run ./cmd/gr4ph ttp T1003.001
+ttp T1003.001 "LSASS Memory" domain=enterprise parent=T1003 children=0
+  out artifacts (2): AuthenticationService "Authentication Service", Process
+  out artifacts rollup (2): AuthenticationService "Authentication Service", Process
+  in  countermeasures (12): Application-basedProcessIsolation "Application-based Process Isolation", Hardware-basedProcessIsolation "Hardware-based Process Isolation", HostReboot "Host Reboot", HostShutdown "Host Shutdown", Kernel-basedProcessIsolation "Kernel-based Process Isolation", ProcessLineageAnalysis "Process Lineage Analysis", ProcessSelf-ModificationDetection "Process Self-Modification Detection", ProcessSpawnAnalysis "Process Spawn Analysis", ProcessSuspension "Process Suspension", ProcessTermination "Process Termination", SystemCallFiltering "System Call Filtering", WebSessionAccessMediation "Web Session Access Mediation"
+  in  countermeasures rollup (12): Application-basedProcessIsolation "Application-based Process Isolation", Hardware-basedProcessIsolation "Hardware-based Process Isolation", HostReboot "Host Reboot", HostShutdown "Host Shutdown", Kernel-basedProcessIsolation "Kernel-based Process Isolation", ProcessLineageAnalysis "Process Lineage Analysis", ProcessSelf-ModificationDetection "Process Self-Modification Detection", ProcessSpawnAnalysis "Process Spawn Analysis", ProcessSuspension "Process Suspension", ProcessTermination "Process Termination", SystemCallFiltering "System Call Filtering", WebSessionAccessMediation "Web Session Access Mediation"
+```
+
+Exit status is 0 when every query resolved, 1 when a query or relation was not found (the blocks of the
+queries that did resolve are still written), and 2 for a usage error. `-json` emits one JSON object per
+resolved query instead of text.
+
 ## Data model
 
 Three partitions, six matrix blocks, two many-predicate relation families plus one single-predicate
