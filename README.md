@@ -199,8 +199,9 @@ $ ./gr4ph -json rel blocks
 
 `examples/scenarios.sh` is a plain list of `gr4ph` commands — the four commands, the relation and family
 filters, several queries per call, `-json`, the failures and `help` — grouped into defence and attack
-scenarios, each under its own banner heading. Nothing is checked and nothing is trimmed: it prints each
-answer in full, so run it after `make build` and read the output.
+scenarios, each scenario under a banner heading and each command labelled with the invocation that
+produced the block below it. Nothing is checked and nothing is trimmed: it prints each answer in full, so
+run it after `make build` and read the output.
 
 Exit status is 0 when every query resolved, 1 when a query or relation was not found (the blocks of the
 queries that did resolve are still written), and 2 for a usage error. `-json` emits one JSON object per
