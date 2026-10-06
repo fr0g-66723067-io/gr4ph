@@ -13,8 +13,10 @@
 //
 // The engine is built on Go 1.27's experimental simd package, whose files are
 // all gated behind the goexperiment.simd build tag. Every file in this module
-// (except cmd/d3fendgen) carries the same tag, so a stock build fails with the
-// explicit constraint error rather than undefined-symbol noise:
+// (except cmd/d3fendgen and internal/simdcheck) carries the same tag, so a stock
+// build fails with the explicit constraint error rather than undefined-symbol
+// noise; internal/simdcheck makes that true for ./... too, which would
+// otherwise skip every gated package and report success:
 //
 //	GOEXPERIMENT=simd go build ./...
 //

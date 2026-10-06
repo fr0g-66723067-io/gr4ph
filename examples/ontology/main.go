@@ -15,6 +15,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -23,13 +24,15 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "ontology:", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+// run writes the whole walkthrough to w so the documented output can be pinned
+// by a test.
+func run(w io.Writer) error {
 	b := gr4ph.NewBuilder()
 	if err := ontology.Register(b); err != nil {
 		return err
@@ -39,7 +42,7 @@ func run() error {
 		return err
 	}
 
-	fmt.Printf("ontology: %d ttps (%s), %d artifacts, %d countermeasures; rels %d/%d; edges %d/%d/%d; wordsPerRow %d/%d/%d\n",
+	fmt.Fprintf(w, "ontology: %d ttps (%s), %d artifacts, %d countermeasures; rels %d/%d; edges %d/%d/%d; wordsPerRow %d/%d/%d\n",
 		e.TTPCount(), histogram(e), e.ArtifactCount(), e.CountermeasureCount(),
 		e.RelCount(), e.DefRelCount(),
 		ontology.NOffEdges, ontology.NDefEdges, ontology.NDefends,
@@ -64,7 +67,7 @@ func run() error {
 			}
 		}
 	}
-	fmt.Printf("hierarchy: %d top-level, %d sub-techniques, %d parents, max %d children (%s)\n",
+	fmt.Fprintf(w, "hierarchy: %d top-level, %d sub-techniques, %d parents, max %d children (%s)\n",
 		topLevel, subs, parents, maxChildren, e.TTPName(biggest))
 
 	// Shared buffers: one per partition, reused by every query below.
@@ -81,45 +84,45 @@ func run() error {
 	file := lookupArtifact(e, "File")
 
 	n := e.TTPs(process, ttps)
-	fmt.Printf("ttps(Process) = %d: %s\n", n, join(ttpNames(e, ttps[:n]), 5))
+	fmt.Fprintf(w, "ttps(Process) = %d: %s\n", n, join(ttpNames(e, ttps[:n]), 5))
 	n = e.TTPsRollup(process, scratchT, ttps)
-	fmt.Printf("ttpsRollup(Process) = %d: %s\n", n, join(ttpNames(e, ttps[:n]), 5))
+	fmt.Fprintf(w, "ttpsRollup(Process) = %d: %s\n", n, join(ttpNames(e, ttps[:n]), 5))
 
 	accesses := lookupRel(e, "accesses")
 	modifies := lookupRel(e, "modifies")
 	n = e.TTPsRel(process, accesses, ttps)
-	fmt.Printf("ttps(Process, accesses) = %d: %s\n", n, join(ttpNames(e, ttps[:n]), 5))
-	fmt.Printf("ttps(Process, modifies) = %d\n", e.TTPsRel(process, modifies, ttps))
+	fmt.Fprintf(w, "ttps(Process, accesses) = %d: %s\n", n, join(ttpNames(e, ttps[:n]), 5))
+	fmt.Fprintf(w, "ttps(Process, modifies) = %d\n", e.TTPsRel(process, modifies, ttps))
 
 	n = e.Artifacts(lookupTTP(e, "T1003.001"), arts)
-	fmt.Printf("artifacts(T1003.001) = %d: %s\n", n, join(artifactNames(e, arts[:n]), 9))
+	fmt.Fprintf(w, "artifacts(T1003.001) = %d: %s\n", n, join(artifactNames(e, arts[:n]), 9))
 
 	direct := e.Artifacts(lookupTTP(e, "T1003"), arts)
 	n = e.ArtifactsRollup(lookupTTP(e, "T1003"), scratchA, arts)
-	fmt.Printf("artifacts(T1003) = %d; artifactsRollup(T1003) = %d: %s\n",
+	fmt.Fprintf(w, "artifacts(T1003) = %d; artifactsRollup(T1003) = %d: %s\n",
 		direct, n, join(artifactNames(e, arts[:n]), 9))
 
 	createProcess := lookupArtifact(e, "CreateProcess")
 	exact := e.TTPs(createProcess, ttps)
 	rolled := e.TTPsRollup(createProcess, scratchT, ttps)
-	fmt.Printf("ttps(CreateProcess) = %d; ttpsRollup(CreateProcess) = %d\n", exact, rolled)
+	fmt.Fprintf(w, "ttps(CreateProcess) = %d; ttpsRollup(CreateProcess) = %d\n", exact, rolled)
 
-	fmt.Printf("ttpsAny(Process, File) = %d\n",
+	fmt.Fprintf(w, "ttpsAny(Process, File) = %d\n",
 		e.TTPsAny(gr4ph.RelAny, scratchT, ttps, []gr4ph.Artifact{process, file}))
 
 	// Countermeasure surface of an artifact: direct links, and the chain
 	// through the techniques that touch it.
 	directCMs := e.CountermeasuresForArtifact(process, gr4ph.DefRelAny, cms)
 	viaTTPs := e.CountermeasuresForArtifactViaTTPs(process, scratchC, cms)
-	fmt.Printf("countermeasuresForArtifact(Process) = %d; viaTTPs = %d: %s\n",
+	fmt.Fprintf(w, "countermeasuresForArtifact(Process) = %d; viaTTPs = %d: %s\n",
 		directCMs, viaTTPs, join(cmNames(e, cms[:viaTTPs]), 5))
 
 	// An artifact with no direct countermeasure link at all: everything arrives
 	// through the chain.
 	authService := lookupArtifact(e, "AuthenticationService")
-	directCMs = e.CountermeasuresForArtifact(authService, grphDefRelAny, cms)
+	directCMs = e.CountermeasuresForArtifact(authService, gr4ph.DefRelAny, cms)
 	viaTTPs = e.CountermeasuresForArtifactViaTTPs(authService, scratchC, cms)
-	fmt.Printf("countermeasuresForArtifact(AuthenticationService) = %d; viaTTPs = %d: %s\n",
+	fmt.Fprintf(w, "countermeasuresForArtifact(AuthenticationService) = %d; viaTTPs = %d: %s\n",
 		directCMs, viaTTPs, join(cmNames(e, cms[:viaTTPs]), 5))
 
 	// A parent technique carries no edges of its own; roll-up is what reaches
@@ -127,7 +130,7 @@ func run() error {
 	t1003 := lookupTTP(e, "T1003")
 	exactCMs := e.CountermeasuresForTTP(t1003, cms)
 	rolledCMs := e.CountermeasuresForTTPRollup(t1003, scratchC, cms)
-	fmt.Printf("countermeasuresForTTP(T1003) = %d; rollup = %d: %s\n",
+	fmt.Fprintf(w, "countermeasuresForTTP(T1003) = %d; rollup = %d: %s\n",
 		exactCMs, rolledCMs, join(cmNames(e, cms[:rolledCMs]), 5))
 
 	// --- offensive planning: rank the countermeasure surface ---
@@ -135,15 +138,15 @@ func run() error {
 	hardening := lookupCM(e, "CredentialHardening")
 	defended := e.TTPsForCountermeasure(hardening, ttps)
 	rolledDefended := e.TTPsForCountermeasureRollup(hardening, scratchT, ttps)
-	fmt.Printf("ttpsForCountermeasure(CredentialHardening) = %d (rolled %d): %s\n",
+	fmt.Fprintf(w, "ttpsForCountermeasure(CredentialHardening) = %d (rolled %d): %s\n",
 		defended, rolledDefended, join(ttpNames(e, ttps[:defended]), 5))
 
 	hardens := lookupDefRel(e, "hardens")
 	n = e.ArtifactsForCountermeasure(hardening, hardens, arts)
-	fmt.Printf("artifactsForCountermeasure(CredentialHardening, hardens) = %v\n", artifactNames(e, arts[:n]))
+	fmt.Fprintf(w, "artifactsForCountermeasure(CredentialHardening, hardens) = %v\n", artifactNames(e, arts[:n]))
 
 	quarantine := lookupCM(e, "ContentQuarantine")
-	fmt.Printf("countermeasureDegree(ContentQuarantine) = %d\n", e.CountermeasureDegree(quarantine))
+	fmt.Fprintf(w, "countermeasureDegree(ContentQuarantine) = %d\n", e.CountermeasureDegree(quarantine))
 
 	// --- the cold path: alert strings in, log lines out ---
 
@@ -157,15 +160,11 @@ func run() error {
 		if hasParent {
 			detail = ", sub of " + e.TTPName(parent)
 		}
-		fmt.Printf("incident %q -> %s (%s%s), %d artifacts\n",
+		fmt.Fprintf(w, "incident %q -> %s (%s%s), %d artifacts\n",
 			alert, e.TTPName(id), domainName(e.TTPDomain(id)), detail, e.Degree(id, gr4ph.RelAny))
 	}
 	return nil
 }
-
-// grphDefRelAny is gr4ph.DefRelAny spelled out for readability at the call
-// site; both names refer to plane 0.
-const grphDefRelAny = gr4ph.DefRelAny
 
 func lookupTTP(e *gr4ph.Engine, name string) gr4ph.TTP {
 	id, ok := e.Incident(name)

@@ -18,8 +18,12 @@ this artifact, directly or through the techniques that touch it".
 ## Build requirement
 
 The engine is built on Go 1.27's experimental `simd` package, whose files are all gated behind the
-`goexperiment.simd` build tag. Every file here (except `cmd/d3fendgen`) carries the same tag, so a
-stock build fails with an explicit constraint error instead of undefined-symbol noise:
+`goexperiment.simd` build tag. Every file here (except `cmd/d3fendgen` and `internal/simdcheck`)
+carries the same tag, so `GOEXPERIMENT=simd` is required for the library. On a stock toolchain
+`go build .` fails with `build constraints exclude all Go files`, and `internal/simdcheck` makes
+`go build ./...` / `go test ./...` fail the same way — without it they would silently skip every gated
+package and report success while testing nothing. `go test ./cmd/d3fendgen` works without the
+experiment.
 
 ```sh
 GOEXPERIMENT=simd go build ./...     # the Makefile exports this for every target
@@ -32,7 +36,8 @@ loop over whatever width the platform provides. On the development host (i5-1031
 
 If a stock-toolchain build is ever required, add `kernel_portable.go` with
 `//go:build !goexperiment.simd` implementing `orRowInto`/`andRowInto`/`copyRow` as scalar loops and
-drop the tag from the other files. No API change.
+drop the tag from the other files. No API change. Adding that portable kernel also means deleting
+`internal/simdcheck`, whose only purpose is to make a stock `./...` build fail.
 
 ## The two flows
 
@@ -108,13 +113,15 @@ Traversals (all take/return ids, all allocate nothing):
 | method | work |
 |---|---|
 | `Adjacent` `AdjacentRel` `Defends` | 1 shift + 1 AND + 1 compare |
-| `Artifacts` `ArtifactsRel` `CountermeasuresForArtifact` `ArtifactsForCountermeasure` | 1 row (4 words) |
-| `TTPs` `TTPsRel` `CountermeasuresForTTP` `TTPsForCountermeasure` | 1 row (19 words) |
+| `Artifacts` `ArtifactsRel` `ArtifactsForCountermeasure` | 1 row (4 words) |
+| `CountermeasuresForArtifact` | 1 row (3 words) |
+| `TTPs` `TTPsRel` `TTPsForCountermeasure` | 1 row (19 words) |
+| `CountermeasuresForTTP` | 1 row (3 words) |
 | `Degree` `ArtifactDegree` `CountermeasureDegree` | popcount of one row |
 | `ArtifactsRollup` `ArtifactsRollupRel` | (1 + children) × 4 words, vector OR |
 | `TTPsRollup` `TTPsRollupRel` `TTPsForCountermeasureRollup` | 19-word row scan + parent map + 19-word bitset |
 | `CountermeasuresForTTPRollup` | (1 + children) × 3 words, vector OR |
-| `CountermeasuresForArtifactViaTTPs` | 19-word row scan + ≤ 29 × 3-word ORs + 4-word direct row |
+| `CountermeasuresForArtifactViaTTPs` | 19-word row scan + ≤ 29 × 3-word ORs + 3-word direct row |
 | `TTPsAny` `TTPsAll` `ArtifactsAny` `ArtifactsAll` | k × row words, vector OR/AND |
 
 ### Exact vs roll-up
@@ -171,6 +178,10 @@ The builder enforces two invariants, so roll-up needs no child lists:
 `off_tech_parent`, so the generator synthesises them (`DomainSPARTA`, no edges, no aliases) and the
 tree has no orphans.
 
+Each partition holds at most `MaxNodes` (65536) entries; `Add*` returns `ErrTooManyNodes` beyond that
+rather than wrapping. `NoParent` is index 65535, so the node at that index cannot itself parent
+children — passing it as a parent reads as "no parent".
+
 ## Regenerating the tables
 
 `ontology/attack_gen.go` is generated and committed; the runtime never touches the network. Sources
@@ -210,7 +221,9 @@ artifacts, countermeasures, and finally the three edge families.
 ## Concurrency
 
 `*Engine` is immutable after `Build()`. Any number of goroutines may query it concurrently as long as
-each supplies its own `dst` and `scratch` slices — queries never mutate engine state.
+each supplies its own `dst` and `scratch` slices — queries never mutate engine state. A `Builder` is
+single-use: after `Build()` every `Add*` returns `ErrBuilderUsed`, so a live `Engine` cannot be
+mutated through its builder.
 
 ## Measured performance
 
@@ -219,7 +232,7 @@ tables, 0 B/op and 0 allocs/op for every benchmark:
 
 | benchmark | ns/op |
 |---|---|
-| `TTPsRel(Process, accesses)` | 17 |
+| `TTPsRel(Process, accesses)` | 25 |
 | `TTPsAny(Process, File)` | 105 |
 | `CountermeasuresForArtifactViaTTPs(Process)` | 126 |
 | `CountermeasuresForTTPRollup(T1546)` | 259 |

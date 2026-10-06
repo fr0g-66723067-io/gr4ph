@@ -19,19 +19,22 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/fr0g-66723067/gr4ph"
 )
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "incident:", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+// run writes the whole walkthrough to w so the documented output can be pinned
+// by a test.
+func run(w io.Writer) error {
 	// Stage 1: boot. Nodes and relations are registered with their cold keys.
 	b := gr4ph.NewBuilder()
 
@@ -93,7 +96,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("nodes: %d ttp, %d artifacts, %d countermeasure; rels %d/%d; wordsPerRow %d/%d/%d\n",
+	fmt.Fprintf(w, "nodes: %d ttp, %d artifacts, %d countermeasure; rels %d/%d; wordsPerRow %d/%d/%d\n",
 		e.TTPCount(), e.ArtifactCount(), e.CountermeasureCount(), e.RelCount(), e.DefRelCount(),
 		e.WordsPerRow(gr4ph.KindTTP), e.WordsPerRow(gr4ph.KindArtifact), e.WordsPerRow(gr4ph.KindCountermeasure))
 
@@ -104,37 +107,37 @@ func run() error {
 		return fmt.Errorf("unknown alert %q", "lsass memory")
 	}
 	parent, _ := e.TTPParent(id)
-	fmt.Printf("incident %q -> %s (sub of %s)\n", "lsass memory", e.TTPName(id), e.TTPName(parent))
+	fmt.Fprintf(w, "incident %q -> %s (sub of %s)\n", "lsass memory", e.TTPName(id), e.TTPName(parent))
 
 	// Stage 4: evaluation. Both directions, exact and rolled up.
 	artifacts := make([]gr4ph.Artifact, e.ArtifactCount())
 	n := e.Artifacts(id, artifacts)
-	fmt.Printf("artifacts(%s) = %v\n", e.TTPName(id), artifactNames(e, artifacts[:n]))
+	fmt.Fprintf(w, "artifacts(%s) = %v\n", e.TTPName(id), artifactNames(e, artifacts[:n]))
 
 	rollup := make([]gr4ph.Artifact, e.ArtifactCount())
 	scratchA := make([]uint64, e.WordsPerRow(gr4ph.KindArtifact))
 	n = e.ArtifactsRollup(parent, scratchA, rollup)
-	fmt.Printf("artifactsRollup(%s) = %v\n", e.TTPName(parent), artifactNames(e, rollup[:n]))
+	fmt.Fprintf(w, "artifactsRollup(%s) = %v\n", e.TTPName(parent), artifactNames(e, rollup[:n]))
 
 	ttps := make([]gr4ph.TTP, e.TTPCount())
 	scratchT := make([]uint64, e.WordsPerRow(gr4ph.KindTTP))
 	n = e.TTPs(process, ttps)
-	fmt.Printf("ttps(%s) = %v\n", e.ArtifactName(process), ttpNames(e, ttps[:n]))
+	fmt.Fprintf(w, "ttps(%s) = %v\n", e.ArtifactName(process), ttpNames(e, ttps[:n]))
 	n = e.TTPsRollup(process, scratchT, ttps)
-	fmt.Printf("ttpsRollup(%s) = %v\n", e.ArtifactName(process), ttpNames(e, ttps[:n]))
+	fmt.Fprintf(w, "ttpsRollup(%s) = %v\n", e.ArtifactName(process), ttpNames(e, ttps[:n]))
 
 	cms := make([]gr4ph.Countermeasure, e.CountermeasureCount())
 	n = e.CountermeasuresForTTP(id, cms)
-	fmt.Printf("countermeasuresForTTP(%s) = %v\n", e.TTPName(id), cmNames(e, cms[:n]))
+	fmt.Fprintf(w, "countermeasuresForTTP(%s) = %v\n", e.TTPName(id), cmNames(e, cms[:n]))
 
 	scratchC := make([]uint64, e.WordsPerRow(gr4ph.KindCountermeasure))
 	n = e.CountermeasuresForArtifactViaTTPs(process, scratchC, cms)
-	fmt.Printf("countermeasuresForArtifactViaTTPs(%s) = %v\n", e.ArtifactName(process), cmNames(e, cms[:n]))
+	fmt.Fprintf(w, "countermeasuresForArtifactViaTTPs(%s) = %v\n", e.ArtifactName(process), cmNames(e, cms[:n]))
 
 	// Stage 5: response. Ids become log lines again.
 	lines := make([]string, e.TTPCount())
 	n = e.Response(lines, []gr4ph.TTP{id})
-	fmt.Printf("response: %v\n", lines[:n])
+	fmt.Fprintf(w, "response: %v\n", lines[:n])
 	return nil
 }
 
