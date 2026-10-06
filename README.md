@@ -87,7 +87,7 @@ make build                                 # builds ./gr4ph (or: GOEXPERIMENT=si
 
 The command carries the library's build tag, so `GOEXPERIMENT=simd` is required for it exactly as it is
 for the library. Flags may precede or follow the queries (`-json` may also precede the command), and
-`gr4ph help` prints the usage text.
+`gr4ph help` prints the usage text, flags and worked examples included.
 
 | command | query | flags | prints |
 |---|---|---|---|

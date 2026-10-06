@@ -559,6 +559,101 @@ func (errWriter) Write([]byte) (int, error) { return 0, errClosed }
 // errClosed is the write error errWriter reports.
 var errClosed = fmt.Errorf("write: closed pipe")
 
+// TestUsageExamples runs every `gr4ph ...` line of the help text through the CLI against
+// the frozen tables: an example that does not parse or resolve is a broken promise in the
+// help itself, and the section is the only place the flags are shown in use.
+func TestUsageExamples(t *testing.T) {
+	e, err := buildEngine()
+	if err != nil {
+		t.Fatalf("buildEngine: %v", err)
+	}
+	examples := usageExamples(t)
+	if len(examples) < 8 {
+		t.Fatalf("help lists %d examples, want at least 8", len(examples))
+	}
+	flags := map[string]bool{}
+	for _, args := range examples {
+		for _, a := range args {
+			if strings.HasPrefix(a, "-") {
+				flags[a] = true
+			}
+		}
+		out, stderr, status := runCase(t, e, args...)
+		if status != 0 || stderr != "" {
+			t.Errorf("gr4ph %s: status = %d, stderr = %q, want a resolved query",
+				strings.Join(args, " "), status, stderr)
+		}
+		if out == "" {
+			t.Errorf("gr4ph %s: no output", strings.Join(args, " "))
+		}
+	}
+	for _, want := range []string{"-json", "-rel", "-defrel", "-family"} {
+		if !flags[want] {
+			t.Errorf("help shows no example using %s", want)
+		}
+	}
+}
+
+// usageExamples returns the argv of every example line of the help text, in order: the
+// lines of the "examples:" section up to the blank line that ends it, each "gr4ph <args>"
+// followed by at least two spaces and its description.
+func usageExamples(t *testing.T) [][]string {
+	t.Helper()
+	var out [][]string
+	inSection := false
+	for _, line := range strings.Split(usage, "\n") {
+		switch {
+		case strings.HasPrefix(line, "examples:"):
+			inSection = true
+			continue
+		case !inSection:
+			continue
+		case strings.TrimSpace(line) == "":
+			if len(out) == 0 {
+				t.Fatal("the examples section is empty")
+			}
+			return out
+		}
+		line = strings.TrimSpace(line)
+		gap := strings.Index(line, "  ")
+		if gap < 0 {
+			t.Fatalf("example line %q has no gap before its description", line)
+		}
+		out = append(out, exampleArgs(t, strings.TrimPrefix(line[:gap], "gr4ph ")))
+	}
+	t.Fatal("the examples section has no blank line after it")
+	return nil
+}
+
+// exampleArgs splits one example into argv, keeping a single-quoted argument (which may
+// contain spaces) together and dropping the quotes.
+func exampleArgs(t *testing.T, line string) []string {
+	t.Helper()
+	var args []string
+	for i := 0; i < len(line); {
+		if line[i] == ' ' {
+			i++
+			continue
+		}
+		if line[i] != '\'' {
+			j := strings.IndexByte(line[i:], ' ')
+			if j < 0 {
+				j = len(line) - i
+			}
+			args = append(args, line[i:i+j])
+			i += j
+			continue
+		}
+		end := strings.IndexByte(line[i+1:], '\'')
+		if end < 0 {
+			t.Fatalf("example %q: unterminated quote", line)
+		}
+		args = append(args, line[i+1:i+1+end])
+		i += end + 2
+	}
+	return args
+}
+
 // TestErrors pins every failure mode the fixture can reach: the exact stderr
 // line, the exit status, and an empty stdout for every usage error.
 func TestErrors(t *testing.T) {

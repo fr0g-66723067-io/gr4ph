@@ -42,6 +42,20 @@ flags (before or after the queries; -json may also precede the command):
   cm:       -defrel <name>     defensive relation plane for the artifact set (default any)
   rel:      -family <off|def>  restrict the family (default: both)
 
+examples:
+  gr4ph ttp 'lsass memory'                 an alert string, not an id
+  gr4ph ttp T1003.001 T1003                several queries in one run
+  gr4ph ttp -rel accesses T1003.001        one offensive relation, not the union
+  gr4ph artifact Process                   triage: techniques, then countermeasures
+  gr4ph artifact -rel accesses Process     that technique set under one relation
+  gr4ph artifact -defrel suspends Process  one defensive relation, not the union
+  gr4ph cm ContentQuarantine               what a countermeasure covers
+  gr4ph cm -defrel hardens CredentialHardening  one defensive relation, artifact side
+  gr4ph rel blocks                         one line per family it is in
+  gr4ph rel -family def blocks             one family only
+  gr4ph -json ttp T0821                    one JSON object per query
+  gr4ph help                               this message
+
 exit status: 0 all queries resolved, 1 a query was not found, 2 usage error
 `
 
