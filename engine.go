@@ -8,13 +8,22 @@ import "strconv"
 // It is immutable after Build, so any number of goroutines may query it
 // concurrently as long as each supplies its own dst and scratch slices.
 //
+// # Result contract
+//
+// Every method that writes ids into dst truncates at len(dst) and returns the
+// total number of matches, which may exceed len(dst); a nil dst therefore
+// still yields the count. Ids come out in ascending index order and are
+// duplicate-free, because they are the set bits of one row.
+//
 // # Error contract
 //
 // Hot-path queries are total over the id space: an id outside its partition
 // yields no matches (0/false) rather than panicking, so a stale or foreign id
 // set can never crash a traversal. Misuse of the *engine*'s own dimensions
 // still panics, because it is a programming error with no sensible fallback:
-// a relation id >= RelCount()+1, or a scratch row shorter than
+// a relation id >= RelCount()+1 (or a defensive relation id >=
+// DefRelCount()+1), a Kind that is not one of the three partitions
+// (WordsPerRow panics "gr4ph: unknown kind"), or a scratch row shorter than
 // WordsPerRow(returned partition). The scratch check runs before the id bounds
 // check, so an undersized scratch panics even when the id is out of range.
 //
@@ -144,7 +153,7 @@ func (e *Engine) DefRelCount() int { return e.nDefRel - 1 }
 
 // WordsPerRow returns the number of uint64 words in one row over cols:
 // ceil(count(cols)/64), i.e. the minimum scratch length for a query returning
-// ids of that partition.
+// ids of that partition. A Kind outside the three partitions panics.
 func (e *Engine) WordsPerRow(cols Kind) int {
 	switch cols {
 	case KindTTP:
@@ -266,7 +275,8 @@ func (e *Engine) Response(dst []string, ids []TTP) int {
 }
 
 // CountermeasureResponse formats countermeasure ids as "<id> <label>" log
-// lines, writing "<invalid cm N>" for out-of-range ids.
+// lines, writing "<invalid cm N>" for out-of-range ids. It returns the number
+// of ids processed, which may exceed len(dst) when dst is too short.
 func (e *Engine) CountermeasureResponse(dst []string, ids []Countermeasure) int {
 	n := 0
 	for _, id := range ids {
@@ -339,6 +349,8 @@ func (e *Engine) AdjacentRel(t TTP, a Artifact, r Rel) bool {
 func (e *Engine) Artifacts(t TTP, dst []Artifact) int { return e.ArtifactsRel(t, RelAny, dst) }
 
 // ArtifactsRel is Artifacts restricted to relation r.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
 func (e *Engine) ArtifactsRel(t TTP, r Rel, dst []Artifact) int {
 	e.checkRel(r)
 	if !e.okTTP(t) {
@@ -352,6 +364,8 @@ func (e *Engine) ArtifactsRel(t TTP, r Rel, dst []Artifact) int {
 func (e *Engine) TTPs(a Artifact, dst []TTP) int { return e.TTPsRel(a, RelAny, dst) }
 
 // TTPsRel is TTPs restricted to relation r.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
 func (e *Engine) TTPsRel(a Artifact, r Rel, dst []TTP) int {
 	e.checkRel(r)
 	if !e.okArt(a) {
@@ -382,6 +396,8 @@ func (e *Engine) ArtifactDegree(a Artifact, r Rel) int {
 
 // TTPsAny writes the union of the technique rows of arts under r. Ids outside
 // the artifact partition are ignored; an empty (or all-invalid) input yields 0.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
 func (e *Engine) TTPsAny(r Rel, scratch []uint64, dst []TTP, arts []Artifact) int {
 	e.checkRel(r)
 	e.checkScratch(scratch, KindTTP)
@@ -398,6 +414,8 @@ func (e *Engine) TTPsAny(r Rel, scratch []uint64, dst []TTP, arts []Artifact) in
 
 // TTPsAll writes the intersection of the technique rows of arts under r.
 // Invalid ids are ignored; if none remain the result is empty.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
 func (e *Engine) TTPsAll(r Rel, scratch []uint64, dst []TTP, arts []Artifact) int {
 	e.checkRel(r)
 	e.checkScratch(scratch, KindTTP)
@@ -419,6 +437,10 @@ func (e *Engine) TTPsAll(r Rel, scratch []uint64, dst []TTP, arts []Artifact) in
 }
 
 // ArtifactsAny writes the union of the artifact rows of ttps under r.
+// Ids outside the technique partition are ignored; an empty (or all-invalid)
+// input yields 0.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
 func (e *Engine) ArtifactsAny(r Rel, scratch []uint64, dst []Artifact, ttps []TTP) int {
 	e.checkRel(r)
 	e.checkScratch(scratch, KindArtifact)
@@ -434,6 +456,10 @@ func (e *Engine) ArtifactsAny(r Rel, scratch []uint64, dst []Artifact, ttps []TT
 }
 
 // ArtifactsAll writes the intersection of the artifact rows of ttps under r.
+// Ids outside the technique partition are ignored; an empty (or all-invalid)
+// input yields 0.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
 func (e *Engine) ArtifactsAll(r Rel, scratch []uint64, dst []Artifact, ttps []TTP) int {
 	e.checkRel(r)
 	e.checkScratch(scratch, KindArtifact)
@@ -459,11 +485,15 @@ func (e *Engine) ArtifactsAll(r Rel, scratch []uint64, dst []Artifact, ttps []TT
 // ArtifactsRollup writes the union of the artifact rows of t and all its
 // direct sub-techniques under any relation. For a sub-technique this is
 // exactly its own row (the hierarchy is two levels deep).
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
 func (e *Engine) ArtifactsRollup(t TTP, scratch []uint64, dst []Artifact) int {
 	return e.ArtifactsRollupRel(t, RelAny, scratch, dst)
 }
 
 // ArtifactsRollupRel is ArtifactsRollup restricted to relation r.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
 func (e *Engine) ArtifactsRollupRel(t TTP, r Rel, scratch []uint64, dst []Artifact) int {
 	e.checkRel(r)
 	e.checkScratch(scratch, KindArtifact)
@@ -480,11 +510,15 @@ func (e *Engine) ArtifactsRollupRel(t TTP, r Rel, scratch []uint64, dst []Artifa
 
 // TTPsRollup writes the techniques linked to a under any relation, with every
 // sub-technique collapsed onto its parent.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
 func (e *Engine) TTPsRollup(a Artifact, scratch []uint64, dst []TTP) int {
 	return e.TTPsRollupRel(a, RelAny, scratch, dst)
 }
 
 // TTPsRollupRel is TTPsRollup restricted to relation r.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
 func (e *Engine) TTPsRollupRel(a Artifact, r Rel, scratch []uint64, dst []TTP) int {
 	e.checkRel(r)
 	e.checkScratch(scratch, KindTTP)
@@ -515,6 +549,8 @@ func (e *Engine) Defends(cm Countermeasure, t TTP) bool {
 }
 
 // CountermeasuresForTTP writes the countermeasures defending exactly t.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
 func (e *Engine) CountermeasuresForTTP(t TTP, dst []Countermeasure) int {
 	if !e.okTTP(t) {
 		return 0
@@ -524,6 +560,8 @@ func (e *Engine) CountermeasuresForTTP(t TTP, dst []Countermeasure) int {
 
 // CountermeasuresForTTPRollup writes the union of the countermeasures
 // defending t and all its direct sub-techniques.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
 func (e *Engine) CountermeasuresForTTPRollup(t TTP, scratch []uint64, dst []Countermeasure) int {
 	e.checkScratch(scratch, KindCountermeasure)
 	if !e.okTTP(t) {
@@ -539,6 +577,8 @@ func (e *Engine) CountermeasuresForTTPRollup(t TTP, scratch []uint64, dst []Coun
 
 // CountermeasuresForArtifact writes the countermeasures directly linked to a
 // under defensive relation dr (DefRelAny for the union plane).
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
 func (e *Engine) CountermeasuresForArtifact(a Artifact, dr DefRel, dst []Countermeasure) int {
 	e.checkDefRel(dr)
 	if !e.okArt(a) {
@@ -551,6 +591,8 @@ func (e *Engine) CountermeasuresForArtifact(a Artifact, dr DefRel, dst []Counter
 // the countermeasures directly linked to a, unioned with the countermeasures
 // defending every technique that touches a. Techniques are used exactly as
 // linked (no hierarchy roll-up) — see the package documentation.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
 func (e *Engine) CountermeasuresForArtifactViaTTPs(a Artifact, scratch []uint64, dst []Countermeasure) int {
 	e.checkScratch(scratch, KindCountermeasure)
 	if !e.okArt(a) {
@@ -571,6 +613,8 @@ func (e *Engine) CountermeasuresForArtifactViaTTPs(a Artifact, scratch []uint64,
 
 // ArtifactsForCountermeasure writes the artifacts linked from cm under
 // defensive relation dr (DefRelAny for the union plane).
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
 func (e *Engine) ArtifactsForCountermeasure(cm Countermeasure, dr DefRel, dst []Artifact) int {
 	e.checkDefRel(dr)
 	if !e.okCM(cm) {
@@ -581,6 +625,8 @@ func (e *Engine) ArtifactsForCountermeasure(cm Countermeasure, dr DefRel, dst []
 
 // TTPsForCountermeasure writes the techniques defended by cm, exactly as
 // linked (sub-technique ids included).
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
 func (e *Engine) TTPsForCountermeasure(cm Countermeasure, dst []TTP) int {
 	if !e.okCM(cm) {
 		return 0
@@ -590,6 +636,8 @@ func (e *Engine) TTPsForCountermeasure(cm Countermeasure, dst []TTP) int {
 
 // TTPsForCountermeasureRollup is TTPsForCountermeasure with every
 // sub-technique collapsed onto its parent.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
 func (e *Engine) TTPsForCountermeasureRollup(cm Countermeasure, scratch []uint64, dst []TTP) int {
 	e.checkScratch(scratch, KindTTP)
 	if !e.okCM(cm) {

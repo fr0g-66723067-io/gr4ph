@@ -32,15 +32,22 @@ type Domain uint8
 type Kind uint8
 
 const (
+	// DomainEnterprise is the ATT&CK Enterprise domain.
 	DomainEnterprise Domain = 0
-	DomainICS        Domain = 1
-	DomainMobile     Domain = 2
-	DomainSPARTA     Domain = 3
+	// DomainICS is the ATT&CK ICS domain.
+	DomainICS Domain = 1
+	// DomainMobile is the ATT&CK Mobile domain.
+	DomainMobile Domain = 2
+	// DomainSPARTA tags a node D3FEND names that exists in no ATT&CK domain.
+	DomainSPARTA Domain = 3
 )
 
 const (
-	KindTTP            Kind = 0
-	KindArtifact       Kind = 1
+	// KindTTP selects the technique partition.
+	KindTTP Kind = 0
+	// KindArtifact selects the artifact partition.
+	KindArtifact Kind = 1
+	// KindCountermeasure selects the countermeasure partition.
 	KindCountermeasure Kind = 2
 )
 
@@ -62,21 +69,38 @@ const MaxNodes = 65536
 // children: passing it as a parent reads as "no parent".
 const NoParent TTP = 65535
 
+// The Builder's error vocabulary: every Add* returns one of these, and Build
+// returns ErrBuilderUsed on a second call.
 var (
-	ErrTooManyNodes          = errors.New("gr4ph: node space exhausted (65536)")
-	ErrTooManyRels           = errors.New("gr4ph: relation space exhausted (255)")
-	ErrUnknownTTP            = errors.New("gr4ph: unknown ttp id")
-	ErrUnknownArtifact       = errors.New("gr4ph: unknown artifact id")
+	// ErrTooManyNodes: more than MaxNodes nodes in one partition.
+	ErrTooManyNodes = errors.New("gr4ph: node space exhausted (65536)")
+	// ErrTooManyRels: more than 255 registered relations in one family.
+	ErrTooManyRels = errors.New("gr4ph: relation space exhausted (255)")
+	// ErrUnknownTTP: the technique id was never registered.
+	ErrUnknownTTP = errors.New("gr4ph: unknown ttp id")
+	// ErrUnknownArtifact: the artifact id was never registered.
+	ErrUnknownArtifact = errors.New("gr4ph: unknown artifact id")
+	// ErrUnknownCountermeasure: the countermeasure id was never registered.
 	ErrUnknownCountermeasure = errors.New("gr4ph: unknown countermeasure id")
-	ErrUnknownRel            = errors.New("gr4ph: unknown relation id")
-	ErrUnknownDefRel         = errors.New("gr4ph: unknown defensive relation id")
-	ErrUnknownParent         = errors.New("gr4ph: parent ttp not registered")
-	ErrNonContiguousChild    = errors.New("gr4ph: child must be registered immediately after its parent's child block")
-	ErrDepthExceeded         = errors.New("gr4ph: hierarchy deeper than two levels")
-	ErrEmptyKey              = errors.New("gr4ph: empty node or relation key")
-	ErrUnknownDomain         = errors.New("gr4ph: unknown domain")
-	ErrBuilderUsed           = errors.New("gr4ph: builder already built")
-	ErrReservedName          = errors.New(`gr4ph: reserved name "any"`)
+	// ErrUnknownRel: the offensive relation id was never registered.
+	ErrUnknownRel = errors.New("gr4ph: unknown relation id")
+	// ErrUnknownDefRel: the defensive relation id was never registered.
+	ErrUnknownDefRel = errors.New("gr4ph: unknown defensive relation id")
+	// ErrUnknownParent: the parent technique was never registered.
+	ErrUnknownParent = errors.New("gr4ph: parent ttp not registered")
+	// ErrNonContiguousChild: a child must be registered immediately after its
+	// parent's child block.
+	ErrNonContiguousChild = errors.New("gr4ph: child must be registered immediately after its parent's child block")
+	// ErrDepthExceeded: the parent is itself a sub-technique.
+	ErrDepthExceeded = errors.New("gr4ph: hierarchy deeper than two levels")
+	// ErrEmptyKey: the node or relation key is empty.
+	ErrEmptyKey = errors.New("gr4ph: empty node or relation key")
+	// ErrUnknownDomain: the domain is not one of the four Domain constants.
+	ErrUnknownDomain = errors.New("gr4ph: unknown domain")
+	// ErrBuilderUsed: the builder has already been built.
+	ErrBuilderUsed = errors.New("gr4ph: builder already built")
+	// ErrReservedName: the key is the reserved union-plane name "any".
+	ErrReservedName = errors.New(`gr4ph: reserved name "any"`)
 )
 
 // Builder accumulates the cold-path graph: node keys (id, label, aliases),
@@ -205,11 +229,14 @@ func (b *Builder) AddDefRel(name string) (DefRel, error) {
 }
 
 // AddTTP registers a technique and returns its dense id. Idempotent on the
-// normalised id (a second call returns the stored id and ignores its other
-// arguments: label, domain, parent, aliases). parent must be NoParent or an
-// already-registered top-level technique whose child block the new node extends
-// contiguously. An id that normalises to the empty string returns ErrEmptyKey; a
-// dom other than the four Domain constants returns ErrUnknownDomain.
+// normalised id: a second call with the same id returns the stored id and
+// ignores its other arguments (label, domain, parent, aliases). Labels and
+// aliases are lookup keys too, so an id that normalises to an existing label or
+// alias returns that node as well: first registration wins. parent must be
+// NoParent or an already-registered top-level technique whose child block the
+// new node extends contiguously. An id that normalises to the empty string
+// returns ErrEmptyKey; a dom other than the four Domain constants returns
+// ErrUnknownDomain.
 func (b *Builder) AddTTP(id, label string, dom Domain, parent TTP, aliases ...string) (TTP, error) {
 	if b.built {
 		return 0, ErrBuilderUsed
@@ -260,7 +287,8 @@ func (b *Builder) AddTTP(id, label string, dom Domain, parent TTP, aliases ...st
 }
 
 // AddArtifact registers an artifact and returns its dense id. Idempotent on the
-// normalised name; the label is registered as a lookup key too.
+// normalised name; the label is registered as a lookup key too. It takes no
+// aliases: artifacts are looked up by name or label only.
 func (b *Builder) AddArtifact(name, label string) (Artifact, error) {
 	if b.built {
 		return 0, ErrBuilderUsed

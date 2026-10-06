@@ -113,7 +113,7 @@ Sizes and cold path:
 | `TTPCount` `ArtifactCount` `CountermeasureCount` `RelCount` `DefRelCount` `WordsPerRow` | O(1) | 0 |
 | `Incident(alert) (TTP, bool)`, `Artifact(s)`, `Countermeasure(s)` | map lookup (trim + lower) | cold |
 | `TTPName` `TTPLabel` `ArtifactName` `ArtifactLabel` `CountermeasureName` `CountermeasureLabel` `TTPDomain` | O(1) | 0 |
-| `Rel` `DefRel` | map lookup (trim + lower), `"any"` is the union plane | cold |
+| `Rel` `DefRel` | map lookup (trim + lower), `"any"` is the union plane and cannot be registered (`ErrReservedName`) | cold |
 | `RelName` `DefRelName` | O(1) | 0 |
 | `Response(dst, ids)` `CountermeasureResponse(dst, ids)` | formats `<id> <label>` | cold |
 | `TTPParent` `TTPChildCount` `TTPChildren` | O(1) / O(children) | 0 |
@@ -133,6 +133,17 @@ Traversals (all take/return ids, all allocate nothing):
 | `CountermeasuresForTTPRollup` | (1 + children) × 3 words, vector OR |
 | `CountermeasuresForArtifactViaTTPs` | 19-word row scan + ≤ 29 × 3-word ORs + 3-word direct row |
 | `TTPsAny` `TTPsAll` `ArtifactsAny` `ArtifactsAll` | k × row words, vector OR/AND |
+
+Builder (cold path; the builder is single-use and then frozen by `Build`):
+
+| method | notes |
+|---|---|
+| `NewBuilder()` | fresh builder; the union plane `"any"` is seeded |
+| `AddRel(name)` `AddDefRel(name)` | plane ids in registration order; `"any"` is reserved |
+| `AddTTP(id, label, dom, parent, aliases…)` | `ErrDepthExceeded` / `ErrNonContiguousChild` / `ErrUnknownParent` |
+| `AddArtifact(name, label)` `AddCountermeasure(id, label, aliases…)` | |
+| `AddEdge(t, a, r)` `AddDefEdge(cm, a, dr)` `AddDefendsEdge(cm, t)` | edges are ORed into the planes |
+| `Built()` `Build()` | `Build` is single-use: `ErrBuilderUsed` afterwards |
 
 ### Exact vs roll-up
 
@@ -159,12 +170,17 @@ Shorter `scratch` panics (`gr4ph: scratch too small`).
 
 ### Error contract
 
+* Every traversal truncates its results at `len(dst)` and returns the **total** number of matches, so
+  a nil or short `dst` still yields the count. Ids come out in ascending index order and are
+  duplicate-free (they are the set bits of a row). Single-id traversals take `(id, rel, dst)`; set
+  operations take `(rel, scratch, dst, ids…)`.
 * Hot-path queries are **total** over the id space: an id outside its partition yields no matches
   (`0`/`false`). A stale or foreign id set can never crash a traversal, and an empty engine answers
   every query with 0/false.
-* Engine-dimension misuse panics, because there is no sensible fallback: a relation id
-  `>= RelCount()+1`, or an undersized `scratch`. The scratch check runs before the id bounds check, so
-  an undersized `scratch` panics even when the id is out of range.
+* Engine-dimension misuse panics, because there is no sensible fallback: an offensive relation id
+  `>= RelCount()+1`, a defensive relation id `>= DefRelCount()+1`, a `Kind` outside the three
+  partitions (`WordsPerRow`), or an undersized `scratch`. The scratch check runs before the id bounds
+  check, so an undersized `scratch` panics even when the id is out of range.
 * The cold string accessors (`TTPName`, `TTPLabel`, `TTPDomain`, `ArtifactName`, …) panic on an
   out-of-range id. `Response` / `CountermeasureResponse` are the total boundary formatters: they
   render `<invalid ttp N>` / `<invalid cm N>` and still count the entry.
