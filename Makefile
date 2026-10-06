@@ -9,10 +9,17 @@
 export GOEXPERIMENT=simd
 
 GO ?= go
+BIN ?= gr4ph
 
-.PHONY: all vet test gen bench fmt clean stock
+.PHONY: all build vet test gen bench fmt clean stock
 
 all: vet test
+
+# Builds the lookup CLI (cmd/gr4ph) into ./gr4ph. The command carries the
+# library's build tag, so it needs the experiment exported above, exactly like
+# the library; the stock-toolchain failure is pinned by `make stock`.
+build:
+	$(GO) build -o $(BIN) ./cmd/gr4ph
 
 vet:
 	$(GO) vet ./...
@@ -49,3 +56,4 @@ fmt:
 
 clean:
 	$(GO) clean -testcache
+	rm -f $(BIN)

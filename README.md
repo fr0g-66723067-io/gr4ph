@@ -82,7 +82,7 @@ its dense id, and every relation of that node is printed in both directions.
 
 ```sh
 GOEXPERIMENT=simd go run ./cmd/gr4ph <command> [flags] <query> [<query>...]
-GOEXPERIMENT=simd go build ./cmd/gr4ph     # produces a `gr4ph` binary
+make build                                 # builds ./gr4ph (or: GOEXPERIMENT=simd go build ./cmd/gr4ph)
 ```
 
 The command carries the library's build tag, so `GOEXPERIMENT=simd` is required for it exactly as it is

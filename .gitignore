@@ -8,6 +8,10 @@
 /d3fendgen
 /cmd/d3fendgen/d3fendgen
 
+# `make build` (or `go build ./cmd/gr4ph`) drops the lookup CLI here.
+/gr4ph
+/cmd/gr4ph/gr4ph
+
 # Editor and OS droppings.
 .DS_Store
 *~
