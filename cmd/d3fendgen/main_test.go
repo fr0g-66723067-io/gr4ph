@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"go/parser"
 	"go/token"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -412,7 +414,8 @@ func TestRunEndToEnd(t *testing.T) {
 	dir, ent, ics, mob, csvPath := writeFixtures(t)
 
 	out := filepath.Join(dir, "out", "attack_gen.go")
-	if err := run(ent, ics, mob, csvPath, out, testShape); err != nil {
+	var buf bytes.Buffer
+	if err := run(ent, ics, mob, csvPath, out, &buf, testShape); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	src, err := os.ReadFile(out)
@@ -449,6 +452,20 @@ func TestRunEndToEnd(t *testing.T) {
 			t.Errorf("generated source is missing %q", want)
 		}
 	}
+
+	// The shape report is the documented stdout contract (README "Regenerating
+	// the tables"), so pin it byte for byte: same labels, same padding, same
+	// order.
+	wantSummary := "d3fendgen: wrote " + out + "\n" +
+		"  ttps           6 (2 enterprise, 1 mobile, 1 ics, 2 sparta)\n" +
+		"  artifacts      2\n" +
+		"  countermeasures 1\n" +
+		"  relations      1 offensive, 2 defensive\n" +
+		"  edges          2 offensive, 2 defensive, 2 defends-against\n" +
+		"  hierarchy      4 top-level, 2 sub-techniques, 2 parents, max 1 children\n"
+	if got := buf.String(); got != wantSummary {
+		t.Fatalf("summary mismatch\n--- got ---\n%s--- want ---\n%s", got, wantSummary)
+	}
 }
 
 // TestRunErrorPaths pins error propagation: a missing source, malformed STIX, a
@@ -466,18 +483,18 @@ func TestRunErrorPaths(t *testing.T) {
 	}
 	out := filepath.Join(dir, "attack_gen.go")
 
-	if err := run(filepath.Join(dir, "nope.json"), ics, mob, csvPath, out, testShape); err == nil {
+	if err := run(filepath.Join(dir, "nope.json"), ics, mob, csvPath, out, io.Discard, testShape); err == nil {
 		t.Fatal("missing enterprise source must fail")
 	}
 	bad := write("bad.json", "{")
-	if err := run(bad, ics, mob, csvPath, out, testShape); err == nil || !strings.Contains(err.Error(), "parse STIX") {
+	if err := run(bad, ics, mob, csvPath, out, io.Discard, testShape); err == nil || !strings.Contains(err.Error(), "parse STIX") {
 		t.Fatalf("malformed STIX err = %v, want a parse-STIX error", err)
 	}
 	badCSV := write("bad.csv", "off_tech,off_artifact\nhttp://x#T1,http://x#A1\n")
-	if err := run(ent, ics, mob, badCSV, out, testShape); err == nil || !strings.Contains(err.Error(), "missing column") {
+	if err := run(ent, ics, mob, badCSV, out, io.Discard, testShape); err == nil || !strings.Contains(err.Error(), "missing column") {
 		t.Fatalf("bad CSV err = %v, want a missing-column error", err)
 	}
-	if err := run(ent, ics, mob, csvPath, out, pinnedShape); err == nil || !strings.Contains(err.Error(), "shape drift") {
+	if err := run(ent, ics, mob, csvPath, out, io.Discard, pinnedShape); err == nil || !strings.Contains(err.Error(), "shape drift") {
 		t.Fatalf("shape mismatch err = %v, want a shape-drift error", err)
 	}
 	if _, err := os.Stat(out); !os.IsNotExist(err) {
@@ -486,10 +503,10 @@ func TestRunErrorPaths(t *testing.T) {
 
 	// Each ATT&CK source is parsed, not just the first: malformed ICS and
 	// mobile bundles must fail too.
-	if err := run(ent, bad, mob, csvPath, out, testShape); err == nil || !strings.Contains(err.Error(), "parse STIX") {
+	if err := run(ent, bad, mob, csvPath, out, io.Discard, testShape); err == nil || !strings.Contains(err.Error(), "parse STIX") {
 		t.Fatalf("malformed ICS err = %v, want a parse-STIX error", err)
 	}
-	if err := run(ent, ics, bad, csvPath, out, testShape); err == nil || !strings.Contains(err.Error(), "parse STIX") {
+	if err := run(ent, ics, bad, csvPath, out, io.Discard, testShape); err == nil || !strings.Contains(err.Error(), "parse STIX") {
 		t.Fatalf("malformed mobile err = %v, want a parse-STIX error", err)
 	}
 
@@ -498,26 +515,26 @@ func TestRunErrorPaths(t *testing.T) {
 	deep := write("deep.csv", testCSV+
 		"CM One,analyzes,A One,A Three,accesses,Deep,Deep Two,"+
 		"http://x#CM1,http://x#analyzes,http://x#A1,http://x#A3,http://x#accesses,http://x#D-1.1.1,http://x#D-1.1\n")
-	if err := run(ent, ics, mob, deep, out, testShape); err == nil ||
+	if err := run(ent, ics, mob, deep, out, io.Discard, testShape); err == nil ||
 		!strings.Contains(err.Error(), "deeper than two levels") {
 		t.Fatalf("deep hierarchy err = %v, want a depth error", err)
 	}
 
 	// Every source load fails loudly, not just the first one.
-	if err := run(ent, filepath.Join(dir, "nope.json"), mob, csvPath, out, testShape); err == nil {
+	if err := run(ent, filepath.Join(dir, "nope.json"), mob, csvPath, out, io.Discard, testShape); err == nil {
 		t.Fatal("missing ICS source must fail")
 	}
-	if err := run(ent, ics, filepath.Join(dir, "nope.json"), csvPath, out, testShape); err == nil {
+	if err := run(ent, ics, filepath.Join(dir, "nope.json"), csvPath, out, io.Discard, testShape); err == nil {
 		t.Fatal("missing mobile source must fail")
 	}
-	if err := run(ent, ics, mob, filepath.Join(dir, "nope.json"), out, testShape); err == nil {
+	if err := run(ent, ics, mob, filepath.Join(dir, "nope.json"), out, io.Discard, testShape); err == nil {
 		t.Fatal("missing D3FEND source must fail")
 	}
 
 	// Correct counts, wrong union-plane cardinality.
 	badPairs := testShape
 	badPairs.offPairs++
-	if err := run(ent, ics, mob, csvPath, out, badPairs); err == nil ||
+	if err := run(ent, ics, mob, csvPath, out, io.Discard, badPairs); err == nil ||
 		!strings.Contains(err.Error(), "distinct technique/artifact pairs") {
 		t.Fatalf("pair-count mismatch err = %v, want a distinct-pairs error", err)
 	}
@@ -525,10 +542,10 @@ func TestRunErrorPaths(t *testing.T) {
 	// Unwritable output: the parent path is a file, then the path itself is a
 	// directory.
 	blocker := write("blocker", "not a directory")
-	if err := run(ent, ics, mob, csvPath, filepath.Join(blocker, "attack_gen.go"), testShape); err == nil {
+	if err := run(ent, ics, mob, csvPath, filepath.Join(blocker, "attack_gen.go"), io.Discard, testShape); err == nil {
 		t.Fatal("an output under a file must fail")
 	}
-	if err := run(ent, ics, mob, csvPath, dir, testShape); err == nil {
+	if err := run(ent, ics, mob, csvPath, dir, io.Discard, testShape); err == nil {
 		t.Fatal("an output over an existing directory must fail")
 	}
 }

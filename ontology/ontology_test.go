@@ -826,7 +826,7 @@ func BenchmarkOntologyTTPsRel(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		_ = e.TTPsRel(a, r, dst)
+		ontologySink += e.TTPsRel(a, r, dst)
 	}
 }
 
@@ -838,7 +838,7 @@ func BenchmarkOntologyTTPsAnyProcessFile(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		_ = e.TTPsAny(gr4ph.RelAny, scratch, dst, arts)
+		ontologySink += e.TTPsAny(gr4ph.RelAny, scratch, dst, arts)
 	}
 }
 
@@ -850,7 +850,7 @@ func BenchmarkOntologyCountermeasuresForArtifactViaTTPs(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		_ = e.CountermeasuresForArtifactViaTTPs(a, scratch, dst)
+		ontologySink += e.CountermeasuresForArtifactViaTTPs(a, scratch, dst)
 	}
 }
 
@@ -862,6 +862,6 @@ func BenchmarkOntologyCountermeasuresForTTPRollup(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		_ = e.CountermeasuresForTTPRollup(tp, scratch, dst)
+		ontologySink += e.CountermeasuresForTTPRollup(tp, scratch, dst)
 	}
 }

@@ -1,4 +1,8 @@
 # Raw upstream data never enters git: the generator fetches the pinned sources
-# on demand and only the generated Go tables are committed.
-*.json
-*.csv
+# on demand and only the generated Go tables are committed. Root-scoped so that
+# testdata fixtures are not silently ignored.
+/*.json
+/*.csv
+
+# `go build ./cmd/d3fendgen` in the repo root drops the binary here.
+/d3fendgen

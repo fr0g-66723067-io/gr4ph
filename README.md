@@ -29,10 +29,18 @@ experiment.
 GOEXPERIMENT=simd go build ./...     # the Makefile exports this for every target
 ```
 
-`simd.VectorBitSize()` is chosen at **runtime** by the `simd` package, not by this module: the kernels
-loop over whatever width the platform provides. On the development host (i5-10310U, AVX2, no
-`vpclmulqdq`) the package feature-reduces to **128-bit / 2 lanes**; `GODEBUG=simd=+256` opts into
-256-bit. Nothing in the module asserts a width, and every test passes at 128, 256 or emulated widths.
+`simd.VectorBitSize()` is chosen at **runtime** by the `simd` package, not by this module. The kernels
+stride by the vector width (`wordsPerVector = simd.VectorBitSize()/64`), use the full-width
+`LoadUint64s`/`Store` pair for whole vectors and a scalar loop for the tail. They never use the count
+`LoadUint64sPart` reports, which is `min(wordsPerVector, len(s))` on hardware but `len(s)` under
+`GODEBUG=simd=0` — advancing by it silently drops the tail of every row that is not a whole number of
+vectors. `make test` therefore runs the suite twice, at the platform width and with `GODEBUG=simd=0`,
+and both passes must be green.
+
+On the development host (i5-10310U, AVX2, no `vpclmulqdq`) the package feature-reduces to **128-bit /
+2 lanes**, so `GODEBUG=simd=256` panics at init instead of silently emulating. `GODEBUG=simd=+256`
+opts into 256-bit by skipping the CPU feature check; it is a manual, host-specific check (it can
+SIGILL on a CPU without AVX2) and this module's suite was verified that way.
 
 If a stock-toolchain build is ever required, add `kernel_portable.go` with
 `//go:build !goexperiment.simd` implementing `orRowInto`/`andRowInto`/`copyRow` as scalar loops and
@@ -200,15 +208,17 @@ make gen        # go run ./cmd/d3fendgen -out ontology/attack_gen.go   (network 
 
 `cmd/d3fendgen` is untagged and imports nothing from this module, so it regenerates on a stock
 toolchain; `-enterprise`/`-ics`/`-mobile`/`-d3fend` accept local paths for an offline rerun, and the
-output is byte-identical either way. The generated shape is asserted, not assumed:
+output is byte-identical either way. The generated shape is asserted, not assumed, and a run reports
+exactly what it measured (this is `make gen`'s stdout on the pinned sources, byte for byte):
 
 ```
-ttps            1186 (858 enterprise, 176 mobile, 106 ics, 46 sparta)
-artifacts       247
-countermeasures 157
-relations       41 offensive, 38 defensive
-edges           670 offensive, 182 defensive, 4133 defends-against
-hierarchy       605 top-level, 581 sub-techniques, 148 parents, max 18 children
+d3fendgen: wrote ontology/attack_gen.go
+  ttps           1186 (858 enterprise, 176 mobile, 106 ics, 46 sparta)
+  artifacts      247
+  countermeasures 157
+  relations      41 offensive, 38 defensive
+  edges          670 offensive, 182 defensive, 4133 defends-against
+  hierarchy      605 top-level, 581 sub-techniques, 148 parents, max 18 children
 ```
 
 If a future upstream release changes any of those, the generator fails with the actual counts instead
@@ -228,15 +238,20 @@ mutated through its builder.
 ## Measured performance
 
 `go test -bench . -benchmem ./ontology` on the development host (i5-10310U, 128-bit vectors), real
-tables, 0 B/op and 0 allocs/op for every benchmark:
+tables, 0 B/op and 0 allocs/op for every benchmark (ns/op below is the median of 5 runs, `-count=5`):
 
 | benchmark | ns/op |
 |---|---|
-| `TTPsRel(Process, accesses)` | 25 |
-| `TTPsAny(Process, File)` | 105 |
-| `CountermeasuresForArtifactViaTTPs(Process)` | 126 |
-| `CountermeasuresForTTPRollup(T1546)` | 259 |
+| `TTPsRel(Process, accesses)` | 16 |
+| `TTPsAny(Process, File)` | 97 |
+| `CountermeasuresForArtifactViaTTPs(Process)` | 114 |
+| `CountermeasuresForTTPRollup(T1546)` | 221 |
 | `AdjacentRel` (root package) | 6 |
 
 The zero-allocation contract is enforced by tests, not by convention: `AllocsPerRun` must be 0 for
 all 29 hot methods on both a synthetic graph and the 1186-node engine.
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE). Copyright 2026 fr0g <fr0g@66723067.io>
+(see [NOTICE](NOTICE)).

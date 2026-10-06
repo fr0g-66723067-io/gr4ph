@@ -99,13 +99,15 @@ func main() {
 	out := flag.String("out", filepath.Join("ontology", "attack_gen.go"), "output Go file")
 	flag.Parse()
 
-	if err := run(*entSrc, *icsSrc, *mobSrc, *d3Src, *out, pinnedShape); err != nil {
+	if err := run(*entSrc, *icsSrc, *mobSrc, *d3Src, *out, os.Stdout, pinnedShape); err != nil {
 		fmt.Fprintln(os.Stderr, "d3fendgen:", err)
 		os.Exit(1)
 	}
 }
 
-func run(entSrc, icsSrc, mobSrc, d3Src, out string, want shape) error {
+// run loads the four sources, assembles and shape-checks the graph, writes the
+// generated file and reports the measured shape to w.
+func run(entSrc, icsSrc, mobSrc, d3Src, out string, w io.Writer, want shape) error {
 	// ATT&CK first, in precedence order: an id seen in enterprise is never
 	// re-tagged by ICS or mobile (no cross-domain collisions exist in 19.2, so
 	// this is only a defensive tiebreak).
@@ -153,13 +155,13 @@ func run(entSrc, icsSrc, mobSrc, d3Src, out string, want shape) error {
 		return err
 	}
 
-	fmt.Printf("d3fendgen: wrote %s\n", out)
-	fmt.Printf("  ttps           %d (%s)\n", len(m.ttpIDs), m.domainHistogram())
-	fmt.Printf("  artifacts      %d\n", len(m.artNames))
-	fmt.Printf("  countermeasures %d\n", len(m.cmIDs))
-	fmt.Printf("  relations      %d offensive, %d defensive\n", len(m.offRelNames), len(m.defRelNames))
-	fmt.Printf("  edges          %d offensive, %d defensive, %d defends-against\n", len(m.offT), len(m.defC), len(m.defendsC))
-	fmt.Printf("  hierarchy      %d top-level, %d sub-techniques, %d parents, max %d children\n",
+	fmt.Fprintf(w, "d3fendgen: wrote %s\n", out)
+	fmt.Fprintf(w, "  ttps           %d (%s)\n", len(m.ttpIDs), m.domainHistogram())
+	fmt.Fprintf(w, "  artifacts      %d\n", len(m.artNames))
+	fmt.Fprintf(w, "  countermeasures %d\n", len(m.cmIDs))
+	fmt.Fprintf(w, "  relations      %d offensive, %d defensive\n", len(m.offRelNames), len(m.defRelNames))
+	fmt.Fprintf(w, "  edges          %d offensive, %d defensive, %d defends-against\n", len(m.offT), len(m.defC), len(m.defendsC))
+	fmt.Fprintf(w, "  hierarchy      %d top-level, %d sub-techniques, %d parents, max %d children\n",
 		m.topLevel(), len(m.ttpIDs)-m.topLevel(), m.parentCount(), m.maxChildren())
 	return nil
 }
