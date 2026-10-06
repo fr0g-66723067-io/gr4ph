@@ -1,84 +1,57 @@
 #!/usr/bin/env bash
 #
-# scenarios.sh — a tour of the gr4ph command line.
-#
-# Each block below prints one real invocation and the answer the tool gives, so you can see
-# the shapes and pick the ones that fit your question. Nothing is checked and nothing is
-# expected: run it to read the tool's own output.
-#
-# The defence sections read an alert, an artifact or a countermeasure the way a responder
-# does; the attack sections read the same graph the way an operator planning authorized
-# testing does. The last section shows the machine-readable form, the failures and the help.
+# scenarios.sh — the ways to ask the gr4ph CLI a question, on defence and attack data.
+# Every command prints the tool's complete answer; a set is one line, however long its
+# node list is, so let the terminal wrap it.
 #
 #   make build && examples/scenarios.sh
 #
-# GR4PH= overrides the binary (default ./gr4ph), COLS= the display width (default 100).
-set -uo pipefail
+# Run from the module root: the commands use ./gr4ph, the binary `make build` produces.
 
-GR4PH=${GR4PH:-./gr4ph}
-COLS=${COLS:-100}
+echo 'Defence: an alert arrives as a label, not as an id'
+./gr4ph ttp 'lsass memory'            # id, label or alias; trimmed and case-insensitive
 
-if [ ! -x "$GR4PH" ]; then
-	printf 'scenarios: %s is not executable — run "make build" first (or set GR4PH=)\n' "$GR4PH" >&2
-	exit 2
-fi
+echo 'Defence: this sub-technique, or its whole family rolled up'
+./gr4ph ttp T1003.001                 # exact: what this sub-technique itself touches
+./gr4ph ttp T1003                     # rolled up: sub-techniques collapsed onto their parents
 
-# section <title> — start a group of related invocations.
-section() { printf '\n=== %s\n' "$*"; }
+echo 'Defence: start from the artifact, then narrow either direction'
+./gr4ph artifact Process              # techniques that touch it, then the countermeasures that apply
+./gr4ph artifact -rel accesses Process    # only the techniques linked by that offensive relation
+./gr4ph artifact -defrel suspends Process # only the countermeasures linked by that defensive relation
 
-# ask <args...> — show the invocation and what the CLI answers, cut to $COLS columns for
-# width. The "(exit N)" line appears only when the command did not succeed.
-ask() {
-	printf '\n$ %s' "$GR4PH"
-	printf ' %q' "$@"
-	printf '\n'
-	"$GR4PH" "$@" | cut -c1-"$COLS"
-	local status=${PIPESTATUS[0]}
-	[ "$status" -eq 0 ] || printf '(exit %d)\n' "$status"
-}
+echo 'Defence: start from a countermeasure'
+./gr4ph cm ContentQuarantine          # what it covers, exact and rolled up
+./gr4ph cm -defrel hardens CredentialHardening
 
-section "Defence — an alert arrives as a label, not as an id"
-ask ttp 'lsass memory'                # id, label or alias; trimmed and case-insensitive
+echo 'Defence: several questions in one invocation'
+./gr4ph artifact Process File         # one block per query
 
-section "Defence — this sub-technique, or its whole family"
-ask ttp T1003.001                     # exact: what this sub-technique itself touches
-ask ttp T1003                         # rolled up: the family, sub-techniques collapsed to parents
+echo 'Defence: the relation planes themselves'
+./gr4ph rel any                       # the two union planes, with edges and sources
+./gr4ph rel monitors                  # a name in both families: one line per family
+./gr4ph rel detects
+./gr4ph rel -family def blocks        # -family picks the side you asked for
 
-section "Defence — start from the artifact instead"
-ask artifact Process                  # techniques that touch it, then the countermeasures that apply
-ask artifact -rel accesses Process    # only the techniques linked by that offensive relation
-ask artifact -defrel suspends Process # only the countermeasures linked by that defensive relation
+echo 'Attack: the artifacts a technique is about'
+./gr4ph ttp T1546.007                 # everything it touches
+./gr4ph ttp T1546.007 -rel modifies   # only what it modifies
+./gr4ph ttp T0821                     # an ICS technique: OT artifacts, same commands
 
-section "Defence — start from a countermeasure"
-ask cm ContentQuarantine              # the artifacts and techniques it covers, exact and rolled up
-ask cm -defrel hardens CredentialHardening # restricted to one defensive relation
+echo 'Attack: how much surface there is'
+./gr4ph artifact CreateProcess        # the widest artifact in the partition
+./gr4ph rel modifies                  # the largest offensive plane
+./gr4ph ttp DE-0003                   # a D3FEND-named node (domain=sparta), coverage rolled up
 
-section "Defence — several questions in one invocation"
-ask artifact Process File             # one block per query: Process, then File
+echo 'Scripting: one JSON object per resolved query'
+./gr4ph -json rel detects
+./gr4ph -json ttp T1603
 
-section "Defence — read the relation planes themselves"
-ask rel any                           # the two union planes, with edges and sources each
-ask rel monitors                      # a name in both families: one line per family
-ask rel detects
-ask rel -family def blocks            # -family narrows to the side you asked for
+echo 'Failures: an unresolved key (exit 1) and a usage error (exit 2)'
+./gr4ph ttp 'lsass memroy'
+echo $?
+./gr4ph rel -family sideways accesses
+echo $?
 
-section "Attack — the artifacts a technique is about"
-ask ttp T1546.007                     # every artifact this technique touches
-ask ttp T1546.007 -rel modifies       # ... restricted to the relation the question is about
-ask ttp T0821                         # an ICS technique: OT artifacts, same commands
-
-section "Attack — how much surface there is"
-ask artifact CreateProcess            # the widest artifact in the partition
-ask rel modifies                      # the largest offensive plane, counted pair by pair
-ask ttp DE-0003                       # a D3FEND-named node (domain=sparta) whose coverage is rolled up
-
-section "Scripting — one JSON object per resolved query"
-COLS=140 ask -json rel detects        # a rel result: family, plane id, edges, sources
-COLS=400 ask -json ttp T1603          # a node result (a mobile technique with no links): id, keys, sets
-
-section "Failures and help"
-ask ttp 'lsass memroy'                # unresolved key: a message, exit 1, no block
-ask rel -family sideways accesses     # usage error: exit 2
-ask help                              # flags, exit statuses and the four commands
-
-printf '\nDone — every line above came from %s.\n' "$GR4PH"
+echo 'Help'
+./gr4ph help

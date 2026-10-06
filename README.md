@@ -185,10 +185,10 @@ $ ./gr4ph -json rel blocks
 {"query":"blocks","kind":"rel","name":"blocks","planes":[{"family":"offensive","id":4,"count":41,"edges":2,"sources":2},{"family":"defensive","id":3,"count":38,"edges":6,"sources":6}]}
 ```
 
-`examples/scenarios.sh` is a tour of the command line rather than a test: it prints one real invocation
-after another — the four commands, the relation and family filters, several queries per call, `-json`,
-the failures and `help` — grouped into defence and attack scenarios, with no expected output to match.
-Run it after `make build`.
+`examples/scenarios.sh` is a plain list of `gr4ph` commands — the four commands, the relation and family
+filters, several queries per call, `-json`, the failures and `help` — grouped into defence and attack
+scenarios. Nothing is checked and nothing is trimmed: it prints each answer in full, so run it after
+`make build` and read the output.
 
 Exit status is 0 when every query resolved, 1 when a query or relation was not found (the blocks of the
 queries that did resolve are still written), and 2 for a usage error. `-json` emits one JSON object per
