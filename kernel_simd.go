@@ -9,10 +9,11 @@ import "simd"
 // once), so caching it here keeps the hot path free of the accessor call.
 var wordsPerVector = simd.VectorBitSize() / 64
 
-// Vectorised row arithmetic. This is the only file in the module that imports
-// the experimental simd package; everything else goes through these three
-// kernels, so a portable scalar fallback would be a drop-in replacement
-// (see README "Build requirement").
+// Vectorised row arithmetic. This is the only library file that imports the
+// experimental simd package (kernel_test.go imports it for the width
+// assertions, and internal/simdcheck only to break a stock build); everything
+// else goes through these three kernels, so a portable scalar fallback would be
+// a drop-in replacement (see README "Build requirement").
 //
 // All three kernels require len(dst) == len(src) and operate on whole rows.
 // Rows are exact-length (stride words, no padding), so the loops below are

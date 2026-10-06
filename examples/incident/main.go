@@ -1,6 +1,6 @@
 //go:build goexperiment.simd
 
-// Command incident walks the four stages of a gr4ph query on a small
+// Command incident walks the five stages of a gr4ph query on a small
 // hand-built graph:
 //
 //  1. boot — register nodes and relations (cold path, strings);

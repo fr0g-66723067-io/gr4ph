@@ -72,6 +72,7 @@ func run(w io.Writer) error {
 
 	// Shared buffers: one per partition, reused by every query below.
 	ttps := make([]gr4ph.TTP, e.TTPCount())
+	rolledTTPs := make([]gr4ph.TTP, e.TTPCount()) // a second view, so a roll-up cannot clobber the exact set
 	arts := make([]gr4ph.Artifact, e.ArtifactCount())
 	cms := make([]gr4ph.Countermeasure, e.CountermeasureCount())
 	scratchT := make([]uint64, e.WordsPerRow(gr4ph.KindTTP))
@@ -137,7 +138,7 @@ func run(w io.Writer) error {
 
 	hardening := lookupCM(e, "CredentialHardening")
 	defended := e.TTPsForCountermeasure(hardening, ttps)
-	rolledDefended := e.TTPsForCountermeasureRollup(hardening, scratchT, ttps)
+	rolledDefended := e.TTPsForCountermeasureRollup(hardening, scratchT, rolledTTPs)
 	fmt.Fprintf(w, "ttpsForCountermeasure(CredentialHardening) = %d (rolled %d): %s\n",
 		defended, rolledDefended, join(ttpNames(e, ttps[:defended]), 5))
 

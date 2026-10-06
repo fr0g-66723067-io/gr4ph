@@ -34,8 +34,8 @@ stride by the vector width (`wordsPerVector = simd.VectorBitSize()/64`), use the
 `LoadUint64s`/`Store` pair for whole vectors and a scalar loop for the tail. They never use the count
 `LoadUint64sPart` reports, which is `min(wordsPerVector, len(s))` on hardware but `len(s)` under
 `GODEBUG=simd=0` — advancing by it silently drops the tail of every row that is not a whole number of
-vectors. `make test` therefore runs the suite twice, at the platform width and with `GODEBUG=simd=0`,
-and both passes must be green.
+vectors. `make test` therefore runs the suite at the platform width, again under `-race` (the
+concurrency contract), and again with `GODEBUG=simd=0`; all three passes must be green.
 
 On the development host (i5-10310U, AVX2, no `vpclmulqdq`) the package feature-reduces to **128-bit /
 2 lanes**, so `GODEBUG=simd=256` panics at init instead of silently emulating. `GODEBUG=simd=+256`
@@ -52,8 +52,9 @@ drop the tag from the other files. No API change. Adding that portable kernel al
 ```mermaid
 flowchart LR
   A["alert string<br/>'lsass memory'"] -->|Incident| B["TTP id (uint16)"]
-  B -->|TTPs / TTPsRel| C["artifact ids"]
-  B -->|TTPsRollup| D["parent technique ids"]
+  A -->|Artifact| C["artifact ids"]
+  C -->|TTPs / TTPsRel| B
+  C -->|TTPsRollup| D["parent technique ids"]
   C -->|CountermeasuresForArtifactViaTTPs| E["countermeasure ids"]
   D -->|CountermeasuresForTTPRollup| E
   B -->|Response| F["log line"]
@@ -112,7 +113,8 @@ Sizes and cold path:
 | `TTPCount` `ArtifactCount` `CountermeasureCount` `RelCount` `DefRelCount` `WordsPerRow` | O(1) | 0 |
 | `Incident(alert) (TTP, bool)`, `Artifact(s)`, `Countermeasure(s)` | map lookup (trim + lower) | cold |
 | `TTPName` `TTPLabel` `ArtifactName` `ArtifactLabel` `CountermeasureName` `CountermeasureLabel` `TTPDomain` | O(1) | 0 |
-| `Rel` `RelName` `DefRel` `DefRelName` | O(1) | 0 |
+| `Rel` `DefRel` | map lookup (trim + lower), `"any"` is the union plane | cold |
+| `RelName` `DefRelName` | O(1) | 0 |
 | `Response(dst, ids)` `CountermeasureResponse(dst, ids)` | formats `<id> <label>` | cold |
 | `TTPParent` `TTPChildCount` `TTPChildren` | O(1) / O(children) | 0 |
 
@@ -161,7 +163,8 @@ Shorter `scratch` panics (`gr4ph: scratch too small`).
   (`0`/`false`). A stale or foreign id set can never crash a traversal, and an empty engine answers
   every query with 0/false.
 * Engine-dimension misuse panics, because there is no sensible fallback: a relation id
-  `>= RelCount()+1`, or an undersized `scratch`.
+  `>= RelCount()+1`, or an undersized `scratch`. The scratch check runs before the id bounds check, so
+  an undersized `scratch` panics even when the id is out of range.
 * The cold string accessors (`TTPName`, `TTPLabel`, `TTPDomain`, `ArtifactName`, …) panic on an
   out-of-range id. `Response` / `CountermeasureResponse` are the total boundary formatters: they
   render `<invalid ttp N>` / `<invalid cm N>` and still count the entry.
@@ -169,8 +172,12 @@ Shorter `scratch` panics (`gr4ph: scratch too small`).
 ## Hierarchy
 
 Sub-techniques are first-class nodes (581 of the 1186). The ATT&CK id prefix is authoritative
-(`T1003.001` → `T1003`; verified to agree with `x_mitre_is_subtechnique` on every node of 19.2), and
-the tables carry `TTPParents` (index or `NoParent`) and `TTPChildCount`.
+(`T1003.001` → `T1003`); the generator checks it against `x_mitre_is_subtechnique` on every STIX node
+of 19.2 and fails on any disagreement, on an orphan sub-technique, and on any id deeper than two
+levels. Where D3FEND's `off_tech_parent` disagrees with the prefix (T1499.002 carries `T1498` in
+1.6.0 while ATT&CK makes it a child of `T1499`), the prefix wins; `off_tech_parent` is consulted only
+to synthesise a parent that exists in no ATT&CK domain. The tables carry `TTPParents` (index or
+`NoParent`); the builder derives child counts from those, so no child-count table is emitted.
 
 The builder enforces two invariants, so roll-up needs no child lists:
 
@@ -231,14 +238,15 @@ artifacts, countermeasures, and finally the three edge families.
 ## Concurrency
 
 `*Engine` is immutable after `Build()`. Any number of goroutines may query it concurrently as long as
-each supplies its own `dst` and `scratch` slices — queries never mutate engine state. A `Builder` is
-single-use: after `Build()` every `Add*` returns `ErrBuilderUsed`, so a live `Engine` cannot be
-mutated through its builder.
+each supplies its own `dst` and `scratch` slices — queries never mutate engine state. The claim is
+covered by `TestConcurrentQueries`, which runs under `go test -race` (`make test` includes that pass).
+A `Builder` is single-use: after `Build()` every `Add*` returns `ErrBuilderUsed`, so a live `Engine`
+cannot be mutated through its builder.
 
 ## Measured performance
 
-`go test -bench . -benchmem ./ontology` on the development host (i5-10310U, 128-bit vectors), real
-tables, 0 B/op and 0 allocs/op for every benchmark (ns/op below is the median of 5 runs, `-count=5`):
+`go test -bench . -benchmem -count=5 ./...` on the development host (i5-10310U, 128-bit vectors), real
+tables; ns/op below is the median of 5 runs, and every benchmark reports 0 B/op and 0 allocs/op:
 
 | benchmark | ns/op |
 |---|---|
