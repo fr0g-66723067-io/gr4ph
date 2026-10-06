@@ -112,6 +112,10 @@ var (
 // returns ErrBuilderUsed, so a live Engine can never be mutated through its
 // builder.
 //
+// The built flag lives behind a pointer that seed installs, so a copy of a
+// Builder made before Build cannot register anything afterwards: every handle
+// shares the flag.
+//
 // The zero value is usable and equivalent to NewBuilder().
 type Builder struct {
 	ttpIDs        []string
@@ -144,13 +148,17 @@ type Builder struct {
 
 	defendsC, defendsT []uint16
 
-	built bool
+	// built is a pointer so that a copy of the Builder shares the flag: Build
+	// flips it for every handle, so no copy can reach the maps and slices the
+	// live Engine holds. seed installs it.
+	built *bool
 }
 
-// seed installs the reserved union-plane name and the index maps on a builder
-// that has none, so the zero value behaves like NewBuilder(): plane 0 exists and
-// every Add* has a map to write into. It is called by NewBuilder, every
-// registration method and Build; the length check makes it free afterwards.
+// seed installs the reserved union-plane name, the index maps and the shared
+// built flag on a builder that has none, so the zero value behaves like
+// NewBuilder(): plane 0 exists and every Add* has a map to write into. It is
+// called by NewBuilder, every registration method and Build; the length check
+// makes it free afterwards.
 func (b *Builder) seed() {
 	if len(b.relNames) != 0 {
 		return
@@ -162,6 +170,7 @@ func (b *Builder) seed() {
 	b.cmIndex = make(map[string]uint16)
 	b.relIndex = map[string]Rel{reservedRelName: RelAny}
 	b.defRelIndex = map[string]DefRel{reservedRelName: DefRelAny}
+	b.built = new(bool)
 }
 
 // NewBuilder returns an empty builder.
@@ -193,7 +202,7 @@ func claim(m map[string]uint16, key string, id uint16) {
 // (1..255). Idempotent on the normalised name. The name "any" is reserved for the
 // union plane (RelAny) and returns ErrReservedName.
 func (b *Builder) AddRel(name string) (Rel, error) {
-	if b.built {
+	if b.Built() {
 		return 0, ErrBuilderUsed
 	}
 	b.seed()
@@ -220,7 +229,7 @@ func (b *Builder) AddRel(name string) (Rel, error) {
 // (1..255). Idempotent on the normalised name. The name "any" is reserved for the
 // union plane (DefRelAny) and returns ErrReservedName.
 func (b *Builder) AddDefRel(name string) (DefRel, error) {
-	if b.built {
+	if b.Built() {
 		return 0, ErrBuilderUsed
 	}
 	b.seed()
@@ -253,7 +262,7 @@ func (b *Builder) AddDefRel(name string) (DefRel, error) {
 // returns ErrEmptyKey; a dom other than the four Domain constants returns
 // ErrUnknownDomain.
 func (b *Builder) AddTTP(id, label string, dom Domain, parent TTP, aliases ...string) (TTP, error) {
-	if b.built {
+	if b.Built() {
 		return 0, ErrBuilderUsed
 	}
 	b.seed()
@@ -304,9 +313,11 @@ func (b *Builder) AddTTP(id, label string, dom Domain, parent TTP, aliases ...st
 
 // AddArtifact registers an artifact and returns its dense id. Idempotent on the
 // normalised name; the label is registered as a lookup key too. It takes no
-// aliases: artifacts are looked up by name or label only.
+// aliases: artifacts are looked up by name or label only. Names and labels share
+// one key map, so a name that normalises to an existing label returns that node
+// as well: first registration wins.
 func (b *Builder) AddArtifact(name, label string) (Artifact, error) {
-	if b.built {
+	if b.Built() {
 		return 0, ErrBuilderUsed
 	}
 	b.seed()
@@ -329,9 +340,11 @@ func (b *Builder) AddArtifact(name, label string) (Artifact, error) {
 }
 
 // AddCountermeasure registers a countermeasure and returns its dense id.
-// Idempotent on the normalised id; label and aliases are lookup keys.
+// Idempotent on the normalised id; label and aliases are lookup keys. Ids,
+// labels and aliases share one key map, so a key that normalises to an existing
+// one returns that node as well: first registration wins.
 func (b *Builder) AddCountermeasure(id, label string, aliases ...string) (Countermeasure, error) {
-	if b.built {
+	if b.Built() {
 		return 0, ErrBuilderUsed
 	}
 	b.seed()
@@ -359,7 +372,7 @@ func (b *Builder) AddCountermeasure(id, label string, aliases ...string) (Counte
 // AddEdge records technique -> artifact under relation r. r must be a
 // registered predicate (not RelAny). Duplicate edges are harmless.
 func (b *Builder) AddEdge(t TTP, a Artifact, r Rel) error {
-	if b.built {
+	if b.Built() {
 		return ErrBuilderUsed
 	}
 	if int(t) >= len(b.ttpIDs) {
@@ -380,7 +393,7 @@ func (b *Builder) AddEdge(t TTP, a Artifact, r Rel) error {
 // AddDefEdge records countermeasure -> artifact under defensive relation dr.
 // dr must be a registered predicate (not DefRelAny).
 func (b *Builder) AddDefEdge(cm Countermeasure, a Artifact, dr DefRel) error {
-	if b.built {
+	if b.Built() {
 		return ErrBuilderUsed
 	}
 	if int(cm) >= len(b.cmIDs) {
@@ -401,7 +414,7 @@ func (b *Builder) AddDefEdge(cm Countermeasure, a Artifact, dr DefRel) error {
 // AddDefendsEdge records countermeasure -> technique (defends-against). The
 // family has a single inferred predicate, so no relation id is taken.
 func (b *Builder) AddDefendsEdge(cm Countermeasure, t TTP) error {
-	if b.built {
+	if b.Built() {
 		return ErrBuilderUsed
 	}
 	if int(cm) >= len(b.cmIDs) {
@@ -417,7 +430,7 @@ func (b *Builder) AddDefendsEdge(cm Countermeasure, t TTP) error {
 
 // Built reports whether Build has been called. A built builder rejects every
 // Add* with ErrBuilderUsed.
-func (b *Builder) Built() bool { return b.built }
+func (b *Builder) Built() bool { return b.built != nil && *b.built }
 
 // TTPCount returns the number of registered techniques.
 func (b *Builder) TTPCount() int { return len(b.ttpIDs) }
@@ -429,12 +442,12 @@ func (b *Builder) ArtifactCount() int { return len(b.artNames) }
 func (b *Builder) CountermeasureCount() int { return len(b.cmIDs) }
 
 // RelCount returns the number of registered offensive relations (excluding
-// RelAny).
-func (b *Builder) RelCount() int { return len(b.relNames) - 1 }
+// RelAny). It is 0 on the zero value, which has no planes yet.
+func (b *Builder) RelCount() int { return max(len(b.relNames)-1, 0) }
 
 // DefRelCount returns the number of registered defensive relations (excluding
-// DefRelAny).
-func (b *Builder) DefRelCount() int { return len(b.defRelNames) - 1 }
+// DefRelAny). It is 0 on the zero value, which has no planes yet.
+func (b *Builder) DefRelCount() int { return max(len(b.defRelNames)-1, 0) }
 
 // wordsFor returns the number of 64-bit words needed for n bits.
 func wordsFor(n int) int { return (n + 63) / 64 }
@@ -445,11 +458,11 @@ func wordsFor(n int) int { return (n + 63) / 64 }
 // used afterwards: every Add* then returns ErrBuilderUsed, and a second Build
 // returns ErrBuilderUsed too.
 func (b *Builder) Build() (*Engine, error) {
-	if b.built {
+	if b.Built() {
 		return nil, ErrBuilderUsed
 	}
-	b.built = true
 	b.seed()
+	*b.built = true
 	e := &Engine{
 		nTTP: len(b.ttpIDs),
 		nArt: len(b.artNames),

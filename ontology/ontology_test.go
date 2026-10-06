@@ -170,6 +170,27 @@ func TestRegisterRequiresFreshBuilder(t *testing.T) {
 	}
 }
 
+// TestRegisterAcceptsZeroValueBuilder: the Builder's zero value is documented as
+// equivalent to NewBuilder(), so Register must accept it (its freshness guard
+// reads RelCount, which is 0 on an unseeded builder).
+func TestRegisterAcceptsZeroValueBuilder(t *testing.T) {
+	var b gr4ph.Builder
+	if err := Register(&b); err != nil {
+		t.Fatalf("Register(zero Builder) = %v, want nil", err)
+	}
+	e, err := b.Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if e.TTPCount() != NTTP || e.ArtifactCount() != NArtifact || e.CountermeasureCount() != NCountermeasure {
+		t.Fatalf("counts = %d/%d/%d, want %d/%d/%d",
+			e.TTPCount(), e.ArtifactCount(), e.CountermeasureCount(), NTTP, NArtifact, NCountermeasure)
+	}
+	if e.RelCount() != NRel || e.DefRelCount() != NDefRel {
+		t.Fatalf("rel counts = %d/%d, want %d/%d", e.RelCount(), e.DefRelCount(), NRel, NDefRel)
+	}
+}
+
 // TestOntologySizes pins the frozen table sizes against the pinned release.
 func TestOntologySizes(t *testing.T) {
 	e := build(t)
@@ -504,6 +525,93 @@ func TestOntologyColdPath(t *testing.T) {
 	}
 	if cdst[0] != "CredentialHardening Credential Hardening" || cdst[1] != "<invalid cm 65535>" {
 		t.Fatalf("CountermeasureResponse = %q, %q", cdst[0], cdst[1])
+	}
+}
+
+// TestOntologyLabelAmbiguity pins the shared-label rule the Incident doc states:
+// the pinned tables keep ATT&CK's revoked techniques, whose live successors
+// reuse their labels, so a label resolves to the lowest-index match.
+func TestOntologyLabelAmbiguity(t *testing.T) {
+	e := build(t)
+
+	// Ids are unambiguous: every id round-trips through the label map.
+	for i := range e.TTPCount() {
+		id := gr4ph.TTP(i)
+		got, ok := e.Incident(e.TTPName(id))
+		if !ok || got != id {
+			t.Fatalf("Incident(TTPName(%d)) = %d,%v want %d,true", i, got, ok, id)
+		}
+	}
+
+	// The pinned tables: 238 labels carry more than one technique, shadowing 269
+	// ids (measured from TTPLabels; see the plan's step 1).
+	byLabel := map[string][]gr4ph.TTP{}
+	for i := range e.TTPCount() {
+		id := gr4ph.TTP(i)
+		l := e.TTPLabel(id)
+		byLabel[l] = append(byLabel[l], id)
+	}
+	shared, shadowed := 0, 0
+	for _, ids := range byLabel {
+		if len(ids) > 1 {
+			shared++
+			shadowed += len(ids) - 1
+		}
+	}
+	if shared != 238 || shadowed != 269 {
+		t.Fatalf("shared labels = %d (shadowing %d ids), want 238 (269)", shared, shadowed)
+	}
+
+	// A revoked twin and its live successor share a name; the lower index wins,
+	// so the outcome is not "prefer the live one".
+	powerShell := ttp(t, e, "T1059.001")
+	revoked := ttp(t, e, "T1086")
+	if e.TTPLabel(powerShell) != "PowerShell" || e.TTPLabel(revoked) != "PowerShell" {
+		t.Fatalf("PowerShell labels = %q / %q", e.TTPLabel(powerShell), e.TTPLabel(revoked))
+	}
+	if got, ok := e.Incident("PowerShell"); !ok || got != powerShell {
+		t.Fatalf("Incident(PowerShell) = %d,%v want %d,true", got, ok, powerShell)
+	}
+	if got, ok := e.Incident("T1086"); !ok || got != revoked {
+		t.Fatalf("Incident(T1086) = %d,%v want %d,true (the id form is exact)", got, ok, revoked)
+	}
+	// Here the revoked twin has the lower index, so it is what a label lookup
+	// returns: the doc sentence "may be the revoked twin" is the observable
+	// behaviour, not a warning about an unlikely case.
+	revokedTwin := ttp(t, e, "T1015")
+	if got, ok := e.Incident("Accessibility Features"); !ok || got != revokedTwin {
+		t.Fatalf("Incident(Accessibility Features) = %d,%v want %d,true", got, ok, revokedTwin)
+	}
+	if e.TTPLabel(ttp(t, e, "T1546.008")) != "Accessibility Features" {
+		t.Fatal("T1546.008 must carry the shared label")
+	}
+	// A cross-domain duplicate: the ICS twin has the lowest index.
+	ics := ttp(t, e, "T0893")
+	if got, ok := e.Incident("Data from Local System"); !ok || got != ics {
+		t.Fatalf("Incident(Data from Local System) = %d,%v want %d,true", got, ok, ics)
+	}
+
+	// Artifact and countermeasure keys are unique: no key names two nodes. (A
+	// node whose name and label coincide is one claim, not a collision.)
+	artKey := map[string]gr4ph.Artifact{}
+	for i := range e.ArtifactCount() {
+		a := gr4ph.Artifact(i)
+		for _, key := range []string{e.ArtifactName(a), e.ArtifactLabel(a)} {
+			if prev, ok := artKey[key]; ok && prev != a {
+				t.Fatalf("artifact key %q is claimed by %d and %d", key, prev, a)
+			}
+			artKey[key] = a
+		}
+	}
+	cmKey := map[string]gr4ph.Countermeasure{}
+	for i := range e.CountermeasureCount() {
+		cm := gr4ph.Countermeasure(i)
+		for _, key := range []string{e.CountermeasureName(cm), e.CountermeasureLabel(cm)} {
+			if prev, ok := cmKey[key]; ok && prev != cm {
+				t.Fatalf("countermeasure key %q is claimed by %d and %d", key, prev, cm)
+			}
+			cmKey[key] = cm
+		}
 	}
 }
 

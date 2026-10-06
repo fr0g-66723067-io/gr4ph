@@ -252,6 +252,56 @@ func TestBuilderSingleUse(t *testing.T) {
 	}
 }
 
+// TestBuilderCopyCannotMutateEngine pins the rule that makes "a live Engine can
+// never be mutated through its builder" absolute: the built flag is shared with
+// a by-value copy, so a copy taken before Build is rejected too.
+func TestBuilderCopyCannotMutateEngine(t *testing.T) {
+	b := NewBuilder()
+	t0, err := b.AddTTP("T1003", "OS Credential Dumping", DomainEnterprise, NoParent)
+	if err != nil {
+		t.Fatalf("AddTTP: %v", err)
+	}
+	a0, err := b.AddArtifact("Process", "Process")
+	if err != nil {
+		t.Fatalf("AddArtifact: %v", err)
+	}
+	r, err := b.AddRel("accesses")
+	if err != nil {
+		t.Fatalf("AddRel: %v", err)
+	}
+	if err := b.AddEdge(t0, a0, r); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+
+	c := *b // a copy taken before Build shares the maps, the slices and the flag
+	e, err := b.Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	if _, err := c.AddArtifact("later", "later"); !errors.Is(err, ErrBuilderUsed) {
+		t.Fatalf("copy AddArtifact after Build = %v, want ErrBuilderUsed", err)
+	}
+	if _, err := c.AddRel("later"); !errors.Is(err, ErrBuilderUsed) {
+		t.Fatalf("copy AddRel after Build = %v, want ErrBuilderUsed", err)
+	}
+	if _, err := c.AddTTP("T1059", "later", DomainEnterprise, NoParent); !errors.Is(err, ErrBuilderUsed) {
+		t.Fatalf("copy AddTTP after Build = %v, want ErrBuilderUsed", err)
+	}
+	if _, err := c.Build(); !errors.Is(err, ErrBuilderUsed) {
+		t.Fatalf("copy Build = %v, want ErrBuilderUsed", err)
+	}
+	if _, ok := e.Artifact("later"); ok {
+		t.Fatal("a Builder copy mutated the live Engine")
+	}
+	if _, ok := e.Rel("later"); ok {
+		t.Fatal("a Builder copy added a plane to the live Engine")
+	}
+	if n := e.ArtifactCount(); n != 1 {
+		t.Fatalf("ArtifactCount = %d, want 1", n)
+	}
+}
+
 func TestBuilderBoundsEdges(t *testing.T) {
 	b := NewBuilder()
 	b.AddTTP("T1003", "OS Credential Dumping", DomainEnterprise, NoParent)
@@ -576,9 +626,44 @@ func TestEmptyEngine(t *testing.T) {
 	}
 }
 
+// TestZeroEngine: the zero Engine has no nodes and no planes, so its counts are
+// 0 (never -1) and the id-space methods that do not take a relation stay total.
+func TestZeroEngine(t *testing.T) {
+	var e Engine
+	if e.RelCount() != 0 || e.DefRelCount() != 0 {
+		t.Fatalf("zero Engine rel counts = %d %d, want 0 0", e.RelCount(), e.DefRelCount())
+	}
+	if e.TTPCount() != 0 || e.ArtifactCount() != 0 || e.CountermeasureCount() != 0 {
+		t.Fatalf("zero Engine counts = %d %d %d, want 0 0 0", e.TTPCount(), e.ArtifactCount(), e.CountermeasureCount())
+	}
+	if e.WordsPerRow(KindTTP) != 0 || e.WordsPerRow(KindArtifact) != 0 || e.WordsPerRow(KindCountermeasure) != 0 {
+		t.Fatal("zero Engine strides must be 0")
+	}
+	if _, ok := e.TTPParent(0); ok {
+		t.Fatal("zero Engine TTPParent must be false")
+	}
+	if n := e.TTPChildCount(0); n != 0 {
+		t.Fatalf("TTPChildCount = %d, want 0", n)
+	}
+	if n := e.TTPChildren(0, nil); n != 0 {
+		t.Fatalf("TTPChildren = %d, want 0", n)
+	}
+	if n := e.Response(nil, []TTP{0}); n != 1 {
+		t.Fatalf("Response count = %d, want 1", n)
+	}
+	if _, ok := e.Incident("T1003"); ok {
+		t.Fatal("zero Engine must resolve nothing")
+	}
+}
+
 // TestBuilderZeroValue: the zero value behaves like NewBuilder(), so a
 // `new(Builder)` is not a trap — plane 0 exists and every Add* has its maps.
 func TestBuilderZeroValue(t *testing.T) {
+	// A pristine zero value has no planes: both counts are 0, never -1.
+	var z Builder
+	if z.RelCount() != 0 || z.DefRelCount() != 0 {
+		t.Fatalf("zero Builder rel counts = %d %d, want 0 0", z.RelCount(), z.DefRelCount())
+	}
 	e, err := new(Builder).Build()
 	if err != nil {
 		t.Fatalf("Build: %v", err)

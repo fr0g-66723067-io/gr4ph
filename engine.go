@@ -30,6 +30,10 @@ import "strconv"
 // The cold string accessors (TTPName, TTPLabel, TTPDomain, ArtifactName, ...)
 // panic on an out-of-range id; Response and CountermeasureResponse are the
 // total boundary formatters that render "<invalid ...>" instead.
+//
+// The zero Engine is not a usable graph: it has no nodes and no planes, so its
+// counts are 0, every id is out of range, and a relation-taking query panics
+// because there is no plane 0. Obtain an Engine from Builder.Build.
 type Engine struct {
 	nTTP, nArt, nCM int // partition sizes
 	nRel, nDefRel   int // planes per family, including the union plane 0
@@ -144,12 +148,12 @@ func (e *Engine) ArtifactCount() int { return e.nArt }
 func (e *Engine) CountermeasureCount() int { return e.nCM }
 
 // RelCount returns the number of offensive relation predicates (excluding
-// RelAny).
-func (e *Engine) RelCount() int { return e.nRel - 1 }
+// RelAny); it is 0 for the zero Engine, which has no planes.
+func (e *Engine) RelCount() int { return max(e.nRel-1, 0) }
 
 // DefRelCount returns the number of defensive relation predicates (excluding
-// DefRelAny).
-func (e *Engine) DefRelCount() int { return e.nDefRel - 1 }
+// DefRelAny); it is 0 for the zero Engine, which has no planes.
+func (e *Engine) DefRelCount() int { return max(e.nDefRel-1, 0) }
 
 // WordsPerRow returns the number of uint64 words in one row over cols:
 // ceil(count(cols)/64), i.e. the minimum scratch length for a query returning
@@ -170,6 +174,13 @@ func (e *Engine) WordsPerRow(cols Kind) int {
 
 // Incident resolves an alert string (technique id, label or alias, trimmed and
 // case-insensitively) to a technique id.
+//
+// Technique labels are not unique keys: the pinned tables keep ATT&CK's revoked
+// techniques, whose live successors reuse their labels, and the key map keeps
+// the first registration, so a label carried by several techniques resolves to
+// the lowest-index match — which may be the revoked twin. Ids are unambiguous
+// (TTPName round-trips through Incident), and no artifact or countermeasure key
+// names two nodes.
 func (e *Engine) Incident(alert string) (TTP, bool) {
 	i, ok := e.ttpIndex[normalize(alert)]
 	return TTP(i), ok
