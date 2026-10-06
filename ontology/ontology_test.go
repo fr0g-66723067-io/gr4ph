@@ -638,7 +638,7 @@ func TestOntologyCountermeasureGoldens(t *testing.T) {
 
 // TestOntologyZeroAlloc repeats the allocation contract against the real
 // engine: 1186x247x157 with 19/4/3-word rows must not allocate either.
-func TestOntologyZeroAlloc(t *testing.T) {
+func TestZeroAllocOntology(t *testing.T) {
 	e := build(t)
 	bufT := make([]gr4ph.TTP, e.TTPCount())
 	bufA := make([]gr4ph.Artifact, e.ArtifactCount())

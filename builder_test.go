@@ -117,7 +117,7 @@ func TestBuilderAliasFirstWins(t *testing.T) {
 	}
 }
 
-func TestBuilderEdgeValidation(t *testing.T) {
+func TestBuilderBoundsEdges(t *testing.T) {
 	b := NewBuilder()
 	b.AddTTP("T1003", "OS Credential Dumping", DomainEnterprise, NoParent)
 	b.AddArtifact("Process", "Process")
@@ -189,7 +189,7 @@ func TestBuilderEdgeValidation(t *testing.T) {
 	}
 }
 
-func TestBuilderRelCapacity(t *testing.T) {
+func TestBuilderBoundsRels(t *testing.T) {
 	b := NewBuilder()
 	for i := range 255 {
 		if _, err := b.AddRel("rel" + strconv.Itoa(i)); err != nil {
@@ -204,7 +204,7 @@ func TestBuilderRelCapacity(t *testing.T) {
 	}
 }
 
-func TestBuilderNodeCapacity(t *testing.T) {
+func TestBuilderBoundsNodes(t *testing.T) {
 	if testing.Short() {
 		t.Skip("registers 65536 nodes")
 	}
@@ -287,7 +287,7 @@ func TestBuilderHierarchy(t *testing.T) {
 	}
 }
 
-func TestBuilderHierarchyErrors(t *testing.T) {
+func TestBuilderBoundsHierarchy(t *testing.T) {
 	b := NewBuilder()
 	b.AddTTP("T1003", "OS Credential Dumping", DomainEnterprise, NoParent)
 
