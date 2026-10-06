@@ -2,7 +2,12 @@
 
 package gr4ph
 
-import "testing"
+import (
+	"slices"
+	"testing"
+
+	"github.com/fr0g-66723067/gr4ph/internal/hotmethods"
+)
 
 // sink defeats dead-code elimination without allocating.
 var sink int
@@ -84,8 +89,12 @@ func TestZeroAllocSynthetic(t *testing.T) {
 		}},
 	}
 
-	if len(cases) != 29 {
-		t.Fatalf("hot-method coverage = %d cases, want 29 (same set as the ontology package)", len(cases))
+	names := make([]string, len(cases))
+	for i, c := range cases {
+		names[i] = c.name
+	}
+	if !slices.Equal(names, hotmethods.Names) {
+		t.Fatalf("hot-method cases = %v, want %v (internal/hotmethods)", names, hotmethods.Names)
 	}
 	for _, c := range cases {
 		if n := testing.AllocsPerRun(200, c.fn); n != 0 {

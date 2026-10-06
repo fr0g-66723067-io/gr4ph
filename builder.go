@@ -50,6 +50,10 @@ const RelAny Rel = 0
 // DefRelAny is the union plane of every defensive relation.
 const DefRelAny DefRel = 0
 
+// reservedRelName is the union plane's name: relNames[0]/defRelNames[0] carry it,
+// and it is a lookup key for RelAny/DefRelAny rather than a registrable predicate.
+const reservedRelName = "any"
+
 // MaxNodes is the per-partition node capacity (uint16 index space).
 const MaxNodes = 65536
 
@@ -72,6 +76,7 @@ var (
 	ErrEmptyKey              = errors.New("gr4ph: empty node or relation key")
 	ErrUnknownDomain         = errors.New("gr4ph: unknown domain")
 	ErrBuilderUsed           = errors.New("gr4ph: builder already built")
+	ErrReservedName          = errors.New(`gr4ph: reserved name "any"`)
 )
 
 // Builder accumulates the cold-path graph: node keys (id, label, aliases),
@@ -119,13 +124,13 @@ type Builder struct {
 // NewBuilder returns an empty builder.
 func NewBuilder() *Builder {
 	return &Builder{
-		relNames:    []string{"any"},
-		defRelNames: []string{"any"},
+		relNames:    []string{reservedRelName},
+		defRelNames: []string{reservedRelName},
 		ttpIndex:    make(map[string]uint16),
 		artIndex:    make(map[string]uint16),
 		cmIndex:     make(map[string]uint16),
-		relIndex:    make(map[string]Rel),
-		defRelIndex: make(map[string]DefRel),
+		relIndex:    map[string]Rel{reservedRelName: RelAny},
+		defRelIndex: map[string]DefRel{reservedRelName: DefRelAny},
 	}
 }
 
@@ -148,7 +153,8 @@ func claim(m map[string]uint16, key string, id uint16) {
 }
 
 // AddRel registers an offensive relation predicate and returns its plane id
-// (1..255). Idempotent on the normalised name.
+// (1..255). Idempotent on the normalised name. The name "any" is reserved for the
+// union plane (RelAny) and returns ErrReservedName.
 func (b *Builder) AddRel(name string) (Rel, error) {
 	if b.built {
 		return 0, ErrBuilderUsed
@@ -156,6 +162,9 @@ func (b *Builder) AddRel(name string) (Rel, error) {
 	key := normalize(name)
 	if key == "" {
 		return 0, ErrEmptyKey
+	}
+	if key == reservedRelName {
+		return 0, ErrReservedName
 	}
 	if r, ok := b.relIndex[key]; ok {
 		return r, nil
@@ -170,7 +179,8 @@ func (b *Builder) AddRel(name string) (Rel, error) {
 }
 
 // AddDefRel registers a defensive relation predicate and returns its plane id
-// (1..255). Idempotent on the normalised name.
+// (1..255). Idempotent on the normalised name. The name "any" is reserved for the
+// union plane (DefRelAny) and returns ErrReservedName.
 func (b *Builder) AddDefRel(name string) (DefRel, error) {
 	if b.built {
 		return 0, ErrBuilderUsed
@@ -178,6 +188,9 @@ func (b *Builder) AddDefRel(name string) (DefRel, error) {
 	key := normalize(name)
 	if key == "" {
 		return 0, ErrEmptyKey
+	}
+	if key == reservedRelName {
+		return 0, ErrReservedName
 	}
 	if dr, ok := b.defRelIndex[key]; ok {
 		return dr, nil
@@ -192,11 +205,11 @@ func (b *Builder) AddDefRel(name string) (DefRel, error) {
 }
 
 // AddTTP registers a technique and returns its dense id. Idempotent on the
-// normalised id (a second call returns the stored id and does not touch the
-// hierarchy). parent must be NoParent or an already-registered top-level
-// technique whose child block the new node extends contiguously. An id that
-// normalises to the empty string returns ErrEmptyKey; a dom other than the four
-// Domain constants returns ErrUnknownDomain.
+// normalised id (a second call returns the stored id and ignores its other
+// arguments: label, domain, parent, aliases). parent must be NoParent or an
+// already-registered top-level technique whose child block the new node extends
+// contiguously. An id that normalises to the empty string returns ErrEmptyKey; a
+// dom other than the four Domain constants returns ErrUnknownDomain.
 func (b *Builder) AddTTP(id, label string, dom Domain, parent TTP, aliases ...string) (TTP, error) {
 	if b.built {
 		return 0, ErrBuilderUsed
@@ -205,11 +218,11 @@ func (b *Builder) AddTTP(id, label string, dom Domain, parent TTP, aliases ...st
 	if key == "" {
 		return 0, ErrEmptyKey
 	}
-	if dom > DomainSPARTA {
-		return 0, ErrUnknownDomain
-	}
 	if t, ok := b.ttpIndex[key]; ok {
 		return TTP(t), nil
+	}
+	if dom > DomainSPARTA {
+		return 0, ErrUnknownDomain
 	}
 	if len(b.ttpIDs) >= MaxNodes {
 		return 0, ErrTooManyNodes
@@ -355,6 +368,10 @@ func (b *Builder) AddDefendsEdge(cm Countermeasure, t TTP) error {
 	b.defendsT = append(b.defendsT, uint16(t))
 	return nil
 }
+
+// Built reports whether Build has been called. A built builder rejects every
+// Add* with ErrBuilderUsed.
+func (b *Builder) Built() bool { return b.built }
 
 // TTPCount returns the number of registered techniques.
 func (b *Builder) TTPCount() int { return len(b.ttpIDs) }

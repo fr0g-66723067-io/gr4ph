@@ -15,7 +15,8 @@ import "strconv"
 // set can never crash a traversal. Misuse of the *engine*'s own dimensions
 // still panics, because it is a programming error with no sensible fallback:
 // a relation id >= RelCount()+1, or a scratch row shorter than
-// WordsPerRow(returned partition).
+// WordsPerRow(returned partition). The scratch check runs before the id bounds
+// check, so an undersized scratch panics even when the id is out of range.
 //
 // The cold string accessors (TTPName, TTPLabel, TTPDomain, ArtifactName, ...)
 // panic on an out-of-range id; Response and CountermeasureResponse are the
@@ -219,7 +220,9 @@ func (e *Engine) TTPDomain(t TTP) Domain {
 	return e.ttpDomains[t]
 }
 
-// Rel resolves an offensive relation name to its plane id.
+// Rel resolves an offensive relation name to its plane id. RelName(RelAny) is
+// "any", and Rel("any") resolves back to RelAny, so every plane round-trips
+// through name and id.
 func (e *Engine) Rel(name string) (Rel, bool) {
 	r, ok := e.relIndex[normalize(name)]
 	return r, ok
@@ -231,7 +234,8 @@ func (e *Engine) RelName(r Rel) string {
 	return e.relNames[r]
 }
 
-// DefRel resolves a defensive relation name to its plane id.
+// DefRel resolves a defensive relation name to its plane id. DefRelName(DefRelAny)
+// is "any", and DefRel("any") resolves back to DefRelAny.
 func (e *Engine) DefRel(name string) (DefRel, bool) {
 	dr, ok := e.defRelIndex[normalize(name)]
 	return dr, ok

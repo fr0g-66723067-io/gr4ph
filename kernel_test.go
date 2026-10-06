@@ -20,30 +20,35 @@ func TestKernelEquivalence(t *testing.T) {
 	rng := rand.New(rand.NewPCG(0x6772_3470, 0x5349_4d44))
 	for words := 0; words <= 40; words++ {
 		for range 200 {
-			src := make([]uint64, words)
-			for i := range src {
-				src[i] = rng.Uint64()
+			// Rows are carved out of one-word-padded buffers whose outer words
+			// hold a sentinel, so a kernel that writes outside the row is
+			// observed rather than assumed away.
+			srcBuf := make([]uint64, words+2)
+			for i := range srcBuf {
+				srcBuf[i] = rng.Uint64()
 			}
-
-			// orRowInto
-			dst := make([]uint64, words)
-			for i := range dst {
-				dst[i] = rng.Uint64()
+			dstBuf := make([]uint64, words+2)
+			for i := range dstBuf {
+				dstBuf[i] = rng.Uint64()
 			}
+			src, dst := rowOf(srcBuf, words), rowOf(dstBuf, words)
 			want := make([]uint64, words)
 			for i := range want {
 				want[i] = dst[i] | src[i]
 			}
+
 			orRowInto(dst, src)
 			if !equalRows(dst, want) {
 				t.Fatalf("orRowInto words=%d: got %x want %x", words, dst, want)
 			}
+			checkCanaries(t, "orRowInto", words, srcBuf, dstBuf)
 
 			// andRowInto
-			dst = make([]uint64, words)
-			for i := range dst {
-				dst[i] = rng.Uint64()
+			dstBuf = make([]uint64, words+2)
+			for i := range dstBuf {
+				dstBuf[i] = rng.Uint64()
 			}
+			dst = rowOf(dstBuf, words)
 			for i := range want {
 				want[i] = dst[i] & src[i]
 			}
@@ -51,16 +56,39 @@ func TestKernelEquivalence(t *testing.T) {
 			if !equalRows(dst, want) {
 				t.Fatalf("andRowInto words=%d: got %x want %x", words, dst, want)
 			}
+			checkCanaries(t, "andRowInto", words, srcBuf, dstBuf)
 
 			// copyRow
-			dst = make([]uint64, words)
-			for i := range dst {
-				dst[i] = rng.Uint64()
+			dstBuf = make([]uint64, words+2)
+			for i := range dstBuf {
+				dstBuf[i] = rng.Uint64()
 			}
+			dst = rowOf(dstBuf, words)
 			copyRow(dst, src)
 			if !equalRows(dst, src) {
 				t.Fatalf("copyRow words=%d: got %x want %x", words, dst, src)
 			}
+			checkCanaries(t, "copyRow", words, srcBuf, dstBuf)
+		}
+	}
+}
+
+// canary is the sentinel parked in the words on either side of a row.
+const canary = ^uint64(0)
+
+// rowOf parks the sentinel outside the row and returns the row itself.
+func rowOf(buf []uint64, words int) []uint64 {
+	buf[0], buf[words+1] = canary, canary
+	return buf[1 : 1+words]
+}
+
+// checkCanaries fails when a kernel wrote outside its row.
+func checkCanaries(t *testing.T, name string, words int, bufs ...[]uint64) {
+	t.Helper()
+	for _, buf := range bufs {
+		if buf[0] != canary || buf[words+1] != canary {
+			t.Fatalf("%s words=%d: kernel touched memory outside the row: %x %x",
+				name, words, buf[0], buf[words+1])
 		}
 	}
 }
@@ -71,17 +99,34 @@ func TestKernelEquivalence(t *testing.T) {
 func TestKernelShortRows(t *testing.T) {
 	lanes := simd.VectorBitSize() / 64
 	for _, words := range []int{1, 2, 3, lanes + 1} {
-		src := make([]uint64, words)
-		for i := range src {
-			src[i] = ^uint64(0)
+		srcBuf := make([]uint64, words+2)
+		for i := range srcBuf {
+			srcBuf[i] = ^uint64(0)
 		}
-		dst := make([]uint64, words)
+		src := rowOf(srcBuf, words)
+
+		dstBuf := make([]uint64, words+2)
+		dst := rowOf(dstBuf, words)
 		orRowInto(dst, src)
 		for i := range dst {
 			if dst[i] != ^uint64(0) {
 				t.Fatalf("orRowInto words=%d: dst[%d]=%x want all ones", words, i, dst[i])
 			}
 		}
+		checkCanaries(t, "orRowInto", words, srcBuf, dstBuf)
+
+		dstBuf = make([]uint64, words+2)
+		dst = rowOf(dstBuf, words)
+		andRowInto(dst, src)
+		checkCanaries(t, "andRowInto", words, srcBuf, dstBuf)
+
+		dstBuf = make([]uint64, words+2)
+		dst = rowOf(dstBuf, words)
+		copyRow(dst, src)
+		if !equalRows(dst, src) {
+			t.Fatalf("copyRow words=%d: got %x want %x", words, dst, src)
+		}
+		checkCanaries(t, "copyRow", words, srcBuf, dstBuf)
 	}
 }
 

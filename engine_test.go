@@ -165,22 +165,27 @@ func TestSyntheticLayout(t *testing.T) {
 		t.Fatalf("WordsPerRow(Countermeasure) = %d, want 1", got)
 	}
 
-	if got, want := len(e.ttpArt), e.nRel*e.nTTP*e.wArt; got != want {
+	// The documented layout is [planes][rows][stride], with planes = RelCount()+1
+	// (plane 0 is the union), rows = the partition size and stride =
+	// WordsPerRow of the row partition. Asserting it through the public
+	// dimensions pins the layout, not Build's own allocation expression.
+	planes, defPlanes := e.RelCount()+1, e.DefRelCount()+1
+	if got, want := len(e.ttpArt), planes*e.TTPCount()*e.WordsPerRow(KindArtifact); got != want {
 		t.Fatalf("len(ttpArt) = %d, want %d", got, want)
 	}
-	if got, want := len(e.artTTP), e.nRel*e.nArt*e.wTTP; got != want {
+	if got, want := len(e.artTTP), planes*e.ArtifactCount()*e.WordsPerRow(KindTTP); got != want {
 		t.Fatalf("len(artTTP) = %d, want %d", got, want)
 	}
-	if got, want := len(e.cmArt), e.nDefRel*e.nCM*e.wArt; got != want {
+	if got, want := len(e.cmArt), defPlanes*e.CountermeasureCount()*e.WordsPerRow(KindArtifact); got != want {
 		t.Fatalf("len(cmArt) = %d, want %d", got, want)
 	}
-	if got, want := len(e.artCM), e.nDefRel*e.nArt*e.wCM; got != want {
+	if got, want := len(e.artCM), defPlanes*e.ArtifactCount()*e.WordsPerRow(KindCountermeasure); got != want {
 		t.Fatalf("len(artCM) = %d, want %d", got, want)
 	}
-	if got, want := len(e.cmTTP), e.nCM*e.wTTP; got != want {
+	if got, want := len(e.cmTTP), e.CountermeasureCount()*e.WordsPerRow(KindTTP); got != want {
 		t.Fatalf("len(cmTTP) = %d, want %d", got, want)
 	}
-	if got, want := len(e.ttpCM), e.nTTP*e.wCM; got != want {
+	if got, want := len(e.ttpCM), e.TTPCount()*e.WordsPerRow(KindCountermeasure); got != want {
 		t.Fatalf("len(ttpCM) = %d, want %d", got, want)
 	}
 
@@ -597,6 +602,19 @@ func TestSyntheticColdPath(t *testing.T) {
 	if e.RelName(RelAny) != "any" {
 		t.Fatalf("RelName(RelAny) = %q, want any", e.RelName(RelAny))
 	}
+	// Every plane round-trips through its name and id, including the union plane.
+	for r := 0; r <= e.RelCount(); r++ {
+		got, ok := e.Rel(e.RelName(Rel(r)))
+		if !ok || got != Rel(r) {
+			t.Fatalf("Rel(%q) = %d,%v, want %d,true", e.RelName(Rel(r)), got, ok, r)
+		}
+	}
+	for dr := 0; dr <= e.DefRelCount(); dr++ {
+		got, ok := e.DefRel(e.DefRelName(DefRel(dr)))
+		if !ok || got != DefRel(dr) {
+			t.Fatalf("DefRel(%q) = %d,%v, want %d,true", e.DefRelName(DefRel(dr)), got, ok, dr)
+		}
+	}
 	if dr, ok := e.DefRel("hardens"); !ok || e.DefRelName(dr) != "hardens" {
 		t.Fatalf("DefRel(hardens) = %v,%v", dr, ok)
 	}
@@ -749,27 +767,39 @@ func TestSyntheticPanics(t *testing.T) {
 	bufC := make([]Countermeasure, 4)
 	bufT := make([]TTP, 4)
 
-	mustPanic(t, "rel out of range", func() { e.ArtifactsRel(0, Rel(9), nil) })
-	mustPanic(t, "defrel out of range", func() { e.CountermeasuresForArtifact(0, DefRel(9), bufC) })
-	mustPanic(t, "scratch too small (countermeasure)", func() {
+	mustPanic(t, "rel out of range", "gr4ph: relation out of range", func() { e.ArtifactsRel(0, Rel(9), nil) })
+	mustPanic(t, "defrel out of range", "gr4ph: defensive relation out of range", func() {
+		e.CountermeasuresForArtifact(0, DefRel(9), bufC)
+	})
+	mustPanic(t, "scratch too small (countermeasure)", "gr4ph: scratch too small", func() {
 		e.CountermeasuresForTTPRollup(0, nil, bufC)
 	})
-	mustPanic(t, "scratch too small (ttp)", func() {
+	mustPanic(t, "scratch too small (ttp)", "gr4ph: scratch too small", func() {
 		e.TTPsForCountermeasureRollup(0, nil, bufT)
 	})
-	mustPanic(t, "scratch too small (artifact)", func() {
+	mustPanic(t, "scratch too small (artifact)", "gr4ph: scratch too small", func() {
 		e.ArtifactsRollup(0, nil, nil)
 	})
-	mustPanic(t, "unknown kind", func() { e.WordsPerRow(Kind(9)) })
-	mustPanic(t, "cold accessor out of range", func() { e.TTPName(TTP(99)) })
-	mustPanic(t, "cold domain accessor out of range", func() { e.TTPDomain(TTP(99)) })
-	mustPanic(t, "cold artifact name out of range", func() { e.ArtifactName(Artifact(99)) })
-	mustPanic(t, "cold artifact label out of range", func() { e.ArtifactLabel(Artifact(99)) })
-	mustPanic(t, "cold countermeasure name out of range", func() { e.CountermeasureName(Countermeasure(99)) })
-	mustPanic(t, "cold countermeasure label out of range", func() { e.CountermeasureLabel(Countermeasure(99)) })
-	mustPanic(t, "cold rel name out of range", func() { e.RelName(Rel(9)) })
-	mustPanic(t, "cold defrel name out of range", func() { e.DefRelName(DefRel(9)) })
-	mustPanic(t, "defrel out of range (artifact-major)", func() {
+	mustPanic(t, "unknown kind", "gr4ph: unknown kind", func() { e.WordsPerRow(Kind(9)) })
+	mustPanic(t, "cold accessor out of range", "gr4ph: ttp out of range", func() { e.TTPName(TTP(99)) })
+	mustPanic(t, "cold domain accessor out of range", "gr4ph: ttp out of range", func() { e.TTPDomain(TTP(99)) })
+	mustPanic(t, "cold artifact name out of range", "gr4ph: artifact out of range", func() {
+		e.ArtifactName(Artifact(99))
+	})
+	mustPanic(t, "cold artifact label out of range", "gr4ph: artifact out of range", func() {
+		e.ArtifactLabel(Artifact(99))
+	})
+	mustPanic(t, "cold countermeasure name out of range", "gr4ph: countermeasure out of range", func() {
+		e.CountermeasureName(Countermeasure(99))
+	})
+	mustPanic(t, "cold countermeasure label out of range", "gr4ph: countermeasure out of range", func() {
+		e.CountermeasureLabel(Countermeasure(99))
+	})
+	mustPanic(t, "cold rel name out of range", "gr4ph: relation out of range", func() { e.RelName(Rel(9)) })
+	mustPanic(t, "cold defrel name out of range", "gr4ph: defensive relation out of range", func() {
+		e.DefRelName(DefRel(9))
+	})
+	mustPanic(t, "defrel out of range (artifact-major)", "gr4ph: defensive relation out of range", func() {
 		e.ArtifactsForCountermeasure(0, DefRel(9), nil)
 	})
 
@@ -779,11 +809,18 @@ func TestSyntheticPanics(t *testing.T) {
 	e.ArtifactsRollup(0, make([]uint64, 1), nil)
 }
 
-func mustPanic(t *testing.T, name string, f func()) {
+// mustPanic asserts that f panics with the guard's own message, so a case cannot
+// pass on an incidental slice-bounds panic instead of the guard it names.
+func mustPanic(t *testing.T, name, want string, f func()) {
 	t.Helper()
 	defer func() {
-		if r := recover(); r == nil {
+		r := recover()
+		if r == nil {
 			t.Fatalf("%s: expected panic", name)
+		}
+		msg, ok := r.(string)
+		if !ok || msg != want {
+			t.Fatalf("%s: panic = %v (%T), want %q", name, r, r, want)
 		}
 	}()
 	f()

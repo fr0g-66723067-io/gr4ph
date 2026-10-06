@@ -4,9 +4,11 @@ package ontology
 
 import (
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/fr0g-66723067/gr4ph"
+	"github.com/fr0g-66723067/gr4ph/internal/hotmethods"
 )
 
 // build registers the frozen tables into a fresh engine.
@@ -156,6 +158,16 @@ func TestRegisterRequiresFreshBuilder(t *testing.T) {
 	if err := Register(b3); !errors.Is(err, ErrBuilderNotEmpty) {
 		t.Fatalf("Register after AddTTP = %v, want ErrBuilderNotEmpty", err)
 	}
+
+	// A built-but-empty builder is not fresh either: its Add* all return
+	// ErrBuilderUsed, so Register must report the documented precondition error.
+	b4 := gr4ph.NewBuilder()
+	if _, err := b4.Build(); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if err := Register(b4); !errors.Is(err, ErrBuilderNotEmpty) {
+		t.Fatalf("Register on a built builder = %v, want ErrBuilderNotEmpty", err)
+	}
 }
 
 // TestOntologySizes pins the frozen table sizes against the pinned release.
@@ -227,6 +239,12 @@ func TestOntologySizes(t *testing.T) {
 	}
 	if e.RelName(gr4ph.RelAny) != "any" || e.DefRelName(gr4ph.DefRelAny) != "any" {
 		t.Fatal("plane 0 must be named any")
+	}
+	if r, ok := e.Rel("any"); !ok || r != gr4ph.RelAny {
+		t.Fatalf("Rel(any) = %d,%v, want RelAny,true", r, ok)
+	}
+	if dr, ok := e.DefRel("any"); !ok || dr != gr4ph.DefRelAny {
+		t.Fatalf("DefRel(any) = %d,%v, want DefRelAny,true", dr, ok)
 	}
 }
 
@@ -537,6 +555,17 @@ func TestOntologyOffensiveGoldens(t *testing.T) {
 	if got := e.ArtifactDegree(art(t, e, "CreateProcess"), gr4ph.RelAny); got != 29 {
 		t.Fatalf("ArtifactDegree(CreateProcess) = %d, want 29", got)
 	}
+	// The README's "≤ 29 × 3-word ORs" bound for CountermeasuresForArtifactViaTTPs
+	// is the maximum over every artifact, so pin the maximum itself.
+	maxDegree, argmax := 0, gr4ph.Artifact(0)
+	for a := range e.ArtifactCount() {
+		if d := e.ArtifactDegree(gr4ph.Artifact(a), gr4ph.RelAny); d > maxDegree {
+			maxDegree, argmax = d, gr4ph.Artifact(a)
+		}
+	}
+	if maxDegree != 29 || e.ArtifactName(argmax) != "CreateProcess" {
+		t.Fatalf("max ArtifactDegree = %d at %s, want 29 at CreateProcess", maxDegree, e.ArtifactName(argmax))
+	}
 	if got := e.Degree(ttp(t, e, "T0894"), gr4ph.RelAny); got != 8 {
 		t.Fatalf("Degree(T0894) = %d, want 8 (maximum technique degree)", got)
 	}
@@ -808,8 +837,12 @@ func TestZeroAllocOntology(t *testing.T) {
 			}
 		}},
 	}
-	if len(cases) != 29 {
-		t.Fatalf("hot-method coverage = %d cases, want 29 (same set as the root package)", len(cases))
+	names := make([]string, len(cases))
+	for i, c := range cases {
+		names[i] = c.name
+	}
+	if !slices.Equal(names, hotmethods.Names) {
+		t.Fatalf("hot-method cases = %v, want %v (internal/hotmethods)", names, hotmethods.Names)
 	}
 	for _, c := range cases {
 		if n := testing.AllocsPerRun(50, c.fn); n != 0 {

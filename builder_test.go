@@ -198,9 +198,15 @@ func TestBuilderSingleUse(t *testing.T) {
 	b.AddDefEdge(cm0, a0, dr)
 	b.AddDefendsEdge(cm0, c1)
 
+	if b.Built() {
+		t.Fatal("Built must be false before Build")
+	}
 	e, err := b.Build()
 	if err != nil {
 		t.Fatalf("Build: %v", err)
+	}
+	if !b.Built() {
+		t.Fatal("Built must be true after Build")
 	}
 
 	if _, err := b.AddRel("later"); !errors.Is(err, ErrBuilderUsed) {
@@ -559,5 +565,59 @@ func TestEmptyEngine(t *testing.T) {
 	}
 	if _, ok := e.Rel("accesses"); ok {
 		t.Fatal("Rel on empty engine must be false")
+	}
+}
+
+// TestBuilderReservedRelName pins the union plane's reserved name: "any" is a
+// lookup key for RelAny/DefRelAny, not a registrable predicate.
+func TestBuilderReservedRelName(t *testing.T) {
+	b := NewBuilder()
+	for _, name := range []string{"any", " ANY ", "Any"} {
+		if _, err := b.AddRel(name); !errors.Is(err, ErrReservedName) {
+			t.Fatalf("AddRel(%q) = %v, want ErrReservedName", name, err)
+		}
+		if _, err := b.AddDefRel(name); !errors.Is(err, ErrReservedName) {
+			t.Fatalf("AddDefRel(%q) = %v, want ErrReservedName", name, err)
+		}
+	}
+	r, err := b.AddRel("accesses")
+	if err != nil || r != 1 {
+		t.Fatalf("AddRel(accesses) = %d, %v, want 1, nil", r, err)
+	}
+	if again, err := b.AddRel(" ACCESSES "); err != nil || again != r {
+		t.Fatalf("AddRel repeat = %d, %v, want %d, nil", again, err, r)
+	}
+	if b.RelCount() != 1 {
+		t.Fatalf("RelCount = %d, want 1 (a rejected name must not take a plane)", b.RelCount())
+	}
+}
+
+// TestBuilderAddTTPIdempotentArguments pins the idempotency rule: a duplicate id
+// is a no-op for every argument, including an invalid domain.
+func TestBuilderAddTTPIdempotentArguments(t *testing.T) {
+	b := NewBuilder()
+	if _, err := b.AddTTP("T1", "One", Domain(9), NoParent); !errors.Is(err, ErrUnknownDomain) {
+		t.Fatalf("fresh AddTTP with bad domain = %v, want ErrUnknownDomain", err)
+	}
+	t0, err := b.AddTTP("T1", "One", DomainEnterprise, NoParent)
+	if err != nil {
+		t.Fatalf("AddTTP: %v", err)
+	}
+	again, err := b.AddTTP("T1", "Two", Domain(9), NoParent, "alias")
+	if err != nil {
+		t.Fatalf("repeat AddTTP = %v, want nil (a duplicate ignores its arguments)", err)
+	}
+	if again != t0 {
+		t.Fatalf("repeat AddTTP = %d, want %d", again, t0)
+	}
+	e, err := b.Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if got := e.TTPLabel(t0); got != "One" {
+		t.Fatalf("TTPLabel = %q, want One (a duplicate must not relabel)", got)
+	}
+	if _, ok := e.Incident("alias"); ok {
+		t.Fatal("a duplicate's alias must not be registered")
 	}
 }

@@ -32,14 +32,14 @@ var ErrBuilderNotEmpty = errors.New("ontology: Register requires a fresh builder
 //     valid direct index (parents sort before, and register before, their
 //     children) and keeps every child block contiguous.
 //
-// Register requires a fresh builder: pre-registered relations or nodes would
-// shift every dense id and silently misalign the tables, so a non-empty builder
-// returns ErrBuilderNotEmpty.
+// Register requires a fresh, unbuilt builder: pre-registered relations or nodes
+// would shift every dense id and silently misalign the tables, so an
+// already-built or non-empty builder returns ErrBuilderNotEmpty.
 //
 // Callers own the builder; use NewBuilder, Register, Build for the frozen
 // engine.
 func Register(b *gr4ph.Builder) error {
-	if b.TTPCount() != 0 || b.ArtifactCount() != 0 || b.CountermeasureCount() != 0 ||
+	if b.Built() || b.TTPCount() != 0 || b.ArtifactCount() != 0 || b.CountermeasureCount() != 0 ||
 		b.RelCount() != 0 || b.DefRelCount() != 0 {
 		return ErrBuilderNotEmpty
 	}
