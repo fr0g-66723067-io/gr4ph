@@ -8,7 +8,7 @@ export GOEXPERIMENT=simd
 
 GO ?= go
 
-.PHONY: all vet test gen bench fmt clean
+.PHONY: all vet test gen bench fmt clean stock
 
 all: vet test
 
@@ -24,7 +24,15 @@ gen:
 	$(GO) run ./cmd/d3fendgen -out ontology/attack_gen.go
 
 bench:
-	$(GO) test -bench . -benchmem ./
+	$(GO) test -bench . -benchmem ./...
+
+# Verifies the stock-toolchain contract: the generator builds and tests without
+# the experiment, and the module as a whole fails loudly (internal/simdcheck)
+# instead of silently skipping the gated packages.
+stock:
+	env -u GOEXPERIMENT $(GO) test ./cmd/d3fendgen
+	env -u GOEXPERIMENT $(GO) build -o /dev/null ./cmd/d3fendgen
+	! env -u GOEXPERIMENT $(GO) build ./...
 
 fmt:
 	$(GO) fmt ./...

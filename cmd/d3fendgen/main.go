@@ -50,17 +50,24 @@ const (
 	sourceD3FEND     = "d3fend-full-mappings.csv@1.6.0"
 )
 
-// Expected shape of ATT&CK 19.2 x D3FEND 1.6.0. Any drift fails the run.
-const (
-	wantTTPs            = 1186
-	wantArtifacts       = 247
-	wantCountermeasures = 157
-	wantOffRels         = 41
-	wantDefRels         = 38
-	wantOffEdges        = 670
-	wantDefEdges        = 182
-	wantDefends         = 4133
-)
+// shape is the expected graph shape of a pinned release. The generator fails
+// loudly when a run drifts from it, instead of emitting tables whose indices no
+// longer match upstream.
+type shape struct {
+	ttps, artifacts, cms            int
+	offRels, defRels                int
+	offEdges, defEdges, defends     int
+	offPairs                        int // distinct (ttp, artifact) pairs = offensive union-plane cardinality
+	enterprise, mobile, ics, sparta int
+}
+
+// pinnedShape is ATT&CK 19.2 x D3FEND 1.6.0, measured from the pinned sources.
+var pinnedShape = shape{
+	ttps: 1186, artifacts: 247, cms: 157,
+	offRels: 41, defRels: 38,
+	offEdges: 670, defEdges: 182, defends: 4133, offPairs: 654,
+	enterprise: 858, mobile: 176, ics: 106, sparta: 46,
+}
 
 // domain mirrors gr4ph.Domain, kept local so this package stays dependency-free.
 type domain uint8
@@ -92,13 +99,13 @@ func main() {
 	out := flag.String("out", filepath.Join("ontology", "attack_gen.go"), "output Go file")
 	flag.Parse()
 
-	if err := run(*entSrc, *icsSrc, *mobSrc, *d3Src, *out); err != nil {
+	if err := run(*entSrc, *icsSrc, *mobSrc, *d3Src, *out, pinnedShape); err != nil {
 		fmt.Fprintln(os.Stderr, "d3fendgen:", err)
 		os.Exit(1)
 	}
 }
 
-func run(entSrc, icsSrc, mobSrc, d3Src, out string) error {
+func run(entSrc, icsSrc, mobSrc, d3Src, out string, want shape) error {
 	// ATT&CK first, in precedence order: an id seen in enterprise is never
 	// re-tagged by ICS or mobile (no cross-domain collisions exist in 19.2, so
 	// this is only a defensive tiebreak).
@@ -127,6 +134,9 @@ func run(entSrc, icsSrc, mobSrc, d3Src, out string) error {
 
 	m, err := assemble(stix, d3)
 	if err != nil {
+		return err
+	}
+	if err := m.checkShape(want); err != nil {
 		return err
 	}
 
@@ -687,32 +697,46 @@ func assemble(stix map[string]*ttpInfo, d3 *d3fendData) (*model, error) {
 		m.defendsT = append(m.defendsT, ti)
 	}
 
-	if err := m.checkShape(); err != nil {
-		return nil, err
-	}
 	return m, nil
 }
 
-func (m *model) checkShape() error {
+// checkShape compares the assembled graph against want and fails on any drift:
+// node/edge/relation counts, the offensive union-plane cardinality and the
+// domain histogram.
+func (m *model) checkShape(want shape) error {
 	counts := []struct {
 		name string
 		got  int
 		want int
 	}{
-		{"techniques", len(m.ttpIDs), wantTTPs},
-		{"artifacts", len(m.artNames), wantArtifacts},
-		{"countermeasures", len(m.cmIDs), wantCountermeasures},
-		{"offensive relations", len(m.offRelNames), wantOffRels},
-		{"defensive relations", len(m.defRelNames), wantDefRels},
-		{"offensive edges", len(m.offT), wantOffEdges},
-		{"defensive edges", len(m.defC), wantDefEdges},
-		{"defends-against pairs", len(m.defendsC), wantDefends},
+		{"techniques", len(m.ttpIDs), want.ttps},
+		{"artifacts", len(m.artNames), want.artifacts},
+		{"countermeasures", len(m.cmIDs), want.cms},
+		{"offensive relations", len(m.offRelNames), want.offRels},
+		{"defensive relations", len(m.defRelNames), want.defRels},
+		{"offensive edges", len(m.offT), want.offEdges},
+		{"defensive edges", len(m.defC), want.defEdges},
+		{"defends-against pairs", len(m.defendsC), want.defends},
 	}
 	for _, c := range counts {
 		if c.got != c.want {
 			return fmt.Errorf("shape drift: %d %s, want %d (upstream release changed; re-pin the sources and re-derive the expectations)", c.got, c.name, c.want)
 		}
 	}
+
+	// Distinct (technique, artifact) pairs: the union-plane cardinality of the
+	// offensive blocks. The edge slices are sorted by (ttp, artifact, rel), so
+	// equal pairs are adjacent.
+	pairs := 0
+	for i := range m.offT {
+		if i == 0 || m.offT[i] != m.offT[i-1] || m.offA[i] != m.offA[i-1] {
+			pairs++
+		}
+	}
+	if pairs != want.offPairs {
+		return fmt.Errorf("shape drift: %d distinct technique/artifact pairs, want %d (upstream release changed; re-pin the sources and re-derive the expectations)", pairs, want.offPairs)
+	}
+
 	var e, i, mo, sp int
 	for _, d := range m.ttpDomains {
 		switch d {
@@ -726,8 +750,9 @@ func (m *model) checkShape() error {
 			sp++
 		}
 	}
-	if e != 858 || mo != 176 || i != 106 || sp != 46 {
-		return fmt.Errorf("shape drift: domain histogram %d/%d/%d/%d (enterprise/mobile/ics/sparta), want 858/176/106/46", e, mo, i, sp)
+	if e != want.enterprise || mo != want.mobile || i != want.ics || sp != want.sparta {
+		return fmt.Errorf("shape drift: domain histogram %d/%d/%d/%d (enterprise/mobile/ics/sparta), want %d/%d/%d/%d",
+			e, mo, i, sp, want.enterprise, want.mobile, want.ics, want.sparta)
 	}
 	return nil
 }
