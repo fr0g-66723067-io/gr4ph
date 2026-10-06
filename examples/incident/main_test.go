@@ -8,8 +8,9 @@ import (
 	"testing"
 )
 
-// wantStdout is the walkthrough as documented in the README: the example is the
-// executable contract for the four stages, so its output is pinned verbatim.
+// wantStdout pins the example's stdout verbatim; the README's "The two flows"
+// section describes the five stages it walks and the command to run it, but
+// quotes no output, so this constant is the executable contract.
 const wantStdout = `nodes: 3 ttp, 2 artifacts, 1 countermeasure; rels 2/1; wordsPerRow 1/1/1
 incident "lsass memory" -> T1003.001 (sub of T1003)
 artifacts(T1003.001) = [Process]

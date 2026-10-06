@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// wantStdout is the walkthrough as documented in the README, pinned verbatim:
-// the numbers are the frozen ATT&CK 19.2 x D3FEND 1.6.0 shape.
+// wantStdout pins the example's stdout verbatim: the numbers are the frozen
+// ATT&CK 19.2 x D3FEND 1.6.0 shape (the README quotes no example output).
 const wantStdout = `ontology: 1186 ttps (858 enterprise, 176 mobile, 106 ics, 46 sparta), 247 artifacts, 157 countermeasures; rels 41/38; edges 670/182/4133; wordsPerRow 19/4/3
 hierarchy: 605 top-level, 581 sub-techniques, 148 parents, max 18 children (T1546)
 ttps(Process) = 5: T1003.001 T1003.002 T1003.004 T1505.003 T1546.007

@@ -27,7 +27,7 @@ package and report success while testing nothing. `go test ./cmd/d3fendgen` work
 experiment.
 
 ```sh
-GOEXPERIMENT=simd go build ./...     # the Makefile exports this for every target
+GOEXPERIMENT=simd go build ./...     # the Makefile exports this for every target except `make stock`, which unsets it
 ```
 
 `simd.VectorBitSize()` is chosen at **runtime** by the `simd` package, not by this module. The kernels
@@ -113,12 +113,18 @@ Sizes and cold path:
 | method | work | alloc |
 |---|---|---|
 | `TTPCount` `ArtifactCount` `CountermeasureCount` `RelCount` `DefRelCount` `WordsPerRow` | O(1) | 0 |
-| `Incident(alert) (TTP, bool)`, `Artifact(s)`, `Countermeasure(s)` | map lookup (trim + lower) | cold |
+| `Incident(alert) (TTP, bool)`, `Artifact(s)`, `Countermeasure(s)` | map lookup (trim + lower); a label shared by several techniques resolves to the lowest-index match | cold |
 | `TTPName` `TTPLabel` `ArtifactName` `ArtifactLabel` `CountermeasureName` `CountermeasureLabel` `TTPDomain` | O(1) | 0 |
 | `Rel` `DefRel` | map lookup (trim + lower), `"any"` is the union plane and cannot be registered (`ErrReservedName`) | cold |
 | `RelName` `DefRelName` | O(1) | 0 |
 | `Response(dst, ids)` `CountermeasureResponse(dst, ids)` | formats `<id> <label>` | cold |
 | `TTPParent` `TTPChildCount` `TTPChildren` | O(1) / O(children) | 0 |
+
+Technique labels are **not** unique keys: the pinned tables keep ATT&CK's revoked techniques, whose
+live successors reuse their labels — 238 of the 1186 labels are carried by more than one technique and
+shadow 269 ids — so `Incident` resolves a shared label to the lowest-index match, which may be the
+revoked twin. Ids are unambiguous (every `TTPName` round-trips through `Incident`), and no artifact or
+countermeasure key names two nodes.
 
 Traversals (all take/return ids, all allocate nothing):
 
@@ -263,8 +269,8 @@ cannot be mutated through its builder.
 
 ## Measured performance
 
-`go test -bench . -benchmem -count=5 ./...` on the development host (i5-10310U, 128-bit vectors), real
-tables; ns/op below is the median of 5 runs, and every benchmark reports 0 B/op and 0 allocs/op:
+`GOEXPERIMENT=simd go test -bench . -benchmem -count=5 ./...` on the development host (i5-10310U, 128-bit
+vectors), real tables; ns/op below is the median of 5 runs, and every benchmark reports 0 B/op and 0 allocs/op:
 
 | benchmark | ns/op |
 |---|---|

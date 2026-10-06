@@ -20,7 +20,8 @@
 //
 //	GOEXPERIMENT=simd go build ./...
 //
-// The Makefile exports GOEXPERIMENT=simd for every target.
+// The Makefile exports GOEXPERIMENT=simd for every target except `stock`, which
+// unsets it deliberately (see internal/simdcheck).
 //
 // # Hot path vs cold path
 //
