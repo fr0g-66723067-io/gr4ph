@@ -1,0 +1,4 @@
+# Generated data inputs are never committed (the generator fetches them).
+*.json
+*.csv
+/tmp/

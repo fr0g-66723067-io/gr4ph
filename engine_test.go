@@ -1,0 +1,605 @@
+//go:build goexperiment.simd
+
+package gr4ph
+
+import "testing"
+
+// Synthetic graph used by every engine test:
+//
+//	TTP 0 T1003        children 1,2         TTP 3 T1059   child 4
+//	TTP 1 T1003.001    TTP 2 T1003.002      TTP 4 T1059.001
+//	TTP 5 T1547 (top-level)
+//
+//	Artifact 0 Process   1 File   2 Credential   3 NetworkTraffic
+//	Rel      1 accesses  2 modifies  3 creates
+//	DefRel   1 hardens   2 analyzes
+//	CM       0 (analyzes Process, File; defends T1003.001, T1059.001)
+//	CM       1 (hardens Credential; defends T1003, T1003.002)
+//
+// Offensive edges:
+//
+//	1 -> 0 accesses        1 -> 0 modifies       0 -> 2 accesses
+//	4 -> 1 creates         3 -> 1 creates        5 -> 0 modifies
+//	2 -> 3 accesses
+//
+// Defensive edges:
+//
+//	cm0 -> 0 analyzes      cm0 -> 1 analyzes     cm1 -> 2 hardens
+func buildSynthetic(t *testing.T) *Engine {
+	t.Helper()
+	b := NewBuilder()
+
+	ttp := func(id, label string, parent TTP) TTP {
+		t.Helper()
+		v, err := b.AddTTP(id, label, DomainEnterprise, parent)
+		if err != nil {
+			t.Fatalf("AddTTP(%s): %v", id, err)
+		}
+		return v
+	}
+	t1003 := ttp("T1003", "OS Credential Dumping", NoParent)
+	t1003a := ttp("T1003.001", "LSASS Memory", t1003)
+	t1003b := ttp("T1003.002", "Security Account Manager", t1003)
+	t1059 := ttp("T1059", "Command and Scripting Interpreter", NoParent)
+	t1059a := ttp("T1059.001", "PowerShell", t1059)
+	t1547 := ttp("T1547", "Boot or Logon Autostart Execution", NoParent)
+
+	art := func(name string) Artifact {
+		t.Helper()
+		v, err := b.AddArtifact(name, name)
+		if err != nil {
+			t.Fatalf("AddArtifact(%s): %v", name, err)
+		}
+		return v
+	}
+	process := art("Process")
+	file := art("File")
+	cred := art("Credential")
+	traffic := art("NetworkTraffic")
+
+	cm := func(id string) Countermeasure {
+		t.Helper()
+		v, err := b.AddCountermeasure(id, id)
+		if err != nil {
+			t.Fatalf("AddCountermeasure(%s): %v", id, err)
+		}
+		return v
+	}
+	cm0 := cm("ProcessIsolation")
+	cm1 := cm("CredentialHardening")
+
+	rel := func(name string) Rel {
+		t.Helper()
+		v, err := b.AddRel(name)
+		if err != nil {
+			t.Fatalf("AddRel(%s): %v", name, err)
+		}
+		return v
+	}
+	accesses := rel("accesses")
+	modifies := rel("modifies")
+	creates := rel("creates")
+
+	defrel := func(name string) DefRel {
+		t.Helper()
+		v, err := b.AddDefRel(name)
+		if err != nil {
+			t.Fatalf("AddDefRel(%s): %v", name, err)
+		}
+		return v
+	}
+	hardens := defrel("hardens")
+	analyzes := defrel("analyzes")
+
+	edges := []struct {
+		t TTP
+		a Artifact
+		r Rel
+	}{
+		{t1003a, process, accesses},
+		{t1003a, process, modifies},
+		{t1003, cred, accesses},
+		{t1059a, file, creates},
+		{t1059, file, creates},
+		{t1547, process, modifies},
+		{t1003b, traffic, accesses},
+	}
+	for _, e := range edges {
+		if err := b.AddEdge(e.t, e.a, e.r); err != nil {
+			t.Fatalf("AddEdge(%d,%d,%d): %v", e.t, e.a, e.r, err)
+		}
+	}
+
+	defEdges := []struct {
+		cm Countermeasure
+		a  Artifact
+		dr DefRel
+	}{
+		{cm0, process, analyzes},
+		{cm0, file, analyzes},
+		{cm1, cred, hardens},
+	}
+	for _, e := range defEdges {
+		if err := b.AddDefEdge(e.cm, e.a, e.dr); err != nil {
+			t.Fatalf("AddDefEdge: %v", err)
+		}
+	}
+
+	defends := []struct {
+		cm Countermeasure
+		t  TTP
+	}{
+		{cm0, t1003a},
+		{cm0, t1059a},
+		{cm1, t1003},
+		{cm1, t1003b},
+	}
+	for _, d := range defends {
+		if err := b.AddDefendsEdge(d.cm, d.t); err != nil {
+			t.Fatalf("AddDefendsEdge: %v", err)
+		}
+	}
+
+	e, err := b.Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if e.TTPCount() != 6 || e.ArtifactCount() != 4 || e.CountermeasureCount() != 2 {
+		t.Fatalf("counts = %d %d %d, want 6 4 2", e.TTPCount(), e.ArtifactCount(), e.CountermeasureCount())
+	}
+	return e
+}
+
+// TestSyntheticLayout pins the six blocks word by word, so a wrong offset
+// formula or a transposed plane cannot pass unnoticed.
+func TestSyntheticLayout(t *testing.T) {
+	e := buildSynthetic(t)
+
+	if got := e.WordsPerRow(KindTTP); got != 1 {
+		t.Fatalf("WordsPerRow(TTP) = %d, want 1", got)
+	}
+	if got := e.WordsPerRow(KindArtifact); got != 1 {
+		t.Fatalf("WordsPerRow(Artifact) = %d, want 1", got)
+	}
+	if got := e.WordsPerRow(KindCountermeasure); got != 1 {
+		t.Fatalf("WordsPerRow(Countermeasure) = %d, want 1", got)
+	}
+
+	if got, want := len(e.ttpArt), e.nRel*e.nTTP*e.wArt; got != want {
+		t.Fatalf("len(ttpArt) = %d, want %d", got, want)
+	}
+	if got, want := len(e.artTTP), e.nRel*e.nArt*e.wTTP; got != want {
+		t.Fatalf("len(artTTP) = %d, want %d", got, want)
+	}
+	if got, want := len(e.cmArt), e.nDefRel*e.nCM*e.wArt; got != want {
+		t.Fatalf("len(cmArt) = %d, want %d", got, want)
+	}
+	if got, want := len(e.artCM), e.nDefRel*e.nArt*e.wCM; got != want {
+		t.Fatalf("len(artCM) = %d, want %d", got, want)
+	}
+	if got, want := len(e.cmTTP), e.nCM*e.wTTP; got != want {
+		t.Fatalf("len(cmTTP) = %d, want %d", got, want)
+	}
+	if got, want := len(e.ttpCM), e.nTTP*e.wCM; got != want {
+		t.Fatalf("len(ttpCM) = %d, want %d", got, want)
+	}
+
+	// (technique, artifact, relation) triples, read from the technique-major
+	// block: ttpArt[rel][t] must contain exactly a.
+	want := []struct {
+		t TTP
+		a Artifact
+		r Rel
+	}{
+		{1, 0, 1}, {1, 0, 2}, {0, 2, 1}, {4, 1, 3}, {3, 1, 3}, {5, 0, 2}, {2, 3, 1},
+	}
+	for _, w := range want {
+		row := e.row(e.ttpArt, e.ttpArtOff(w.r, w.t), e.wArt)
+		if !testBit(row, int(w.a)) {
+			t.Fatalf("ttpArt[rel %d][t %d] missing artifact %d", w.r, w.t, w.a)
+		}
+		if got := popcountRow(row); got != 1 {
+			t.Fatalf("ttpArt[rel %d][t %d] has %d bits, want 1", w.r, w.t, got)
+		}
+	}
+
+	// The transpose must mirror the technique-major rows exactly; several
+	// artifacts are touched by more than one technique under the same relation.
+	trows := []struct {
+		r    Rel
+		a    Artifact
+		want []int
+	}{
+		{1, 0, []int{1}},
+		{2, 0, []int{1, 5}},
+		{1, 2, []int{0}},
+		{3, 1, []int{3, 4}},
+		{1, 3, []int{2}},
+	}
+	for _, w := range trows {
+		row := e.row(e.artTTP, e.artTTPOff(w.r, w.a), e.wTTP)
+		got := make([]TTP, len(w.want))
+		if n := enumerate(row, got); n != len(w.want) {
+			t.Fatalf("artTTP[rel %d][a %d] = %d bits, want %d", w.r, w.a, n, len(w.want))
+		}
+		for i, wantID := range w.want {
+			if got[i] != TTP(wantID) {
+				t.Fatalf("artTTP[rel %d][a %d] = %v, want %v", w.r, w.a, got, w.want)
+			}
+		}
+	}
+
+	// Plane separation: the same pair under two relations, and absent under a
+	// third.
+	if !e.AdjacentRel(1, 0, Rel(1)) || !e.AdjacentRel(1, 0, Rel(2)) {
+		t.Fatal("pair (1,0) must be present under both of its relations")
+	}
+	if e.AdjacentRel(1, 0, Rel(3)) {
+		t.Fatal("pair (1,0) must be absent under 'creates'")
+	}
+
+	// Union plane 0 is the OR of the predicate planes, row by row.
+	check := func(block []uint64, planes, rows, stride int) {
+		t.Helper()
+		for r := range rows {
+			union := make([]uint64, stride)
+			for p := 1; p < planes; p++ {
+				off := (p*rows + r) * stride
+				for i := range stride {
+					union[i] |= block[off+i]
+				}
+			}
+			off0 := r * stride
+			for i := range stride {
+				if block[off0+i] != union[i] {
+					t.Fatalf("union plane row %d word %d = %x, want %x", r, i, block[off0+i], union[i])
+				}
+			}
+		}
+	}
+	check(e.ttpArt, e.nRel, e.nTTP, e.wArt)
+	check(e.artTTP, e.nRel, e.nArt, e.wTTP)
+	check(e.cmArt, e.nDefRel, e.nCM, e.wArt)
+	check(e.artCM, e.nDefRel, e.nArt, e.wCM)
+
+	// The defensive blocks and the defends blocks.
+	defWant := []struct {
+		cm Countermeasure
+		a  Artifact
+		dr DefRel
+	}{{0, 0, 2}, {0, 1, 2}, {1, 2, 1}}
+	for _, w := range defWant {
+		if !testBit(e.row(e.cmArt, e.cmArtOff(w.dr, w.cm), e.wArt), int(w.a)) {
+			t.Fatalf("cmArt[dr %d][cm %d] missing artifact %d", w.dr, w.cm, w.a)
+		}
+		if !testBit(e.row(e.artCM, e.artCMOff(w.dr, w.a), e.wCM), int(w.cm)) {
+			t.Fatalf("artCM[dr %d][a %d] missing cm %d", w.dr, w.a, w.cm)
+		}
+	}
+	defendsWant := []struct {
+		cm Countermeasure
+		t  TTP
+	}{{0, 1}, {0, 4}, {1, 0}, {1, 2}}
+	for _, w := range defendsWant {
+		if !testBit(e.row(e.cmTTP, e.cmTTPOff(w.cm), e.wTTP), int(w.t)) {
+			t.Fatalf("cmTTP[cm %d] missing ttp %d", w.cm, w.t)
+		}
+		if !testBit(e.row(e.ttpCM, e.ttpCMOff(w.t), e.wCM), int(w.cm)) {
+			t.Fatalf("ttpCM[t %d] missing cm %d", w.t, w.cm)
+		}
+	}
+	if got := popcountRow(e.row(e.cmTTP, e.cmTTPOff(0), e.wTTP)); got != 2 {
+		t.Fatalf("cmTTP[cm 0] has %d bits, want 2", got)
+	}
+	if got := popcountRow(e.row(e.cmTTP, e.cmTTPOff(1), e.wTTP)); got != 2 {
+		t.Fatalf("cmTTP[cm 1] has %d bits, want 2", got)
+	}
+}
+
+func TestSyntheticTraversal(t *testing.T) {
+	e := buildSynthetic(t)
+	bufT := make([]TTP, 8)
+	bufA := make([]Artifact, 8)
+
+	// Offensive traversal, both directions.
+	if got := e.TTPs(0, bufT); got != 2 || bufT[0] != 1 || bufT[1] != 5 {
+		t.Fatalf("TTPs(Process) = %d %v, want 2 [1 5]", got, bufT[:2])
+	}
+	if got := e.TTPsRel(0, Rel(1), bufT); got != 1 || bufT[0] != 1 {
+		t.Fatalf("TTPsRel(Process, accesses) = %d %v, want 1 [1]", got, bufT[:1])
+	}
+	if got := e.TTPsRel(0, Rel(2), bufT); got != 2 || bufT[0] != 1 || bufT[1] != 5 {
+		t.Fatalf("TTPsRel(Process, modifies) = %d %v, want 2 [1 5]", got, bufT[:2])
+	}
+	if got := e.Artifacts(1, bufA); got != 1 || bufA[0] != 0 {
+		t.Fatalf("Artifacts(T1003.001) = %d %v, want 1 [0]", got, bufA[:1])
+	}
+	if got := e.Artifacts(0, bufA); got != 1 || bufA[0] != 2 {
+		t.Fatalf("Artifacts(T1003) = %d %v, want 1 [2]", got, bufA[:1])
+	}
+	if got := e.TTPs(3, bufT); got != 1 || bufT[0] != 2 {
+		t.Fatalf("TTPs(NetworkTraffic) = %d %v, want 1 [2]", got, bufT[:1])
+	}
+
+	// Adjacency, degree.
+	if !e.Adjacent(1, 0) {
+		t.Fatal("Adjacent(T1003.001, Process) must be true")
+	}
+	if e.Adjacent(0, 0) {
+		t.Fatal("Adjacent(T1003, Process) must be false (T1003 only touches Credential)")
+	}
+	if got := e.Degree(1, RelAny); got != 1 {
+		t.Fatalf("Degree(T1003.001, RelAny) = %d, want 1", got)
+	}
+	if got := e.Degree(1, Rel(3)); got != 0 {
+		t.Fatalf("Degree(T1003.001, creates) = %d, want 0", got)
+	}
+	if got := e.ArtifactDegree(0, RelAny); got != 2 {
+		t.Fatalf("ArtifactDegree(Process, RelAny) = %d, want 2", got)
+	}
+
+	// Set operations.
+	if got := e.TTPsAny(RelAny, make([]uint64, 1), bufT, []Artifact{0, 1}); got != 4 {
+		t.Fatalf("TTPsAny(Process,File) = %d, want 4", got)
+	} else if bufT[0] != 1 || bufT[1] != 3 || bufT[2] != 4 || bufT[3] != 5 {
+		t.Fatalf("TTPsAny = %v, want [1 3 4 5]", bufT[:4])
+	}
+	if got := e.TTPsAll(RelAny, make([]uint64, 1), bufT, []Artifact{0, 1}); got != 0 {
+		t.Fatalf("TTPsAll(Process,File) = %d, want 0", got)
+	}
+	if got := e.TTPsAll(Rel(2), make([]uint64, 1), bufT, []Artifact{0, 0}); got != 2 {
+		t.Fatalf("TTPsAll(modifies, {Process,Process}) = %d, want 2", got)
+	}
+	if got := e.ArtifactsAny(RelAny, make([]uint64, 1), bufA, []TTP{1, 5}); got != 1 || bufA[0] != 0 {
+		t.Fatalf("ArtifactsAny({T1003.001,T1547}) = %d %v, want 1 [0]", got, bufA[:1])
+	}
+	if got := e.ArtifactsAll(RelAny, make([]uint64, 1), bufA, []TTP{1, 5}); got != 1 || bufA[0] != 0 {
+		t.Fatalf("ArtifactsAll({T1003.001,T1547}) = %d %v, want 1 [0]", got, bufA[:1])
+	}
+	if got := e.ArtifactsAll(RelAny, make([]uint64, 1), bufA, []TTP{0, 1}); got != 0 {
+		t.Fatalf("ArtifactsAll({T1003,T1003.001}) = %d, want 0", got)
+	}
+	// Out-of-range ids inside a set operation are ignored, not fatal.
+	if got := e.TTPsAny(RelAny, make([]uint64, 1), bufT, []Artifact{0, 99}); got != 2 {
+		t.Fatalf("TTPsAny with an invalid id = %d, want 2", got)
+	}
+	if got := e.ArtifactsAll(RelAny, make([]uint64, 1), bufA, []TTP{99}); got != 0 {
+		t.Fatalf("ArtifactsAll with only invalid ids = %d, want 0", got)
+	}
+
+	// Roll-up.
+	if got := e.ArtifactsRollup(0, make([]uint64, 1), bufA); got != 3 {
+		t.Fatalf("ArtifactsRollup(T1003) = %d, want 3", got)
+	} else if bufA[0] != 0 || bufA[1] != 2 || bufA[2] != 3 {
+		t.Fatalf("ArtifactsRollup(T1003) = %v, want [0 2 3]", bufA[:3])
+	}
+	if got := e.ArtifactsRollup(1, make([]uint64, 1), bufA); got != 1 || bufA[0] != 0 {
+		t.Fatalf("ArtifactsRollup(sub) = %d %v, want 1 [0] (own row only)", got, bufA[:1])
+	}
+	if got := e.ArtifactsRollup(3, make([]uint64, 1), bufA); got != 1 || bufA[0] != 1 {
+		t.Fatalf("ArtifactsRollup(T1059) = %d %v, want 1 [1]", got, bufA[:1])
+	}
+	// T1059 and T1059.001 both touch File: roll-up collapses them to one id.
+	if got := e.TTPsRollup(1, make([]uint64, 1), bufT); got != 1 || bufT[0] != 3 {
+		t.Fatalf("TTPsRollup(File) = %d %v, want 1 [3]", got, bufT[:1])
+	}
+	if got := e.TTPs(1, bufT); got != 2 {
+		t.Fatalf("TTPs(File) = %d, want 2 (exact, sub included)", got)
+	}
+	if got := e.TTPsRollup(0, make([]uint64, 1), bufT); got != 2 || bufT[0] != 0 || bufT[1] != 5 {
+		t.Fatalf("TTPsRollup(Process) = %d %v, want 2 [0 5]", got, bufT[:2])
+	}
+	if got := e.TTPsRollupRel(0, Rel(1), make([]uint64, 1), bufT); got != 1 || bufT[0] != 0 {
+		t.Fatalf("TTPsRollupRel(Process, accesses) = %d %v, want 1 [0]", got, bufT[:1])
+	}
+
+	// dst truncation still reports the true total.
+	short := make([]TTP, 1)
+	if got := e.TTPs(1, short); got != 2 || short[0] != 3 {
+		t.Fatalf("truncated TTPs(File) = %d %v, want 2 [3]", got, short)
+	}
+
+	// Out-of-range ids are total in the hot path.
+	if n := e.TTPs(Artifact(99), bufT); n != 0 {
+		t.Fatalf("TTPs(invalid) = %d, want 0", n)
+	}
+	if e.Adjacent(TTP(99), 0) {
+		t.Fatal("Adjacent(invalid) must be false")
+	}
+	if n := e.Artifacts(TTP(99), bufA); n != 0 {
+		t.Fatalf("Artifacts(invalid) = %d, want 0", n)
+	}
+	if n := e.Degree(TTP(99), RelAny); n != 0 {
+		t.Fatalf("Degree(invalid) = %d, want 0", n)
+	}
+}
+
+func TestSyntheticCountermeasures(t *testing.T) {
+	e := buildSynthetic(t)
+	bufC := make([]Countermeasure, 8)
+	bufT := make([]TTP, 8)
+	bufA := make([]Artifact, 8)
+	scratchC := make([]uint64, 1)
+	scratchT := make([]uint64, 1)
+
+	if !e.Defends(0, 1) || !e.Defends(0, 4) || !e.Defends(1, 0) || !e.Defends(1, 2) {
+		t.Fatal("Defends must report the four registered pairs")
+	}
+	if e.Defends(0, 0) || e.Defends(1, 1) {
+		t.Fatal("Defends must not report unregistered pairs")
+	}
+
+	if got := e.CountermeasuresForTTP(1, bufC); got != 1 || bufC[0] != 0 {
+		t.Fatalf("CountermeasuresForTTP(T1003.001) = %d %v, want 1 [0]", got, bufC[:1])
+	}
+	if got := e.CountermeasuresForTTP(0, bufC); got != 1 || bufC[0] != 1 {
+		t.Fatalf("CountermeasuresForTTP(T1003) = %d %v, want 1 [1] (exact)", got, bufC[:1])
+	}
+	if got := e.CountermeasuresForTTPRollup(0, scratchC, bufC); got != 2 || bufC[0] != 0 || bufC[1] != 1 {
+		t.Fatalf("CountermeasuresForTTPRollup(T1003) = %d %v, want 2 [0 1]", got, bufC[:2])
+	}
+	if got := e.CountermeasuresForTTPRollup(1, scratchC, bufC); got != 1 || bufC[0] != 0 {
+		t.Fatalf("CountermeasuresForTTPRollup(sub) = %d %v, want 1 [0]", got, bufC[:1])
+	}
+
+	if got := e.CountermeasuresForArtifact(0, DefRelAny, bufC); got != 1 || bufC[0] != 0 {
+		t.Fatalf("CountermeasuresForArtifact(Process) = %d %v, want 1 [0]", got, bufC[:1])
+	}
+	if got := e.CountermeasuresForArtifact(0, DefRel(1), bufC); got != 0 {
+		t.Fatalf("CountermeasuresForArtifact(Process, hardens) = %d, want 0 (plane separation)", got)
+	}
+	if got := e.CountermeasuresForArtifact(2, DefRelAny, bufC); got != 1 || bufC[0] != 1 {
+		t.Fatalf("CountermeasuresForArtifact(Credential) = %d %v, want 1 [1]", got, bufC[:1])
+	}
+
+	// The chain contributes a countermeasure the direct link does not:
+	// NetworkTraffic has no defensive edge, but T1003.002 touches it.
+	if got := e.CountermeasuresForArtifact(3, DefRelAny, bufC); got != 0 {
+		t.Fatalf("direct CMs for NetworkTraffic = %d, want 0", got)
+	}
+	if got := e.CountermeasuresForArtifactViaTTPs(3, scratchC, bufC); got != 1 || bufC[0] != 1 {
+		t.Fatalf("ViaTTPs(NetworkTraffic) = %d %v, want 1 [1] (chain only)", got, bufC[:1])
+	}
+	// Union of direct and chain, deduplicated.
+	if got := e.CountermeasuresForArtifactViaTTPs(0, scratchC, bufC); got != 1 || bufC[0] != 0 {
+		t.Fatalf("ViaTTPs(Process) = %d %v, want 1 [0]", got, bufC[:1])
+	}
+	if got := e.CountermeasuresForArtifactViaTTPs(1, scratchC, bufC); got != 1 || bufC[0] != 0 {
+		t.Fatalf("ViaTTPs(File) = %d %v, want 1 [0]", got, bufC[:1])
+	}
+
+	if got := e.ArtifactsForCountermeasure(0, DefRelAny, bufA); got != 2 || bufA[0] != 0 || bufA[1] != 1 {
+		t.Fatalf("ArtifactsForCountermeasure(cm0) = %d %v, want 2 [0 1]", got, bufA[:2])
+	}
+	if got := e.ArtifactsForCountermeasure(0, DefRel(1), bufA); got != 0 {
+		t.Fatalf("ArtifactsForCountermeasure(cm0, hardens) = %d, want 0", got)
+	}
+	if got := e.ArtifactsForCountermeasure(1, DefRelAny, bufA); got != 1 || bufA[0] != 2 {
+		t.Fatalf("ArtifactsForCountermeasure(cm1) = %d %v, want 1 [2]", got, bufA[:1])
+	}
+
+	if got := e.TTPsForCountermeasure(0, bufT); got != 2 || bufT[0] != 1 || bufT[1] != 4 {
+		t.Fatalf("TTPsForCountermeasure(cm0) = %d %v, want 2 [1 4]", got, bufT[:2])
+	}
+	if got := e.TTPsForCountermeasureRollup(0, scratchT, bufT); got != 2 || bufT[0] != 0 || bufT[1] != 3 {
+		t.Fatalf("TTPsForCountermeasureRollup(cm0) = %d %v, want 2 [0 3]", got, bufT[:2])
+	}
+	// cm1 defends T1003 and T1003.002: both collapse onto T1003.
+	if got := e.TTPsForCountermeasure(1, bufT); got != 2 || bufT[0] != 0 || bufT[1] != 2 {
+		t.Fatalf("TTPsForCountermeasure(cm1) = %d %v, want 2 [0 2]", got, bufT[:2])
+	}
+	if got := e.TTPsForCountermeasureRollup(1, scratchT, bufT); got != 1 || bufT[0] != 0 {
+		t.Fatalf("TTPsForCountermeasureRollup(cm1) = %d %v, want 1 [0] (dedup)", got, bufT[:1])
+	}
+
+	if got := e.CountermeasureDegree(0); got != 2 {
+		t.Fatalf("CountermeasureDegree(cm0) = %d, want 2", got)
+	}
+	if got := e.CountermeasureDegree(1); got != 2 {
+		t.Fatalf("CountermeasureDegree(cm1) = %d, want 2", got)
+	}
+
+	// Countermeasure queries are total in the hot path too.
+	if n := e.CountermeasuresForTTP(TTP(99), bufC); n != 0 {
+		t.Fatalf("CountermeasuresForTTP(invalid) = %d, want 0", n)
+	}
+	if n := e.TTPsForCountermeasure(Countermeasure(99), bufT); n != 0 {
+		t.Fatalf("TTPsForCountermeasure(invalid) = %d, want 0", n)
+	}
+	if e.Defends(Countermeasure(99), 0) || e.Defends(0, TTP(99)) {
+		t.Fatal("Defends must be false for invalid ids")
+	}
+}
+
+func TestSyntheticColdPath(t *testing.T) {
+	e := buildSynthetic(t)
+
+	if got, ok := e.Incident("t1003.001"); !ok || e.TTPName(got) != "T1003.001" {
+		t.Fatalf("Incident(t1003.001) = %v,%v", got, ok)
+	}
+	if got, ok := e.Incident("  LSASS Memory  "); !ok || e.TTPLabel(got) != "LSASS Memory" {
+		t.Fatalf("label lookup = %v,%v", got, ok)
+	}
+	if _, ok := e.Incident("nope"); ok {
+		t.Fatal("Incident(nope) must be false")
+	}
+	if got, ok := e.Artifact("process"); !ok || got != 0 {
+		t.Fatalf("Artifact(process) = %v,%v", got, ok)
+	}
+	if got, ok := e.Countermeasure("credentialhardening"); !ok || got != 1 {
+		t.Fatalf("Countermeasure lookup = %v,%v", got, ok)
+	}
+	if r, ok := e.Rel("ACCESSES"); !ok || e.RelName(r) != "accesses" {
+		t.Fatalf("Rel(ACCESSES) = %v,%v", r, ok)
+	}
+	if e.RelName(RelAny) != "any" {
+		t.Fatalf("RelName(RelAny) = %q, want any", e.RelName(RelAny))
+	}
+	if dr, ok := e.DefRel("hardens"); !ok || e.DefRelName(dr) != "hardens" {
+		t.Fatalf("DefRel(hardens) = %v,%v", dr, ok)
+	}
+	if e.TTPDomain(0) != DomainEnterprise {
+		t.Fatal("TTPDomain must round-trip the registration domain")
+	}
+
+	dst := make([]string, 3)
+	if n := e.Response(dst, []TTP{1, 99}); n != 2 {
+		t.Fatalf("Response count = %d, want 2", n)
+	}
+	if dst[0] != "T1003.001 LSASS Memory" {
+		t.Fatalf("Response[0] = %q", dst[0])
+	}
+	if dst[1] != "<invalid ttp 99>" {
+		t.Fatalf("Response[1] = %q, want <invalid ttp 99>", dst[1])
+	}
+	cdst := make([]string, 2)
+	if n := e.CountermeasureResponse(cdst, []Countermeasure{0, 99}); n != 2 {
+		t.Fatalf("CountermeasureResponse count = %d, want 2", n)
+	}
+	if cdst[0] != "ProcessIsolation ProcessIsolation" || cdst[1] != "<invalid cm 99>" {
+		t.Fatalf("CountermeasureResponse = %q, %q", cdst[0], cdst[1])
+	}
+	// Truncation is reported by the return value, not by a panic.
+	one := make([]string, 1)
+	if n := e.Response(one, []TTP{1, 2}); n != 2 || one[0] != "T1003.001 LSASS Memory" {
+		t.Fatalf("truncated Response = %d %q", n, one)
+	}
+}
+
+func TestSyntheticPanics(t *testing.T) {
+	e := buildSynthetic(t)
+	scratchC := make([]uint64, 1)
+	scratchT := make([]uint64, 1)
+	bufC := make([]Countermeasure, 4)
+	bufT := make([]TTP, 4)
+
+	mustPanic(t, "rel out of range", func() { e.ArtifactsRel(0, Rel(9), nil) })
+	mustPanic(t, "defrel out of range", func() { e.CountermeasuresForArtifact(0, DefRel(9), bufC) })
+	mustPanic(t, "scratch too small (countermeasure)", func() {
+		e.CountermeasuresForTTPRollup(0, nil, bufC)
+	})
+	mustPanic(t, "scratch too small (ttp)", func() {
+		e.TTPsForCountermeasureRollup(0, nil, bufT)
+	})
+	mustPanic(t, "scratch too small (artifact)", func() {
+		e.ArtifactsRollup(0, nil, nil)
+	})
+	mustPanic(t, "unknown kind", func() { e.WordsPerRow(Kind(9)) })
+	mustPanic(t, "cold accessor out of range", func() { e.TTPName(TTP(99)) })
+	mustPanic(t, "cold domain accessor out of range", func() { e.TTPDomain(TTP(99)) })
+
+	// The documented scratch sizes work.
+	e.CountermeasuresForTTPRollup(0, scratchC, bufC)
+	e.TTPsForCountermeasureRollup(0, scratchT, bufT)
+	e.ArtifactsRollup(0, make([]uint64, 1), nil)
+}
+
+func mustPanic(t *testing.T, name string, f func()) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("%s: expected panic", name)
+		}
+	}()
+	f()
+}
