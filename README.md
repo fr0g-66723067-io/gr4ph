@@ -117,18 +117,30 @@ ttp T1003.001 "LSASS Memory" domain=enterprise parent=T1003 children=0
 
 ### Common queries
 
-The examples below use the `./gr4ph` binary that `make build` produces. Every key is matched trimmed and
-case-insensitively, so a technique can be named the way an alert names it — `T1136` and `create account`
-are the same node — and a key that resolves to nothing is an error, never a guess. `head`/`cut` keep the
-answers readable, because a set is printed as one line whatever its length.
+The examples below use the `./gr4ph` binary that `make build` produces, and every block is that
+command's complete answer — a set is printed as one line whatever its length, so let the terminal wrap.
+Every key is matched trimmed and case-insensitively, so a technique can be named the way an alert names
+it — `T1136` and `create account` are the same node — and a key that resolves to nothing is an error,
+never a guess.
 
 ```sh
-$ ./gr4ph ttp "create account" | head -1
+$ ./gr4ph ttp "create account"
 ttp T1136 "Create Account" domain=enterprise children=3
-$ ./gr4ph artifact "authentication service" | head -1
+  out artifacts (1): UserAccount "User Account"
+  out artifacts rollup (4): CloudUserAccount "Cloud User Account", DomainUserAccount "Domain User Account", LocalUserAccount "Local User Account", UserAccount "User Account"
+  in  countermeasures (7): AccessModeling "Access Modeling", AccountLocking "Account Locking", AgentAuthentication "Agent Authentication", ChangeDefaultPassword "Change Default Password", RestoreUserAccountAccess "Restore User Account Access", UnlockAccount "Unlock Account", UserAccountPermissions "User Account Permissions"
+  in  countermeasures rollup (9): AccessModeling "Access Modeling", AccountLocking "Account Locking", AgentAuthentication "Agent Authentication", ChangeDefaultPassword "Change Default Password", DomainAccountMonitoring "Domain Account Monitoring", LocalAccountMonitoring "Local Account Monitoring", RestoreUserAccountAccess "Restore User Account Access", UnlockAccount "Unlock Account", UserAccountPermissions "User Account Permissions"
+$ ./gr4ph artifact "authentication service"
 artifact AuthenticationService "Authentication Service"
-$ ./gr4ph cm "credential hardening" | head -1
+  in  techniques (5): T1003.001 "LSASS Memory", T1003.002 "Security Account Manager", T1212 "Exploitation for Credential Access", T1550 "Use Alternate Authentication Material", T1556 "Modify Authentication Process"
+  in  techniques rollup (4): T1003 "OS Credential Dumping", T1212 "Exploitation for Credential Access", T1550 "Use Alternate Authentication Material", T1556 "Modify Authentication Process"
+  in  countermeasures (0): -
+  in  countermeasures viaTTPs (25): Application-basedProcessIsolation "Application-based Process Isolation", AssetVulnerabilityEnumeration "Asset Vulnerability Enumeration", DataInventory "Data Inventory", Hardware-basedProcessIsolation "Hardware-based Process Isolation", HostReboot "Host Reboot", HostShutdown "Host Shutdown", Kernel-basedProcessIsolation "Kernel-based Process Isolation", MemoryBoundaryTracking "Memory Boundary Tracking", ProcessCodeSegmentVerification "Process Code Segment Verification", ProcessLineageAnalysis "Process Lineage Analysis", ProcessSegmentExecutionPrevention "Process Segment Execution Prevention", ProcessSelf-ModificationDetection "Process Self-Modification Detection", ProcessSpawnAnalysis "Process Spawn Analysis", ProcessSuspension "Process Suspension", ProcessTermination "Process Termination", RestoreDatabase "Restore Database", RestoreSoftware "Restore Software", SegmentAddressOffsetRandomization "Segment Address Offset Randomization", ServiceBinaryVerification "Service Binary Verification", ShadowStackComparisons "Shadow Stack Comparisons", SoftwareInventory "Software Inventory", SoftwareUpdate "Software Update", StackFrameCanaryValidation "Stack Frame Canary Validation", SystemCallFiltering "System Call Filtering", WebSessionAccessMediation "Web Session Access Mediation"
+$ ./gr4ph cm "credential hardening"
 cm CredentialHardening "Credential Hardening"
+  out artifacts (1): Credential
+  out techniques (25): DE-0011 "Credentialed Evasion", PER-0005 "Credentialed Persistence", T0812 "Default Credentials", T0891 "Hardcoded Credentials", T0892 "Change Credential", T1003.003 "NTDS", T1003.005 "Cached Domain Credentials", T1003.008 "/etc/passwd and /etc/shadow", T1098.001 "Additional Cloud Credentials", T1110.001 "Password Guessing", T1110.002 "Password Cracking", T1110.003 "Password Spraying", T1134.001 "Token Impersonation/Theft", T1134.002 "Create Process with Token", T1134.003 "Make and Impersonate Token", T1142 "Keychain", T1528 "Steal Application Access Token", T1539 "Steal Web Session Cookie", T1550.001 "Application Access Token", T1550.004 "Web Session Cookie", T1552 "Unsecured Credentials", T1558 "Steal or Forge Kerberos Tickets", T1558.001 "Golden Ticket", T1606 "Forge Web Credentials", T1606.001 "Web Cookies"
+  out techniques rollup (16): DE-0011 "Credentialed Evasion", PER-0005 "Credentialed Persistence", T0812 "Default Credentials", T0891 "Hardcoded Credentials", T0892 "Change Credential", T1003 "OS Credential Dumping", T1098 "Account Manipulation", T1110 "Brute Force", T1134 "Access Token Manipulation", T1142 "Keychain", T1528 "Steal Application Access Token", T1539 "Steal Web Session Cookie", T1550 "Use Alternate Authentication Material", T1552 "Unsecured Credentials", T1558 "Steal or Forge Kerberos Tickets", T1606 "Forge Web Credentials"
 $ ./gr4ph ttp "lsass memroy"; echo $?          # typos do not resolve
 gr4ph: no such technique: lsass memroy
 1
@@ -138,29 +150,29 @@ Defensive triage from the artifact an alert names: 5 techniques touch `Process`,
 parents, 11 countermeasures link to it directly and 36 once the techniques that touch it are included.
 
 ```sh
-$ ./gr4ph artifact Process | cut -c1-56
+$ ./gr4ph artifact Process
 artifact Process
-  in  techniques (5): T1003.001 "LSASS Memory", T1003.00
-  in  techniques rollup (3): T1003 "OS Credential Dumpin
-  in  countermeasures (11): Application-basedProcessIsol
-  in  countermeasures viaTTPs (36): Application-basedPro
+  in  techniques (5): T1003.001 "LSASS Memory", T1003.002 "Security Account Manager", T1003.004 "LSA Secrets", T1505.003 "Web Shell", T1546.007 "Netsh Helper DLL"
+  in  techniques rollup (3): T1003 "OS Credential Dumping", T1505 "Server Software Component", T1546 "Event Triggered Execution"
+  in  countermeasures (11): Application-basedProcessIsolation "Application-based Process Isolation", Hardware-basedProcessIsolation "Hardware-based Process Isolation", HostReboot "Host Reboot", HostShutdown "Host Shutdown", Kernel-basedProcessIsolation "Kernel-based Process Isolation", ProcessLineageAnalysis "Process Lineage Analysis", ProcessSelf-ModificationDetection "Process Self-Modification Detection", ProcessSpawnAnalysis "Process Spawn Analysis", ProcessSuspension "Process Suspension", ProcessTermination "Process Termination", SystemCallFiltering "System Call Filtering"
+  in  countermeasures viaTTPs (36): Application-basedProcessIsolation "Application-based Process Isolation", ConfigurationInventory "Configuration Inventory", ContentFiltering "Content Filtering", ContentModification "Content Modification", ContentQuarantine "Content Quarantine", DataInventory "Data Inventory", DecoyFile "Decoy File", DynamicAnalysis "Dynamic Analysis", EmulatedFileAnalysis "Emulated File Analysis", EndpointHealthBeacon "Endpoint Health Beacon", ExecutableAllowlisting "Executable Allowlisting", ExecutableDenylisting "Executable Denylisting", FileAnalysis "File Analysis", FileEncryption "File Encryption", FileEviction "File Eviction", FileIntegrityMonitoring "File Integrity Monitoring", Hardware-basedProcessIsolation "Hardware-based Process Isolation", HostReboot "Host Reboot", HostShutdown "Host Shutdown", Kernel-basedProcessIsolation "Kernel-based Process Isolation", LocalFilePermissions "Local File Permissions", LogicalLinkMapping "Logical Link Mapping", NetworkNodeInventory "Network Node Inventory", PhysicalLinkMapping "Physical Link Mapping", ProcessLineageAnalysis "Process Lineage Analysis", ProcessSelf-ModificationDetection "Process Self-Modification Detection", ProcessSpawnAnalysis "Process Spawn Analysis", ProcessSuspension "Process Suspension", ProcessTermination "Process Termination", RemoteFileAccessMediation "Remote File Access Mediation", RestoreConfiguration "Restore Configuration", RestoreDatabase "Restore Database", RestoreFile "Restore File", RestoreNetworkAccess "Restore Network Access", SystemCallFiltering "System Call Filtering", WebSessionAccessMediation "Web Session Access Mediation"
 ```
 
 Narrow a set to one relation plane with `-rel` (offensive) or `-defrel` (defensive): the plane is named
 in the set label, and the sets that take no relation are unchanged.
 
 ```sh
-$ ./gr4ph artifact -rel accesses Process | cut -c1-56
+$ ./gr4ph artifact -rel accesses Process
 artifact Process
-  in  techniques (rel accesses) (1): T1003.001 "LSASS Me
-  in  techniques rollup (rel accesses) (1): T1003 "OS Cr
-  in  countermeasures (11): Application-basedProcessIsol
-  in  countermeasures viaTTPs (36): Application-basedPro
-$ ./gr4ph cm -defrel hardens CredentialHardening | cut -c1-56
+  in  techniques (rel accesses) (1): T1003.001 "LSASS Memory"
+  in  techniques rollup (rel accesses) (1): T1003 "OS Credential Dumping"
+  in  countermeasures (11): Application-basedProcessIsolation "Application-based Process Isolation", Hardware-basedProcessIsolation "Hardware-based Process Isolation", HostReboot "Host Reboot", HostShutdown "Host Shutdown", Kernel-basedProcessIsolation "Kernel-based Process Isolation", ProcessLineageAnalysis "Process Lineage Analysis", ProcessSelf-ModificationDetection "Process Self-Modification Detection", ProcessSpawnAnalysis "Process Spawn Analysis", ProcessSuspension "Process Suspension", ProcessTermination "Process Termination", SystemCallFiltering "System Call Filtering"
+  in  countermeasures viaTTPs (36): Application-basedProcessIsolation "Application-based Process Isolation", ConfigurationInventory "Configuration Inventory", ContentFiltering "Content Filtering", ContentModification "Content Modification", ContentQuarantine "Content Quarantine", DataInventory "Data Inventory", DecoyFile "Decoy File", DynamicAnalysis "Dynamic Analysis", EmulatedFileAnalysis "Emulated File Analysis", EndpointHealthBeacon "Endpoint Health Beacon", ExecutableAllowlisting "Executable Allowlisting", ExecutableDenylisting "Executable Denylisting", FileAnalysis "File Analysis", FileEncryption "File Encryption", FileEviction "File Eviction", FileIntegrityMonitoring "File Integrity Monitoring", Hardware-basedProcessIsolation "Hardware-based Process Isolation", HostReboot "Host Reboot", HostShutdown "Host Shutdown", Kernel-basedProcessIsolation "Kernel-based Process Isolation", LocalFilePermissions "Local File Permissions", LogicalLinkMapping "Logical Link Mapping", NetworkNodeInventory "Network Node Inventory", PhysicalLinkMapping "Physical Link Mapping", ProcessLineageAnalysis "Process Lineage Analysis", ProcessSelf-ModificationDetection "Process Self-Modification Detection", ProcessSpawnAnalysis "Process Spawn Analysis", ProcessSuspension "Process Suspension", ProcessTermination "Process Termination", RemoteFileAccessMediation "Remote File Access Mediation", RestoreConfiguration "Restore Configuration", RestoreDatabase "Restore Database", RestoreFile "Restore File", RestoreNetworkAccess "Restore Network Access", SystemCallFiltering "System Call Filtering", WebSessionAccessMediation "Web Session Access Mediation"
+$ ./gr4ph cm -defrel hardens CredentialHardening
 cm CredentialHardening "Credential Hardening"
   out artifacts (defrel hardens) (1): Credential
-  out techniques (25): DE-0011 "Credentialed Evasion", P
-  out techniques rollup (16): DE-0011 "Credentialed Evas
+  out techniques (25): DE-0011 "Credentialed Evasion", PER-0005 "Credentialed Persistence", T0812 "Default Credentials", T0891 "Hardcoded Credentials", T0892 "Change Credential", T1003.003 "NTDS", T1003.005 "Cached Domain Credentials", T1003.008 "/etc/passwd and /etc/shadow", T1098.001 "Additional Cloud Credentials", T1110.001 "Password Guessing", T1110.002 "Password Cracking", T1110.003 "Password Spraying", T1134.001 "Token Impersonation/Theft", T1134.002 "Create Process with Token", T1134.003 "Make and Impersonate Token", T1142 "Keychain", T1528 "Steal Application Access Token", T1539 "Steal Web Session Cookie", T1550.001 "Application Access Token", T1550.004 "Web Session Cookie", T1552 "Unsecured Credentials", T1558 "Steal or Forge Kerberos Tickets", T1558.001 "Golden Ticket", T1606 "Forge Web Credentials", T1606.001 "Web Cookies"
+  out techniques rollup (16): DE-0011 "Credentialed Evasion", PER-0005 "Credentialed Persistence", T0812 "Default Credentials", T0891 "Hardcoded Credentials", T0892 "Change Credential", T1003 "OS Credential Dumping", T1098 "Account Manipulation", T1110 "Brute Force", T1134 "Access Token Manipulation", T1142 "Keychain", T1528 "Steal Application Access Token", T1539 "Steal Web Session Cookie", T1550 "Use Alternate Authentication Material", T1552 "Unsecured Credentials", T1558 "Steal or Forge Kerberos Tickets", T1606 "Forge Web Credentials"
 ```
 
 `rel` walks the planes themselves — the offensive union plane holds 654 distinct technique → artifact
