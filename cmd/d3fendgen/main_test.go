@@ -137,8 +137,8 @@ func TestParseD3FEND(t *testing.T) {
 	if !d.defends[[2]string{"CredentialHardening", "T1003.005"}] {
 		t.Fatal("missing defends pair (CredentialHardening, T1003.005)")
 	}
-	if got := d.parentOf["T1003.005"]; got != "T1003" {
-		t.Fatalf("parentOf = %q, want T1003", got)
+	if !d.parentOf["T1003.005"]["T1003"] {
+		t.Fatalf("parentOf[T1003.005] = %v, want T1003", sortedKeys(d.parentOf["T1003.005"]))
 	}
 	if got := d.parentLabel["T1003"]; got != "OS Credential Dumping" {
 		t.Fatalf("parentLabel = %q", got)
@@ -202,13 +202,14 @@ func TestAssembleRejectsBadHierarchy(t *testing.T) {
 		ttpLabel:    map[string]map[string]bool{},
 		artLabel:    map[string]string{},
 		artOff:      map[string]bool{},
+		artDef:      map[string]bool{},
 		cmLabel:     map[string]string{},
 		offRel:      map[string]bool{},
 		defRel:      map[string]bool{},
 		offEdge:     map[[3]string]bool{},
 		defEdge:     map[[3]string]bool{},
 		defends:     map[[2]string]bool{},
-		parentOf:    map[string]string{},
+		parentOf:    map[string]map[string]bool{},
 		parentLabel: map[string]string{},
 	}
 
@@ -218,6 +219,17 @@ func TestAssembleRejectsBadHierarchy(t *testing.T) {
 		"T1.1.1": {label: "three levels", sub: true},
 	}
 	if _, err := assemble(deep, empty); err == nil || !strings.Contains(err.Error(), "deeper than two levels") {
+		t.Fatalf("err = %v, want a depth error", err)
+	}
+
+	// Depth is checked before the sub-technique flag: a three-level id is a
+	// depth error even when its x_mitre_is_subtechnique flag disagrees too.
+	deepNoFlag := map[string]*ttpInfo{
+		"T1":     {label: "one"},
+		"T1.1":   {label: "one-one", sub: true},
+		"T1.1.1": {label: "three levels"},
+	}
+	if _, err := assemble(deepNoFlag, empty); err == nil || !strings.Contains(err.Error(), "deeper than two levels") {
 		t.Fatalf("err = %v, want a depth error", err)
 	}
 
@@ -247,7 +259,7 @@ func TestAssembleShapeDrift(t *testing.T) {
 		offEdge:     map[[3]string]bool{{"T1", "A", "accesses"}: true},
 		defEdge:     map[[3]string]bool{{"CM", "A", "analyzes"}: true},
 		defends:     map[[2]string]bool{{"CM", "T1"}: true},
-		parentOf:    map[string]string{},
+		parentOf:    map[string]map[string]bool{},
 		parentLabel: map[string]string{},
 	}
 	m, err := assemble(map[string]*ttpInfo{}, d)
@@ -272,7 +284,7 @@ func TestCheckShapeHistogram(t *testing.T) {
 		offEdge:     map[[3]string]bool{{"T1", "A", "accesses"}: true},
 		defEdge:     map[[3]string]bool{{"CM", "A", "analyzes"}: true},
 		defends:     map[[2]string]bool{{"CM", "T1"}: true},
-		parentOf:    map[string]string{},
+		parentOf:    map[string]map[string]bool{},
 		parentLabel: map[string]string{},
 	}
 	m, err := assemble(map[string]*ttpInfo{}, d)
@@ -645,22 +657,46 @@ func TestAssembleSynthesisedParents(t *testing.T) {
 		!strings.Contains(err.Error(), "no off_tech_parent_label") {
 		t.Fatalf("unlabelled parent err = %v, want a missing-label error", err)
 	}
+
+	// A three-level id is a depth error, not a missing-label one, even though
+	// its intermediate node does not exist either.
+	if _, err := assemble(map[string]*ttpInfo{},
+		parse(t, header+row("D-1.1.1", "D One One One", "D-1.1", "D One One"))); err == nil ||
+		!strings.Contains(err.Error(), "deeper than two levels") {
+		t.Fatalf("three-level id err = %v, want a depth error", err)
+	}
+
+	// off_tech_parent is a set: a parent that disagrees with the id prefix is
+	// reported whichever row order the CSV lists, even when another row agrees.
+	agree := row("D-1.1", "D One One", "D-1", "D One")
+	disagree := row("D-1.1", "D One One", "D-2", "D One")
+	for _, rows := range [][]string{{agree, disagree}, {disagree, agree}} {
+		if _, err := assemble(map[string]*ttpInfo{},
+			parse(t, header+strings.Join(rows, ""))); err == nil ||
+			!strings.Contains(err.Error(), "disagrees with its id prefix") {
+			t.Fatalf("row order %v: err = %v, want a prefix-disagreement error", rows, err)
+		}
+	}
 }
 
 // TestAssembleArtifactLabelFallback: an artifact D3FEND never labels keeps its
-// own name as its label.
+// own name as its label, and a label that only the defensive side carries is
+// used when the offensive side has none. Both rows are exactly 14 columns, so
+// the defensive branch really parses.
 func TestAssembleArtifactLabelFallback(t *testing.T) {
 	header := "def_tech_label,def_artifact_rel_label,def_artifact_label,off_artifact_label," +
 		"off_artifact_rel_label,off_tech_label,off_tech_parent_label," +
 		"def_tech,def_artifact_rel,def_artifact,off_artifact,off_artifact_rel,off_tech,off_tech_parent\n"
-	// off_artifact_label (column 4) is empty and the defensive label must not
-	// fill in: the artifact exists, but has no D3FEND label of its own.
-	csv := header + "CM,analyzes,A,,,accesses,One,," +
-		"http://x#CM,http://x#analyzes,http://x#A,http://x#A,http://x#accesses,http://x#T1,\n"
 
+	// Both label cells are empty: nothing to fall back to but the name.
+	csv := header + "CM,analyzes,,,accesses,One,," +
+		"http://x#CM,http://x#analyzes,http://x#A,http://x#A,http://x#accesses,http://x#T1,\n"
 	d, err := parseD3FEND([]byte(csv))
 	if err != nil {
 		t.Fatalf("parseD3FEND: %v", err)
+	}
+	if _, ok := d.artLabel["A"]; ok {
+		t.Fatalf("artLabel[A] = %q, want no label at all", d.artLabel["A"])
 	}
 	m, err := assemble(map[string]*ttpInfo{"T1": {label: "One"}}, d)
 	if err != nil {
@@ -671,6 +707,25 @@ func TestAssembleArtifactLabelFallback(t *testing.T) {
 	}
 	if len(m.artLabels) != 1 || m.artLabels[0] != "A" {
 		t.Fatalf("artLabels = %v, want [A] (the name is the fallback label)", m.artLabels)
+	}
+
+	// Only the defensive side labels A: the defensive spelling is the fallback,
+	// which is only observable if that branch parsed the row.
+	csv = header + "CM,analyzes,Defensive Name,,accesses,One,," +
+		"http://x#CM,http://x#analyzes,http://x#A,http://x#A,http://x#accesses,http://x#T1,\n"
+	d, err = parseD3FEND([]byte(csv))
+	if err != nil {
+		t.Fatalf("parseD3FEND: %v", err)
+	}
+	if got := d.artLabel["A"]; got != "Defensive Name" {
+		t.Fatalf("artLabel[A] = %q, want the defensive label", got)
+	}
+	m, err = assemble(map[string]*ttpInfo{"T1": {label: "One"}}, d)
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if len(m.artLabels) != 1 || m.artLabels[0] != "Defensive Name" {
+		t.Fatalf("artLabels = %v, want [Defensive Name]", m.artLabels)
 	}
 }
 
@@ -811,6 +866,48 @@ func TestParseD3FENDUnlabelledEndpoint(t *testing.T) {
 	}
 	if len(m.cmIDs) != 1 || m.cmIDs[0] != "CM" || m.cmLabels[0] != "CM" {
 		t.Fatalf("cmIDs/labels = %v/%v, want [CM]/[CM]", m.cmIDs, m.cmLabels)
+	}
+}
+
+// TestParseD3FENDDefensiveOnlyArtifact pins the symmetric artifact rule: an
+// artifact that appears only on the defensive side, with no def_artifact_label
+// cell of its own, still becomes a node named by its id. Without that, the
+// defensive edge aborts with an unknown-artifact error.
+func TestParseD3FENDDefensiveOnlyArtifact(t *testing.T) {
+	csv := csvHeader + csvRow("CM", "analyzes", "", "", "", "One", "",
+		"http://x#CM", "http://x#analyzes", "http://x#A", "", "", "http://x#T1", "")
+
+	d, err := parseD3FEND([]byte(csv))
+	if err != nil {
+		t.Fatalf("parseD3FEND: %v", err)
+	}
+	if !d.artDef["A"] {
+		t.Fatal("A must be marked defensive")
+	}
+	if _, ok := d.artOff["A"]; ok {
+		t.Fatal("A is defensive-only and must not be marked offensive")
+	}
+	if _, ok := d.artLabel["A"]; ok {
+		t.Fatalf("artLabel[A] = %q, want no label (both label cells are empty)", d.artLabel["A"])
+	}
+
+	// The row's off_tech cell only infers defends-against, so T1 comes from
+	// ATT&CK; A comes from the defensive side alone.
+	m, err := assemble(map[string]*ttpInfo{"T1": {label: "One"}}, d)
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if len(m.artNames) != 1 || m.artNames[0] != "A" {
+		t.Fatalf("artNames = %v, want [A]", m.artNames)
+	}
+	if len(m.artLabels) != 1 || m.artLabels[0] != "A" {
+		t.Fatalf("artLabels = %v, want [A] (the id fallback)", m.artLabels)
+	}
+	if len(m.defC) != 1 || len(m.defA) != 1 || len(m.defR) != 1 || m.defA[0] != 0 {
+		t.Fatalf("defensive edges = %v/%v/%v, want one edge onto artifact 0", m.defC, m.defA, m.defR)
+	}
+	if len(m.defendsC) != 1 || len(m.defendsT) != 1 {
+		t.Fatalf("defends-against pairs = %v/%v, want one", m.defendsC, m.defendsT)
 	}
 }
 

@@ -87,6 +87,11 @@ func TestZeroAllocSynthetic(t *testing.T) {
 				sink++
 			}
 		}},
+		{"DefRelName", func() {
+			if e.DefRelName(DefRelAny) != "" {
+				sink++
+			}
+		}},
 	}
 
 	names := make([]string, len(cases))

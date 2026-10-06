@@ -802,6 +802,14 @@ func TestSyntheticPanics(t *testing.T) {
 	mustPanic(t, "defrel out of range (artifact-major)", "gr4ph: defensive relation out of range", func() {
 		e.ArtifactsForCountermeasure(0, DefRel(9), nil)
 	})
+	// The scratch check precedes the id bounds check, so an undersized scratch
+	// panics even when the id is out of range too.
+	mustPanic(t, "scratch precedes the ttp bounds check", "gr4ph: scratch too small", func() {
+		e.ArtifactsRollup(TTP(99), nil, nil)
+	})
+	mustPanic(t, "scratch precedes the artifact bounds check", "gr4ph: scratch too small", func() {
+		e.TTPsRollupRel(Artifact(99), RelAny, nil, nil)
+	})
 
 	// The documented scratch sizes work.
 	e.CountermeasuresForTTPRollup(0, scratchC, bufC)

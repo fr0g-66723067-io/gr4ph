@@ -409,6 +409,38 @@ func TestOntologyHierarchy(t *testing.T) {
 	}
 }
 
+// TestOntologySynthesisedParents pins the exact set of synthesised SPARTA
+// parents and the README's promise about them: they exist in no ATT&CK domain,
+// carry no edges and have no aliases.
+func TestOntologySynthesisedParents(t *testing.T) {
+	e := build(t)
+
+	want := []string{
+		"DE-0003", "EX-0001", "EX-0005", "EX-0009", "EX-0010", "EX-0012", "EX-0013",
+		"EX-0016", "EXF-0006", "IA-0007", "RD-0004",
+	}
+	var got []string
+	for i := range e.TTPCount() {
+		id := gr4ph.TTP(i)
+		if e.TTPDomain(id) != gr4ph.DomainSPARTA || e.TTPChildCount(id) == 0 {
+			continue
+		}
+		got = append(got, e.TTPName(id))
+		if n := e.Degree(id, gr4ph.RelAny); n != 0 {
+			t.Errorf("%s: Degree = %d, want 0 (synthesised parents carry no edges)", e.TTPName(id), n)
+		}
+		if n := e.CountermeasuresForTTP(id, nil); n != 0 {
+			t.Errorf("%s: CountermeasuresForTTP = %d, want 0", e.TTPName(id), n)
+		}
+		if a := TTPAliases[i]; a != nil {
+			t.Errorf("%s: aliases = %v, want none", e.TTPName(id), a)
+		}
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("synthesised parents = %v, want %v", got, want)
+	}
+}
+
 func TestOntologyColdPath(t *testing.T) {
 	e := build(t)
 
@@ -833,6 +865,11 @@ func TestZeroAllocOntology(t *testing.T) {
 		{"TTPChildren", func() { ontologySink += e.TTPChildren(t1003, bufT) }},
 		{"RelName", func() {
 			if e.RelName(gr4ph.RelAny) != "" {
+				ontologySink++
+			}
+		}},
+		{"DefRelName", func() {
+			if e.DefRelName(gr4ph.DefRelAny) != "" {
 				ontologySink++
 			}
 		}},

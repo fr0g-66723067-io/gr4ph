@@ -273,7 +273,8 @@ tables; ns/op below is the median of 5 runs, and every benchmark reports 0 B/op 
 | `AdjacentRel` (root package) | 6 |
 
 The zero-allocation contract is enforced by tests, not by convention: `AllocsPerRun` must be 0 for
-all 29 hot methods on both a synthetic graph and the 1186-node engine.
+every method in the pinned list (`internal/hotmethods`), on both a synthetic graph and the 1186-node
+engine.
 
 ## License
 

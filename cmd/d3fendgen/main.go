@@ -294,14 +294,16 @@ type d3fendData struct {
 	parentLabel map[string]string // synthesised parent id -> label
 
 	artOff  map[string]bool // artifact appears on the offensive side
+	artDef  map[string]bool // artifact appears on the defensive side
 	offRel  map[string]bool
 	defRel  map[string]bool
 	offEdge map[[3]string]bool // (ttp, artifact, rel)
 	defEdge map[[3]string]bool // (cm, artifact, defrel)
 	defends map[[2]string]bool // (cm, ttp)
-	// parentOf maps a sub-technique id to its off_tech_parent local name, used
-	// to synthesise parents that exist in no ATT&CK domain.
-	parentOf map[string]string
+	// parentOf maps a sub-technique id to the set of off_tech_parent local
+	// names D3FEND gives it, used to synthesise parents that exist in no
+	// ATT&CK domain. A set keeps the diagnostic independent of row order.
+	parentOf map[string]map[string]bool
 }
 
 // Column names of d3fend-full-mappings.csv@1.6.0 (SPARQL 1.1 CSV; every value
@@ -349,12 +351,13 @@ func parseD3FEND(data []byte) (*d3fendData, error) {
 		cmLabels:     map[string]map[string]bool{},
 		parentLabels: map[string]map[string]bool{},
 		artOff:       map[string]bool{},
+		artDef:       map[string]bool{},
 		offRel:       map[string]bool{},
 		defRel:       map[string]bool{},
 		offEdge:      map[[3]string]bool{},
 		defEdge:      map[[3]string]bool{},
 		defends:      map[[2]string]bool{},
-		parentOf:     map[string]string{},
+		parentOf:     map[string]map[string]bool{},
 	}
 	get := func(rec []string, name string) string {
 		i := col[name]
@@ -396,7 +399,7 @@ func parseD3FEND(data []byte) (*d3fendData, error) {
 			d.offEdge[[3]string{offTech, offArt, rel}] = true
 
 			if parent := localName(get(rec, colOffTechParent)); parent != "" {
-				d.parentOf[offTech] = parent
+				addLabel(d.parentOf, offTech, parent)
 				if lbl := get(rec, colOffTechParLbl); lbl != "" {
 					addLabel(d.parentLabels, parent, lbl)
 				}
@@ -409,6 +412,7 @@ func parseD3FEND(data []byte) (*d3fendData, error) {
 				lbl = defTech
 			}
 			addLabel(d.cmLabels, defTech, lbl)
+			d.artDef[defArt] = true
 			if lbl := get(rec, colDefArtifactLbl); lbl != "" {
 				addLabel(d.artDefLabels, defArt, lbl)
 			}
@@ -421,17 +425,13 @@ func parseD3FEND(data []byte) (*d3fendData, error) {
 	}
 	d.artLabel = make(map[string]string, len(d.artOffLabels))
 	for art, set := range d.artOffLabels {
-		if label := pickLabel(set); label != "" {
-			d.artLabel[art] = label
-		}
+		d.artLabel[art] = pickLabel(set)
 	}
 	for art, set := range d.artDefLabels {
 		if _, ok := d.artLabel[art]; ok {
 			continue
 		}
-		if label := pickLabel(set); label != "" {
-			d.artLabel[art] = label
-		}
+		d.artLabel[art] = pickLabel(set)
 	}
 	d.cmLabel = pickAll(d.cmLabels)
 	d.parentLabel = pickAll(d.parentLabels)
@@ -464,9 +464,7 @@ func pickLabel(set map[string]bool) string {
 func pickAll(sets map[string]map[string]bool) map[string]string {
 	out := make(map[string]string, len(sets))
 	for key, set := range sets {
-		if label := pickLabel(set); label != "" {
-			out[key] = label
-		}
+		out[key] = pickLabel(set)
 	}
 	return out
 }
@@ -577,6 +575,9 @@ func assemble(stix map[string]*ttpInfo, d3 *d3fendData) (*model, error) {
 		if !strings.Contains(id, ".") {
 			continue
 		}
+		if strings.Count(id, ".") > 1 {
+			return nil, fmt.Errorf("technique %s is deeper than two levels", id)
+		}
 		prefix := id[:strings.LastIndexByte(id, '.')]
 		if _, inSTIX := stix[prefix]; inSTIX {
 			// The prefix is a node, so it is the parent and off_tech_parent is
@@ -589,9 +590,12 @@ func assemble(stix map[string]*ttpInfo, d3 *d3fendData) (*model, error) {
 			continue
 		}
 		// Only here is off_tech_parent load-bearing, because it is the sole
-		// source of the parent: it must agree with the id prefix.
-		if parent := d3.parentOf[id]; parent != "" && parent != prefix {
-			return nil, fmt.Errorf("sub-technique %s: off_tech_parent %q disagrees with its id prefix %q", id, parent, prefix)
+		// source of the parent: every spelling it gives must agree with the id
+		// prefix.
+		for _, parent := range sortedKeys(d3.parentOf[id]) {
+			if parent != prefix {
+				return nil, fmt.Errorf("sub-technique %s: off_tech_parent %q disagrees with its id prefix %q", id, parent, prefix)
+			}
 		}
 		label := d3.parentLabel[prefix]
 		if label == "" {
@@ -667,14 +671,14 @@ func assemble(stix map[string]*ttpInfo, d3 *d3fendData) (*model, error) {
 
 		// The prefix rule must agree with the STIX flag (measured: 1140/1140
 		// attack-patterns in 19.2), the tree may only be two levels deep, and no
-		// dotted id may be left without a parent node. Depth is reported before
-		// the orphan check: a three-level id whose intermediate node is missing
-		// is a depth error, which is the more specific diagnostic.
-		if info := stix[id]; info != nil && info.sub != (dot >= 0) {
-			return nil, fmt.Errorf("technique %s: x_mitre_is_subtechnique=%v disagrees with its id prefix", id, info.sub)
-		}
+		// dotted id may be left without a parent node. Depth is reported first:
+		// a three-level id is a depth error whichever node is missing, which is
+		// the more specific diagnostic.
 		if strings.Count(id, ".") > 1 {
 			return nil, fmt.Errorf("technique %s is deeper than two levels", id)
+		}
+		if info := stix[id]; info != nil && info.sub != (dot >= 0) {
+			return nil, fmt.Errorf("technique %s: x_mitre_is_subtechnique=%v disagrees with its id prefix", id, info.sub)
 		}
 		if dot >= 0 && parent < 0 {
 			return nil, fmt.Errorf("technique %s: sub-technique has no parent node (orphan)", id)
@@ -704,6 +708,9 @@ func assemble(stix map[string]*ttpInfo, d3 *d3fendData) (*model, error) {
 		artSet[art] = true
 	}
 	for _, art := range sortedKeys(d3.artOff) {
+		artSet[art] = true
+	}
+	for _, art := range sortedKeys(d3.artDef) {
 		artSet[art] = true
 	}
 	m.artNames = sortedKeys(artSet)

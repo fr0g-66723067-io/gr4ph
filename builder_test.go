@@ -566,6 +566,44 @@ func TestEmptyEngine(t *testing.T) {
 	if _, ok := e.Rel("accesses"); ok {
 		t.Fatal("Rel on empty engine must be false")
 	}
+	// The union plane is seeded even when nothing is registered, so plane 0
+	// always round-trips through name and id.
+	if got := e.RelName(RelAny); got != "any" {
+		t.Fatalf("RelName(RelAny) = %q, want any", got)
+	}
+	if r, ok := e.Rel("any"); !ok || r != RelAny {
+		t.Fatalf("Rel(any) = %d, %v, want RelAny, true", r, ok)
+	}
+}
+
+// TestBuilderZeroValue: the zero value behaves like NewBuilder(), so a
+// `new(Builder)` is not a trap — plane 0 exists and every Add* has its maps.
+func TestBuilderZeroValue(t *testing.T) {
+	e, err := new(Builder).Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if e.RelCount() != 0 || e.DefRelCount() != 0 {
+		t.Fatalf("rel counts = %d %d, want 0 0", e.RelCount(), e.DefRelCount())
+	}
+	if e.RelName(RelAny) != "any" {
+		t.Fatalf("RelName(RelAny) = %q, want any", e.RelName(RelAny))
+	}
+	if r, ok := e.Rel("any"); !ok || r != RelAny {
+		t.Fatalf("Rel(any) = %d, %v, want RelAny, true", r, ok)
+	}
+
+	// A fresh zero-value builder is registrable, and Build stays single-use.
+	b := new(Builder)
+	if _, err := b.AddRel("x"); err != nil {
+		t.Fatalf("AddRel: %v", err)
+	}
+	if _, err := b.Build(); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if _, err := b.Build(); !errors.Is(err, ErrBuilderUsed) {
+		t.Fatalf("second Build = %v, want ErrBuilderUsed", err)
+	}
 }
 
 // TestBuilderReservedRelName pins the union plane's reserved name: "any" is a

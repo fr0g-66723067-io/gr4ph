@@ -111,6 +111,8 @@ var (
 // A Builder is single-use: Build marks it built and every later Add* call
 // returns ErrBuilderUsed, so a live Engine can never be mutated through its
 // builder.
+//
+// The zero value is usable and equivalent to NewBuilder().
 type Builder struct {
 	ttpIDs        []string
 	ttpLabels     []string
@@ -145,17 +147,28 @@ type Builder struct {
 	built bool
 }
 
+// seed installs the reserved union-plane name and the index maps on a builder
+// that has none, so the zero value behaves like NewBuilder(): plane 0 exists and
+// every Add* has a map to write into. It is called by NewBuilder, every
+// registration method and Build; the length check makes it free afterwards.
+func (b *Builder) seed() {
+	if len(b.relNames) != 0 {
+		return
+	}
+	b.relNames = []string{reservedRelName}
+	b.defRelNames = []string{reservedRelName}
+	b.ttpIndex = make(map[string]uint16)
+	b.artIndex = make(map[string]uint16)
+	b.cmIndex = make(map[string]uint16)
+	b.relIndex = map[string]Rel{reservedRelName: RelAny}
+	b.defRelIndex = map[string]DefRel{reservedRelName: DefRelAny}
+}
+
 // NewBuilder returns an empty builder.
 func NewBuilder() *Builder {
-	return &Builder{
-		relNames:    []string{reservedRelName},
-		defRelNames: []string{reservedRelName},
-		ttpIndex:    make(map[string]uint16),
-		artIndex:    make(map[string]uint16),
-		cmIndex:     make(map[string]uint16),
-		relIndex:    map[string]Rel{reservedRelName: RelAny},
-		defRelIndex: map[string]DefRel{reservedRelName: DefRelAny},
-	}
+	b := new(Builder)
+	b.seed()
+	return b
 }
 
 // normalize is the single key-normalisation rule for the cold path: trim, then
@@ -183,6 +196,7 @@ func (b *Builder) AddRel(name string) (Rel, error) {
 	if b.built {
 		return 0, ErrBuilderUsed
 	}
+	b.seed()
 	key := normalize(name)
 	if key == "" {
 		return 0, ErrEmptyKey
@@ -209,6 +223,7 @@ func (b *Builder) AddDefRel(name string) (DefRel, error) {
 	if b.built {
 		return 0, ErrBuilderUsed
 	}
+	b.seed()
 	key := normalize(name)
 	if key == "" {
 		return 0, ErrEmptyKey
@@ -241,6 +256,7 @@ func (b *Builder) AddTTP(id, label string, dom Domain, parent TTP, aliases ...st
 	if b.built {
 		return 0, ErrBuilderUsed
 	}
+	b.seed()
 	key := normalize(id)
 	if key == "" {
 		return 0, ErrEmptyKey
@@ -293,6 +309,7 @@ func (b *Builder) AddArtifact(name, label string) (Artifact, error) {
 	if b.built {
 		return 0, ErrBuilderUsed
 	}
+	b.seed()
 	key := normalize(name)
 	if key == "" {
 		return 0, ErrEmptyKey
@@ -317,6 +334,7 @@ func (b *Builder) AddCountermeasure(id, label string, aliases ...string) (Counte
 	if b.built {
 		return 0, ErrBuilderUsed
 	}
+	b.seed()
 	key := normalize(id)
 	if key == "" {
 		return 0, ErrEmptyKey
@@ -431,6 +449,7 @@ func (b *Builder) Build() (*Engine, error) {
 		return nil, ErrBuilderUsed
 	}
 	b.built = true
+	b.seed()
 	e := &Engine{
 		nTTP: len(b.ttpIDs),
 		nArt: len(b.artNames),
