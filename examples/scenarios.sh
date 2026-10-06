@@ -7,6 +7,11 @@
 #   make build && examples/scenarios.sh
 #
 # Run from the module root: the commands use ./gr4ph, the binary `make build` produces.
+# Without it every line would fail with "No such file or directory", so stop here instead.
+if [ ! -x ./gr4ph ]; then
+	printf 'scenarios: ./gr4ph is missing or not executable — run "make build" first\n' >&2
+	exit 1
+fi
 
 echo
 echo '==============================================================================='
