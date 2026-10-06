@@ -15,9 +15,16 @@ all: vet test
 vet:
 	$(GO) vet ./...
 
+# The emulated pass is not redundant: with GODEBUG=simd=0 the simd package
+# reports len(s) from LoadUint64sPart instead of min(lanes, len(s)), so it is the
+# only pass that can catch a row kernel that advances by that count. Do not add
+# GODEBUG=simd=256: on a CPU feature-reduced to 128 bits it panics at init
+# ("larger than the simd length required for expected features"), and +256
+# bypasses the CPU feature check, which can SIGILL.
 test:
 	$(GO) vet ./...
 	$(GO) test ./...
+	GODEBUG=simd=0 $(GO) test ./...
 
 # Regenerates ontology/attack_gen.go from the pinned upstream sources (network).
 gen:

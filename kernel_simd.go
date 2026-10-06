@@ -4,50 +4,61 @@ package gr4ph
 
 import "simd"
 
+// wordsPerVector is the number of uint64 words in one SIMD vector. The width is
+// fixed for the life of the process (the simd package reads its GODEBUG setting
+// once), so caching it here keeps the hot path free of the accessor call.
+var wordsPerVector = simd.VectorBitSize() / 64
+
 // Vectorised row arithmetic. This is the only file in the module that imports
 // the experimental simd package; everything else goes through these three
 // kernels, so a portable scalar fallback would be a drop-in replacement
-// (see README "Portability").
+// (see README "Build requirement").
 //
 // All three kernels require len(dst) == len(src) and operate on whole rows.
-// Rows are exact-length (stride words, no padding), so the loop below is
-// uniform for every row length: LoadUint64sPart/StorePart clamp themselves to
-// the vector width, which makes them valid for short rows (below one vector)
-// as well as for the full-vector case.
+// Rows are exact-length (stride words, no padding), so the loops below are
+// uniform for every row length: whole vectors go through LoadUint64s/Store and
+// the tail (up to wordsPerVector-1 words) is handled scalar.
 //
-// Semantics, from GOROOT src/simd (verified against src/simd/archsimd/
-// slice_gen_amd64.go for Uint64x4 and by kernel_test.go for this build):
-//
-//   - LoadUint64sPart(s) returns (vector, n) with n = min(lanes, len(s)) and
-//     zero-fills the lanes beyond n.
-//   - StorePart(s) writes min(len(s), lanes) elements, using a masked store
-//     when the slice is shorter than one vector, so it never overruns s.
+// The partial helpers LoadUint64sPart/StorePart are deliberately not used. The
+// count LoadUint64sPart reports differs between implementations —
+// min(wordsPerVector, len(s)) on hardware, len(s) under GODEBUG=simd=0 — so
+// advancing by it silently skips the tail of every row that is not a whole
+// number of vectors. `make test` runs the whole suite under GODEBUG=simd=0
+// precisely so the emulated implementation keeps checking that.
 
 // orRowInto computes dst[i] |= src[i] for every i.
 func orRowInto(dst, src []uint64) {
-	for pos := 0; pos < len(dst); {
-		a, _ := simd.LoadUint64sPart(dst[pos:])
-		b, n := simd.LoadUint64sPart(src[pos:])
-		a.Or(b).StorePart(dst[pos:])
-		pos += n
+	pos := 0
+	for ; pos+wordsPerVector <= len(dst); pos += wordsPerVector {
+		a := simd.LoadUint64s(dst[pos:])
+		b := simd.LoadUint64s(src[pos:])
+		a.Or(b).Store(dst[pos:])
+	}
+	for ; pos < len(dst); pos++ {
+		dst[pos] |= src[pos]
 	}
 }
 
 // andRowInto computes dst[i] &= src[i] for every i.
 func andRowInto(dst, src []uint64) {
-	for pos := 0; pos < len(dst); {
-		a, _ := simd.LoadUint64sPart(dst[pos:])
-		b, n := simd.LoadUint64sPart(src[pos:])
-		a.And(b).StorePart(dst[pos:])
-		pos += n
+	pos := 0
+	for ; pos+wordsPerVector <= len(dst); pos += wordsPerVector {
+		a := simd.LoadUint64s(dst[pos:])
+		b := simd.LoadUint64s(src[pos:])
+		a.And(b).Store(dst[pos:])
+	}
+	for ; pos < len(dst); pos++ {
+		dst[pos] &= src[pos]
 	}
 }
 
 // copyRow copies src into dst.
 func copyRow(dst, src []uint64) {
-	for pos := 0; pos < len(dst); {
-		b, n := simd.LoadUint64sPart(src[pos:])
-		b.StorePart(dst[pos:])
-		pos += n
+	pos := 0
+	for ; pos+wordsPerVector <= len(dst); pos += wordsPerVector {
+		simd.LoadUint64s(src[pos:]).Store(dst[pos:])
+	}
+	for ; pos < len(dst); pos++ {
+		dst[pos] = src[pos]
 	}
 }
