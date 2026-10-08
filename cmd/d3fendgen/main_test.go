@@ -417,7 +417,7 @@ const testCSV = "def_tech_label,def_artifact_rel_label,def_artifact_label,off_ar
 	"http://x#CM1,http://x#analyzes,http://x#A1,http://x#A1,http://x#accesses,http://x#T1.1,http://x#T1\n"
 
 const testEnterpriseJSON = `{"objects":[
-  {"type":"attack-pattern","name":"One",
+  {"type":"attack-pattern","name":"One","revoked":true,
    "external_references":[{"source_name":"mitre-attack","external_id":"T1"}]},
   {"type":"attack-pattern","name":"One One","x_mitre_is_subtechnique":true,
    "external_references":[{"source_name":"mitre-attack","external_id":"T1.1"}]}]}`
@@ -480,6 +480,7 @@ func TestRunEndToEnd(t *testing.T) {
 		regexp.MustCompile(`\bRelAccesses\s+gr4ph\.Rel = 1\b`),
 		regexp.MustCompile(`\bDefRelAnalyzes\s+gr4ph\.DefRel = 1\b`),
 		regexp.MustCompile(`\bDefRelHardens\s+gr4ph\.DefRel = 2\b`),
+		regexp.MustCompile(`\bTTPRevoked\b`),
 	} {
 		if !want.Match(src) {
 			t.Errorf("generated source does not match %s", want)
@@ -492,6 +493,7 @@ func TestRunEndToEnd(t *testing.T) {
 		"gr4ph.DomainSPARTA",
 		`"Sp One"`,
 		`{"One One Alt"}`,
+		"var TTPRevoked = [...]bool{",
 	} {
 		if !strings.Contains(string(src), want) {
 			t.Errorf("generated source is missing %q", want)
@@ -507,7 +509,8 @@ func TestRunEndToEnd(t *testing.T) {
 		"  countermeasures 1\n" +
 		"  relations      1 offensive, 2 defensive\n" +
 		"  edges          2 offensive, 2 defensive, 2 defends-against\n" +
-		"  hierarchy      4 top-level, 2 sub-techniques, 2 parents, max 1 children\n"
+		"  hierarchy      4 top-level, 2 sub-techniques, 2 parents, max 1 children\n" +
+		"  revoked        1\n"
 	if got := buf.String(); got != wantSummary {
 		t.Fatalf("summary mismatch\n--- got ---\n%s--- want ---\n%s", got, wantSummary)
 	}
@@ -772,6 +775,7 @@ func TestEmitProducesValidGo(t *testing.T) {
 		ttpDomains:    []domain{domEnterprise, domICS, domMobile, domSPARTA},
 		ttpParents:    []int{-1, -1, -1, -1},
 		ttpChildCount: []int{0, 0, 0, 0},
+		ttpRevoked:    []bool{false, true, false, false},
 		artNames:      []string{"Process"},
 		artLabels:     []string{"Process"},
 		cmIDs:         []string{"ProcessIsolation"},
@@ -815,6 +819,8 @@ func TestEmitProducesValidGo(t *testing.T) {
 		"gr4ph.DomainMobile",
 		"gr4ph.DomainSPARTA",
 		"{\"A\", \"B\"}",
+		"var TTPRevoked = [...]bool{",
+		"\ttrue,",
 	} {
 		if !strings.Contains(string(src), want) {
 			t.Errorf("generated source is missing %q", want)

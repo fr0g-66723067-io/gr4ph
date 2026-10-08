@@ -178,6 +178,7 @@ func run(entSrc, icsSrc, mobSrc, d3Src, out string, w io.Writer, want shape) err
 	fmt.Fprintf(w, "  edges          %d offensive, %d defensive, %d defends-against\n", len(m.offT), len(m.defC), len(m.defendsC))
 	fmt.Fprintf(w, "  hierarchy      %d top-level, %d sub-techniques, %d parents, max %d children\n",
 		m.topLevel(), len(m.ttpIDs)-m.topLevel(), m.parentCount(), m.maxChildren())
+	fmt.Fprintf(w, "  revoked        %d\n", m.revokedCount())
 	return nil
 }
 
@@ -505,6 +506,7 @@ type model struct {
 	ttpDomains    []domain
 	ttpParents    []int // -1 == no parent
 	ttpChildCount []int
+	ttpRevoked    []bool
 
 	artNames  []string
 	artLabels []string
@@ -534,6 +536,16 @@ func (m *model) parentCount() int {
 	n := 0
 	for _, c := range m.ttpChildCount {
 		if c > 0 {
+			n++
+		}
+	}
+	return n
+}
+
+func (m *model) revokedCount() int {
+	n := 0
+	for _, r := range m.ttpRevoked {
+		if r {
 			n++
 		}
 	}
@@ -671,6 +683,7 @@ func assemble(stix map[string]*ttpInfo, d3 *d3fendData) (*model, error) {
 			}
 		}
 		m.ttpParents[i] = parent
+		m.ttpRevoked = append(m.ttpRevoked, info != nil && info.bad)
 
 		// The prefix rule must agree with the STIX flag (measured: 1140/1140
 		// attack-patterns in 19.2), the tree may only be two levels deep, and no
@@ -911,6 +924,9 @@ func sortedTriples(m map[[3]string]bool) [][3]string {
 // --- emission ---
 
 func emit(m *model) ([]byte, error) {
+	if len(m.ttpRevoked) != len(m.ttpIDs) {
+		return nil, fmt.Errorf("model: TTPRevoked has %d entries for %d techniques", len(m.ttpRevoked), len(m.ttpIDs))
+	}
 	var b bytes.Buffer
 
 	b.WriteString("//go:build goexperiment.simd\n\n")
@@ -962,6 +978,7 @@ func emit(m *model) ([]byte, error) {
 	writeAliases(&b, "TTPAliases", "D3FEND labels that differ from the ATT&CK name, else nil.", m.ttpAliases)
 	writeDomains(&b, "TTPDomains", "ATT&CK domain of each technique.", m.ttpDomains)
 	writeParents(&b, "TTPParents", "Parent index for each technique, or gr4ph.NoParent.", m.ttpParents)
+	writeBools(&b, "TTPRevoked", "ATT&CK revocation flag per technique (revoked or x_mitre_deprecated), index-parallel to TTPIDs.", m.ttpRevoked)
 	writeStrings(&b, "ArtifactNames", "Artifact names, sorted byte-wise.", m.artNames)
 	writeStrings(&b, "ArtifactLabels", "Artifact labels, index-parallel to ArtifactNames.", m.artLabels)
 	writeStrings(&b, "CountermeasureIDs", "Countermeasure local names, sorted byte-wise.", m.cmIDs)
@@ -1028,6 +1045,14 @@ func writeParents(b *bytes.Buffer, name, doc string, vals []int) {
 			continue
 		}
 		fmt.Fprintf(b, "\t%d,\n", v)
+	}
+	b.WriteString("}\n\n")
+}
+
+func writeBools(b *bytes.Buffer, name, doc string, vals []bool) {
+	fmt.Fprintf(b, "// %s holds %s\nvar %s = [...]bool{\n", name, doc, name)
+	for _, v := range vals {
+		fmt.Fprintf(b, "\t%t,\n", v)
 	}
 	b.WriteString("}\n\n")
 }
