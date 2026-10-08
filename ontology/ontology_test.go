@@ -5,6 +5,7 @@ package ontology
 import (
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/fr0g-66723067-io/gr4ph"
@@ -152,7 +153,7 @@ func TestRegisterRequiresFreshBuilder(t *testing.T) {
 	}
 
 	b3 := gr4ph.NewBuilder()
-	if _, err := b3.AddTTP("T1", "one", gr4ph.DomainEnterprise, gr4ph.NoParent); err != nil {
+	if _, err := b3.AddTTP("T1", "one", gr4ph.DomainEnterprise, gr4ph.NoParent, false); err != nil {
 		t.Fatalf("AddTTP: %v", err)
 	}
 	if err := Register(b3); !errors.Is(err, ErrBuilderNotEmpty) {
@@ -530,7 +531,8 @@ func TestOntologyColdPath(t *testing.T) {
 
 // TestOntologyLabelAmbiguity pins the shared-label rule the Incident doc states:
 // the pinned tables keep ATT&CK's revoked techniques, whose live successors
-// reuse their labels, so a label resolves to the lowest-index match.
+// reuse their labels, so a shared label resolves to its live carrier and only an
+// all-revoked one falls back to the lowest index.
 func TestOntologyLabelAmbiguity(t *testing.T) {
 	e := build(t)
 
@@ -543,8 +545,10 @@ func TestOntologyLabelAmbiguity(t *testing.T) {
 		}
 	}
 
-	// The pinned tables: 238 labels carry more than one technique, shadowing 269
-	// ids (measured from TTPLabels; see the plan's step 1).
+	// The pinned tables: 238 case-sensitive label strings carry more than one
+	// technique, shadowing 269 ids. The resolver's key space is the trimmed,
+	// lower-cased form, which folds two case-variant pairs into 239 groups (see
+	// the sweep below).
 	byLabel := map[string][]gr4ph.TTP{}
 	for i := range e.TTPCount() {
 		id := gr4ph.TTP(i)
@@ -562,12 +566,18 @@ func TestOntologyLabelAmbiguity(t *testing.T) {
 		t.Fatalf("shared labels = %d (shadowing %d ids), want 238 (269)", shared, shadowed)
 	}
 
-	// A revoked twin and its live successor share a name; the lower index wins,
-	// so the outcome is not "prefer the live one".
+	// A revoked twin and its live successor share a name. Here the live carrier
+	// also has the lower index, so both rules agree; the id form is exact.
 	powerShell := ttp(t, e, "T1059.001")
 	revoked := ttp(t, e, "T1086")
 	if e.TTPLabel(powerShell) != "PowerShell" || e.TTPLabel(revoked) != "PowerShell" {
 		t.Fatalf("PowerShell labels = %q / %q", e.TTPLabel(powerShell), e.TTPLabel(revoked))
+	}
+	if !e.TTPRevoked(revoked) {
+		t.Fatal("T1086 must be marked revoked")
+	}
+	if e.TTPRevoked(powerShell) {
+		t.Fatal("T1059.001 must not be marked revoked")
 	}
 	if got, ok := e.Incident("PowerShell"); !ok || got != powerShell {
 		t.Fatalf("Incident(PowerShell) = %d,%v want %d,true", got, ok, powerShell)
@@ -575,20 +585,75 @@ func TestOntologyLabelAmbiguity(t *testing.T) {
 	if got, ok := e.Incident("T1086"); !ok || got != revoked {
 		t.Fatalf("Incident(T1086) = %d,%v want %d,true (the id form is exact)", got, ok, revoked)
 	}
-	// Here the revoked twin has the lower index, so it is what a label lookup
-	// returns: the doc sentence "may be the revoked twin" is the observable
-	// behaviour, not a warning about an unlikely case.
+	// The revoked twin has the lower index, but the live carrier wins: the label
+	// reaches T1546.008, and only the id form reaches T1015.
 	revokedTwin := ttp(t, e, "T1015")
-	if got, ok := e.Incident("Accessibility Features"); !ok || got != revokedTwin {
-		t.Fatalf("Incident(Accessibility Features) = %d,%v want %d,true", got, ok, revokedTwin)
+	live := ttp(t, e, "T1546.008")
+	if !e.TTPRevoked(revokedTwin) || e.TTPRevoked(live) {
+		t.Fatalf("TTPRevoked(T1015)=%v, TTPRevoked(T1546.008)=%v, want true, false",
+			e.TTPRevoked(revokedTwin), e.TTPRevoked(live))
 	}
-	if e.TTPLabel(ttp(t, e, "T1546.008")) != "Accessibility Features" {
-		t.Fatal("T1546.008 must carry the shared label")
+	if got, ok := e.Incident("Accessibility Features"); !ok || got != live {
+		t.Fatalf("Incident(Accessibility Features) = %d,%v want %d,true", got, ok, live)
+	}
+	if got, ok := e.Incident("T1015"); !ok || got != revokedTwin {
+		t.Fatalf("Incident(T1015) = %d,%v want %d,true (the id form is exact)", got, ok, revokedTwin)
 	}
 	// A cross-domain duplicate: the ICS twin has the lowest index.
 	ics := ttp(t, e, "T0893")
 	if got, ok := e.Incident("Data from Local System"); !ok || got != ics {
 		t.Fatalf("Incident(Data from Local System) = %d,%v want %d,true", got, ok, ics)
+	}
+
+	// A label every holder of which is revoked still resolves, to the lowest id.
+	if got, ok := e.Incident("DLL Side-Loading"); !ok || got != ttp(t, e, "T1073") {
+		t.Fatalf("Incident(DLL Side-Loading) = %d,%v want T1073,true", got, ok)
+	}
+	// The pinned 19.2 flag: 222 techniques carry it, 197 of them ATT&CK's
+	// revoked: true and 25 x_mitre_deprecated without revoked.
+	revokedCount := 0
+	for i := range e.TTPCount() {
+		if e.TTPRevoked(gr4ph.TTP(i)) {
+			revokedCount++
+		}
+	}
+	if revokedCount != 222 {
+		t.Fatalf("revoked techniques = %d, want 222", revokedCount)
+	}
+
+	// The rule is falsifiable over the resolver's whole label-key space: every
+	// shared key must resolve to its first live carrier, falling back to the
+	// first carrier only when every carrier is revoked. The keys that fall back
+	// are exactly the residual ambiguity the rule leaves.
+	byKey := map[string][]gr4ph.TTP{}
+	for i := range e.TTPCount() {
+		id := gr4ph.TTP(i)
+		key := strings.ToLower(strings.TrimSpace(e.TTPLabel(id)))
+		byKey[key] = append(byKey[key], id)
+	}
+	var fallback []string
+	for key, ids := range byKey {
+		if len(ids) < 2 {
+			continue
+		}
+		want := ids[0]
+		for _, id := range ids {
+			if !e.TTPRevoked(id) {
+				want = id
+				break
+			}
+		}
+		if got, ok := e.Incident(key); !ok || got != want {
+			t.Fatalf("Incident(%q) = %d,%v want %d,true (carriers %v)", key, got, ok, want, ids)
+		}
+		if e.TTPRevoked(want) {
+			fallback = append(fallback, key)
+		}
+	}
+	slices.Sort(fallback)
+	const wantFallback = "dll side-loading,indicator blocking,input prompt,plist modification"
+	if got := strings.Join(fallback, ","); got != wantFallback {
+		t.Fatalf("all-revoked shared labels = %q, want %q", got, wantFallback)
 	}
 
 	// Artifact and countermeasure keys are unique: no key names two nodes. (A

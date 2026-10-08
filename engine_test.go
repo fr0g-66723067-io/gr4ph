@@ -31,7 +31,7 @@ func buildSynthetic(t *testing.T) *Engine {
 
 	ttp := func(id, label string, parent TTP) TTP {
 		t.Helper()
-		v, err := b.AddTTP(id, label, DomainEnterprise, parent)
+		v, err := b.AddTTP(id, label, DomainEnterprise, parent, false)
 		if err != nil {
 			t.Fatalf("AddTTP(%s): %v", id, err)
 		}

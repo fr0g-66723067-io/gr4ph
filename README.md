@@ -104,7 +104,8 @@ picks the offensive plane of the `ttp` and `artifact` sets, `-defrel` the defens
 take no relation are the roll-ups of `cm` and `in countermeasures viaTTPs`, which is the direct links
 unioned with the links of the techniques touching the artifact. Relations exist in the two families
 independently — 11 names, `blocks` among them, are registered in both — so `rel` prints one line per
-family and `-family` narrows it.
+family and `-family` narrows it. A technique ATT&CK has revoked or deprecated prints ` revoked=true` in
+its `ttp` header (`"revoked":true` under `-json`); its D3FEND links live on the successor id.
 
 ```sh
 GOEXPERIMENT=simd go run ./cmd/gr4ph ttp T1003.001
@@ -235,6 +236,7 @@ Rows are exact-length (no padding), LSB-first within each `uint64`. For the pinn
 | `ttpCM` | 1 | 3,558 | 28,464 |
 | **total** | | **456,286** | **3,650,288 (3.48 MiB)** |
 | hierarchy (`ttpParents` + `ttpChildCount`) | | | 4,744 |
+| revoked flag (`ttpRevoked`) | | | 1,186 |
 
 Strides: `WordsPerRow(KindTTP)` = 19, `KindArtifact` = 4, `KindCountermeasure` = 3. A single plane is
 37 KiB (technique) / 37 KiB (artifact) — L1/L2 resident; the whole graph sits in L3.
@@ -246,8 +248,8 @@ Sizes and cold path:
 | method | work | alloc |
 |---|---|---|
 | `TTPCount` `ArtifactCount` `CountermeasureCount` `RelCount` `DefRelCount` `WordsPerRow` | O(1) | 0 |
-| `Incident(alert) (TTP, bool)`, `Artifact(s)`, `Countermeasure(s)` | map lookup (trim + lower); a label shared by several techniques resolves to the lowest-index match | cold |
-| `TTPName` `TTPLabel` `ArtifactName` `ArtifactLabel` `CountermeasureName` `CountermeasureLabel` `TTPDomain` | O(1) | 0 |
+| `Incident(alert) (TTP, bool)`, `Artifact(s)`, `Countermeasure(s)` | map lookup (trim + lower); a shared technique label resolves to its live carrier, or to the lowest-index match when every carrier is revoked | cold |
+| `TTPName` `TTPLabel` `ArtifactName` `ArtifactLabel` `CountermeasureName` `CountermeasureLabel` `TTPDomain` `TTPRevoked` | O(1) | 0 |
 | `Rel` `DefRel` | map lookup (trim + lower), `"any"` is the union plane and cannot be registered (`ErrReservedName`) | cold |
 | `RelName` `DefRelName` | O(1) | 0 |
 | `Response(dst, ids)` `CountermeasureResponse(dst, ids)` | formats `<id> <label>` | cold |
@@ -255,9 +257,12 @@ Sizes and cold path:
 
 Technique labels are **not** unique keys: the pinned tables keep ATT&CK's revoked techniques, whose
 live successors reuse their labels — 238 of the 1186 labels are carried by more than one technique and
-shadow 269 ids — so `Incident` resolves a shared label to the lowest-index match, which may be the
-revoked twin. Ids are unambiguous (every `TTPName` round-trips through `Incident`), and no artifact or
-countermeasure key names two nodes.
+shadow 269 ids — so `Incident` resolves a shared label to its live carrier, and to the lowest-index
+match only when every carrier is revoked (4 labels in 19.2, `DLL Side-Loading` among them). `TTPRevoked`
+reports the flag that decides this: ATT&CK's `revoked` or `x_mitre_deprecated`, 222 of the 1186 here (197
+carry `revoked: true`, 25 are deprecated-only). Ids are unambiguous (every `TTPName` round-trips through
+`Incident`, and no label or alias key takes an id key), and no artifact or countermeasure key names two
+nodes.
 
 Traversals (all take/return ids, all allocate nothing):
 
@@ -281,7 +286,7 @@ Builder (cold path; the builder is single-use and then frozen by `Build`):
 |---|---|
 | `NewBuilder()` | fresh builder; the union plane `"any"` is seeded |
 | `AddRel(name)` `AddDefRel(name)` | plane ids in registration order; `"any"` is reserved |
-| `AddTTP(id, label, dom, parent, aliases…)` | `ErrDepthExceeded` / `ErrNonContiguousChild` / `ErrUnknownParent` |
+| `AddTTP(id, label, dom, parent, revoked, aliases…)` | `ErrDepthExceeded` / `ErrNonContiguousChild` / `ErrUnknownParent` |
 | `AddArtifact(name, label)` `AddCountermeasure(id, label, aliases…)` | |
 | `AddEdge(t, a, r)` `AddDefEdge(cm, a, dr)` `AddDefendsEdge(cm, t)` | edges are ORed into the planes |
 | `Built()` `Build()` | `Build` is single-use: `ErrBuilderUsed` afterwards |
@@ -383,6 +388,7 @@ d3fendgen: wrote ontology/attack_gen.go
   relations      41 offensive, 38 defensive
   edges          670 offensive, 182 defensive, 4133 defends-against
   hierarchy      605 top-level, 581 sub-techniques, 148 parents, max 18 children
+  revoked        222
 ```
 
 If a future upstream release changes any of those, the generator fails with the actual counts instead

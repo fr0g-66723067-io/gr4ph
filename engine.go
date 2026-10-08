@@ -54,6 +54,7 @@ type Engine struct {
 	ttpDomains    []Domain
 	ttpParents    []uint16 // parent index or NoParent
 	ttpChildCount []uint16 // children occupy indices t+1 .. t+count
+	ttpRevoked    []bool   // ATT&CK revoked or deprecated, index-parallel
 
 	artNames  []string
 	artLabels []string
@@ -176,11 +177,11 @@ func (e *Engine) WordsPerRow(cols Kind) int {
 // case-insensitively) to a technique id.
 //
 // Technique labels are not unique keys: the pinned tables keep ATT&CK's revoked
-// techniques, whose live successors reuse their labels, and the key map keeps
-// the first registration, so a label carried by several techniques resolves to
-// the lowest-index match — which may be the revoked twin. Ids are unambiguous
-// (TTPName round-trips through Incident), and no artifact or countermeasure key
-// names two nodes.
+// techniques, whose live successors reuse their labels, so a shared label
+// resolves to its live carrier and, when every carrier is revoked, to the
+// lowest-index one. Ids are unambiguous (TTPName round-trips through Incident,
+// and no label or alias key takes an id key), and no artifact or countermeasure
+// key names two nodes. TTPRevoked reports the flag the resolver uses.
 func (e *Engine) Incident(alert string) (TTP, bool) {
 	i, ok := e.ttpIndex[normalize(alert)]
 	return TTP(i), ok
@@ -325,6 +326,13 @@ func (e *Engine) TTPChildCount(t TTP) int {
 		return 0
 	}
 	return int(e.ttpChildCount[t])
+}
+
+// TTPRevoked reports whether ATT&CK revoked (or deprecated) the technique, which
+// is the flag Incident's label resolution prefers the live twin by.
+func (e *Engine) TTPRevoked(t TTP) bool {
+	e.mustTTP(t)
+	return e.ttpRevoked[t]
 }
 
 // TTPChildren writes the direct sub-technique ids of t into dst (truncated to

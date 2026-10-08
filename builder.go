@@ -123,6 +123,7 @@ type Builder struct {
 	ttpDomains    []Domain
 	ttpParents    []uint16
 	ttpChildCount []uint16
+	ttpRevoked    []bool // ATT&CK revoked or deprecated, index-parallel
 
 	artNames  []string
 	artLabels []string
@@ -198,6 +199,24 @@ func claim(m map[string]uint16, key string, id uint16) {
 	}
 }
 
+// claimTTP registers key in b.ttpIndex under idx unless the key is empty. A live
+// technique takes a label or alias from a revoked holder; between holders of the
+// same standing the earliest registration keeps the key, so a shared key
+// resolves to the live technique with the lowest index, and to the lowest-index
+// one when every holder is revoked. A key that is another technique's id is
+// never taken: ids are unambiguous.
+func (b *Builder) claimTTP(key string, idx int) {
+	if key == "" {
+		return
+	}
+	if cur, ok := b.ttpIndex[key]; ok {
+		if !b.ttpRevoked[cur] || b.ttpRevoked[idx] || normalize(b.ttpIDs[cur]) == key {
+			return
+		}
+	}
+	b.ttpIndex[key] = uint16(idx)
+}
+
 // AddRel registers an offensive relation predicate and returns its plane id
 // (1..255). Idempotent on the normalised name. The name "any" is reserved for the
 // union plane (RelAny) and returns ErrReservedName.
@@ -254,14 +273,17 @@ func (b *Builder) AddDefRel(name string) (DefRel, error) {
 
 // AddTTP registers a technique and returns its dense id. Idempotent on the
 // normalised id: a second call with the same id returns the stored id and
-// ignores its other arguments (label, domain, parent, aliases). Labels and
-// aliases are lookup keys too, so an id that normalises to an existing label or
-// alias returns that node as well: first registration wins. parent must be
+// ignores its other arguments (label, domain, parent, revoked, aliases). Labels
+// and aliases are lookup keys too, so an id that normalises to an existing label
+// or alias returns that node as well: first registration wins, except that a
+// live technique takes a label or alias from a revoked holder — see claimTTP.
+// revoked marks an ATT&CK technique that has been revoked or deprecated; it only
+// decides who wins a shared label or alias. parent must be
 // NoParent or an already-registered top-level technique whose child block the
 // new node extends contiguously. An id that normalises to the empty string
 // returns ErrEmptyKey; a dom other than the four Domain constants returns
 // ErrUnknownDomain.
-func (b *Builder) AddTTP(id, label string, dom Domain, parent TTP, aliases ...string) (TTP, error) {
+func (b *Builder) AddTTP(id, label string, dom Domain, parent TTP, revoked bool, aliases ...string) (TTP, error) {
 	if b.Built() {
 		return 0, ErrBuilderUsed
 	}
@@ -299,14 +321,15 @@ func (b *Builder) AddTTP(id, label string, dom Domain, parent TTP, aliases ...st
 	b.ttpDomains = append(b.ttpDomains, dom)
 	b.ttpParents = append(b.ttpParents, uint16(parent))
 	b.ttpChildCount = append(b.ttpChildCount, 0)
+	b.ttpRevoked = append(b.ttpRevoked, revoked)
 	if parent != NoParent {
 		b.ttpChildCount[int(parent)]++
 	}
 
 	claim(b.ttpIndex, key, uint16(idx))
-	claim(b.ttpIndex, normalize(label), uint16(idx))
+	b.claimTTP(normalize(label), idx)
 	for _, a := range aliases {
-		claim(b.ttpIndex, normalize(a), uint16(idx))
+		b.claimTTP(normalize(a), idx)
 	}
 	return TTP(idx), nil
 }
@@ -512,6 +535,7 @@ func (b *Builder) Build() (*Engine, error) {
 	e.ttpDomains = b.ttpDomains
 	e.ttpParents = b.ttpParents
 	e.ttpChildCount = b.ttpChildCount
+	e.ttpRevoked = b.ttpRevoked
 	e.artNames = b.artNames
 	e.artLabels = b.artLabels
 	e.cmIDs = b.cmIDs

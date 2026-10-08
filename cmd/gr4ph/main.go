@@ -97,6 +97,7 @@ type result struct {
 	Domain   string  `json:"domain,omitempty"`   // ttp only
 	Parent   string  `json:"parent,omitempty"`   // ttp only, absent at top level
 	Children *int    `json:"children,omitempty"` // ttp only, 0 is emitted
+	Revoked  bool    `json:"revoked,omitempty"`  // ttp only, absent when live
 	Sets     []set   `json:"sets,omitempty"`     // node kinds
 	Planes   []plane `json:"planes,omitempty"`   // rel
 }
@@ -282,6 +283,7 @@ func runTTP(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
 			Label:    collapseLabel(name, label),
 			Domain:   domainName(e.TTPDomain(t)),
 			Children: new(e.TTPChildCount(t)),
+			Revoked:  e.TTPRevoked(t),
 		}
 		if p, ok := e.TTPParent(t); ok {
 			res.Parent = e.TTPName(p)
@@ -525,8 +527,8 @@ func finish(stdout, stderr io.Writer, results []result, failures []string, asJSO
 func writeText(w io.Writer, res result) {
 	switch res.Kind {
 	case "ttp":
-		fmt.Fprintf(w, "ttp %s%s domain=%s%s children=%d\n",
-			res.Name, quoted(res.Label), res.Domain, parentPart(res.Parent), *res.Children)
+		fmt.Fprintf(w, "ttp %s%s domain=%s%s children=%d%s\n",
+			res.Name, quoted(res.Label), res.Domain, parentPart(res.Parent), *res.Children, revokedPart(res.Revoked))
 	case "rel":
 		for _, p := range res.Planes {
 			from, to := "technique", "artifact"
@@ -604,6 +606,15 @@ func parentPart(parent string) string {
 		return ""
 	}
 	return " parent=" + parent
+}
+
+// revokedPart renders the revoked field of a ttp header, absent when the
+// technique is live.
+func revokedPart(revoked bool) string {
+	if !revoked {
+		return ""
+	}
+	return " revoked=true"
 }
 
 // unionPart labels the union plane in a rel line.

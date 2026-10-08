@@ -26,10 +26,14 @@ func fixtureEngine(t *testing.T) *gr4ph.Engine {
 	analyzes := mustDefRel(t, b, "analyzes") // defensive plane 1
 	hardens := mustDefRel(t, b, "hardens")   // defensive plane 2
 	defBlocks := mustDefRel(t, b, "blocks")  // defensive plane 3: the name exists in both families
-	t1003 := mustTTP(t, b, "T1003", "OS Credential Dumping", gr4ph.DomainEnterprise, gr4ph.NoParent)
-	sub := mustTTP(t, b, "T1003.001", "LSASS Memory", gr4ph.DomainEnterprise, t1003)
-	mustTTP(t, b, "T1059", "Command and Scripting Interpreter", gr4ph.DomainEnterprise, gr4ph.NoParent) // no edges
-	process := mustArtifact(t, b, "Process", "Process")                                                 // label == name
+	t1003 := mustTTP(t, b, "T1003", "OS Credential Dumping", gr4ph.DomainEnterprise, gr4ph.NoParent, false)
+	sub := mustTTP(t, b, "T1003.001", "LSASS Memory", gr4ph.DomainEnterprise, t1003, false)
+	mustTTP(t, b, "T1059", "Command and Scripting Interpreter", gr4ph.DomainEnterprise, gr4ph.NoParent, false) // no edges
+	// The revoked twin and its live successor share a label; both are isolated,
+	// so the dense ids of the nodes above do not move.
+	mustTTP(t, b, "T1015", "Accessibility Features", gr4ph.DomainEnterprise, gr4ph.NoParent, true)
+	mustTTP(t, b, "T1546.008", "Accessibility Features", gr4ph.DomainEnterprise, gr4ph.NoParent, false)
+	process := mustArtifact(t, b, "Process", "Process") // label == name
 	auth := mustArtifact(t, b, "AuthenticationService", "Authentication Service")
 	hardening := mustCountermeasure(t, b, "CredentialHardening", "Credential Hardening")
 	quarantine := mustCountermeasure(t, b, "ContentQuarantine", "Content Quarantine")
@@ -68,9 +72,9 @@ func mustDefRel(t *testing.T, b *gr4ph.Builder, name string) gr4ph.DefRel {
 	return dr
 }
 
-func mustTTP(t *testing.T, b *gr4ph.Builder, id, label string, dom gr4ph.Domain, parent gr4ph.TTP) gr4ph.TTP {
+func mustTTP(t *testing.T, b *gr4ph.Builder, id, label string, dom gr4ph.Domain, parent gr4ph.TTP, revoked bool) gr4ph.TTP {
 	t.Helper()
-	tt, err := b.AddTTP(id, label, dom, parent)
+	tt, err := b.AddTTP(id, label, dom, parent, revoked)
 	must(t, err)
 	return tt
 }
@@ -147,6 +151,22 @@ rel any defensive union plane 0/3 (countermeasure -> artifact): edges=3 sources=
 
 	fixtureRelBlocks = `rel blocks offensive plane 2/2 (technique -> artifact): edges=1 sources=1
 rel blocks defensive plane 3/3 (countermeasure -> artifact): edges=1 sources=1
+`
+
+	// The revoked twin of the shared label, reached by id only.
+	fixtureTTPRevoked = `ttp T1015 "Accessibility Features" domain=enterprise children=0 revoked=true
+  out artifacts (0): -
+  out artifacts rollup (0): -
+  in  countermeasures (0): -
+  in  countermeasures rollup (0): -
+`
+
+	// The live carrier of that label, reached by the label.
+	fixtureTTPLive = `ttp T1546.008 "Accessibility Features" domain=enterprise children=0
+  out artifacts (0): -
+  out artifacts rollup (0): -
+  in  countermeasures (0): -
+  in  countermeasures rollup (0): -
 `
 )
 
@@ -238,6 +258,16 @@ func TestTextFixture(t *testing.T) {
 			[]string{"ttp", "T1059", "T1003.001"},
 			fixtureTTPIsolated + "\n" + fixtureTTPSub,
 		},
+		{
+			"a revoked technique is marked in the header",
+			[]string{"ttp", "T1015"},
+			fixtureTTPRevoked,
+		},
+		{
+			"the shared label resolves to the live twin, unmarked",
+			[]string{"ttp", "Accessibility Features"},
+			fixtureTTPLive,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -319,6 +349,34 @@ func TestJSONFixture(t *testing.T) {
 		t.Fatalf("sets[2] = %+v, want in countermeasures 2", cms)
 	}
 
+	// A revoked technique carries "revoked":true; the live carrier of the same
+	// label has the field absent (omitempty) and is reachable by the label.
+	out, stderr, status = runCase(t, e, "-json", "ttp", "T1015")
+	if status != 0 || stderr != "" {
+		t.Fatalf("status = %d, stderr = %q, want 0 and empty", status, stderr)
+	}
+	var revokedTT result
+	if err := json.Unmarshal([]byte(out), &revokedTT); err != nil {
+		t.Fatalf("decode %q: %v", out, err)
+	}
+	if revokedTT.Name != "T1015" || !revokedTT.Revoked {
+		t.Fatalf("revoked ttp = %q revoked=%v, want T1015 true", revokedTT.Name, revokedTT.Revoked)
+	}
+	out, _, status = runCase(t, e, "-json", "ttp", "Accessibility Features")
+	if status != 0 {
+		t.Fatalf("status = %d, want 0", status)
+	}
+	var liveTT result
+	if err := json.Unmarshal([]byte(out), &liveTT); err != nil {
+		t.Fatalf("decode %q: %v", out, err)
+	}
+	if liveTT.Name != "T1546.008" || liveTT.Revoked {
+		t.Fatalf("live ttp = %q revoked=%v, want T1546.008 false", liveTT.Name, liveTT.Revoked)
+	}
+	if strings.Contains(out, "revoked") {
+		t.Fatalf("a live technique must not carry the field: %s", out)
+	}
+
 	// rel has planes and no node id; the union plane is plane 0 of a family
 	// whose plane count is the number of registered predicates.
 	out, stderr, status = runCase(t, e, "rel", "-json", "any")
@@ -387,23 +445,55 @@ func TestOntologyValues(t *testing.T) {
 		first     string
 		last      string
 	}{
-		{"artifacts of a sub-technique", []string{"ttp", "T1003.001"}, "out artifacts", 2,
-			`AuthenticationService "Authentication Service"`, "Process"},
-		{"countermeasures of a sub-technique", []string{"ttp", "T1003.001"}, "in countermeasures", 12,
-			`Application-basedProcessIsolation "Application-based Process Isolation"`, `WebSessionAccessMediation "Web Session Access Mediation"`},
-		{"techniques touching an artifact", []string{"artifact", "Process"}, "in techniques", 5,
-			`T1003.001 "LSASS Memory"`, `T1546.007 "Netsh Helper DLL"`},
-		{"those techniques collapsed to parents", []string{"artifact", "Process"}, "in techniques rollup", 3,
-			`T1003 "OS Credential Dumping"`, `T1546 "Event Triggered Execution"`},
-		{"countermeasures directly linked to an artifact", []string{"artifact", "Process"}, "in countermeasures", 11,
-			`Application-basedProcessIsolation "Application-based Process Isolation"`, `SystemCallFiltering "System Call Filtering"`},
+		{
+			"artifacts of a sub-technique",
+			[]string{"ttp", "T1003.001"},
+			"out artifacts", 2,
+			`AuthenticationService "Authentication Service"`, "Process",
+		},
+		{
+			"countermeasures of a sub-technique",
+			[]string{"ttp", "T1003.001"},
+			"in countermeasures", 12,
+			`Application-basedProcessIsolation "Application-based Process Isolation"`, `WebSessionAccessMediation "Web Session Access Mediation"`,
+		},
+		{
+			"techniques touching an artifact",
+			[]string{"artifact", "Process"},
+			"in techniques", 5,
+			`T1003.001 "LSASS Memory"`, `T1546.007 "Netsh Helper DLL"`,
+		},
+		{
+			"those techniques collapsed to parents",
+			[]string{"artifact", "Process"},
+			"in techniques rollup", 3,
+			`T1003 "OS Credential Dumping"`, `T1546 "Event Triggered Execution"`,
+		},
+		{
+			"countermeasures directly linked to an artifact",
+			[]string{"artifact", "Process"},
+			"in countermeasures", 11,
+			`Application-basedProcessIsolation "Application-based Process Isolation"`, `SystemCallFiltering "System Call Filtering"`,
+		},
 		{"countermeasure surface of an artifact", []string{"artifact", "Process"}, "in countermeasures viaTTPs", 36, "", ""},
-		{"artifacts of a countermeasure", []string{"cm", "CredentialHardening"}, "out artifacts", 1,
-			"Credential", "Credential"},
-		{"techniques defended by a countermeasure", []string{"cm", "CredentialHardening"}, "out techniques", 25,
-			`DE-0011 "Credentialed Evasion"`, `T1606.001 "Web Cookies"`},
-		{"those techniques collapsed to parents", []string{"cm", "CredentialHardening"}, "out techniques rollup", 16,
-			`DE-0011 "Credentialed Evasion"`, `T1606 "Forge Web Credentials"`},
+		{
+			"artifacts of a countermeasure",
+			[]string{"cm", "CredentialHardening"},
+			"out artifacts", 1,
+			"Credential", "Credential",
+		},
+		{
+			"techniques defended by a countermeasure",
+			[]string{"cm", "CredentialHardening"},
+			"out techniques", 25,
+			`DE-0011 "Credentialed Evasion"`, `T1606.001 "Web Cookies"`,
+		},
+		{
+			"those techniques collapsed to parents",
+			[]string{"cm", "CredentialHardening"},
+			"out techniques rollup", 16,
+			`DE-0011 "Credentialed Evasion"`, `T1606 "Forge Web Credentials"`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -439,17 +529,29 @@ func TestOntologyValues(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"union planes", []string{"rel", "any"},
+		{
+			"union planes",
+			[]string{"rel", "any"},
 			fmt.Sprintf("rel any offensive union plane 0/41 (technique -> artifact): edges=%d sources=427\n"+
 				"rel any defensive union plane 0/38 (countermeasure -> artifact): edges=%d sources=157\n",
-				len(distinct), len(ontology.DefEdgeCM))},
-		{"offensive plane", []string{"rel", "accesses"},
-			"rel accesses offensive plane 2/41 (technique -> artifact): edges=55 sources=51\n"},
-		{"defensive plane", []string{"rel", "analyzes"},
-			"rel analyzes defensive plane 1/38 (countermeasure -> artifact): edges=49 sources=45\n"},
-		{"a name in both families", []string{"rel", "blocks"},
+				len(distinct), len(ontology.DefEdgeCM)),
+		},
+		{
+			"offensive plane",
+			[]string{"rel", "accesses"},
+			"rel accesses offensive plane 2/41 (technique -> artifact): edges=55 sources=51\n",
+		},
+		{
+			"defensive plane",
+			[]string{"rel", "analyzes"},
+			"rel analyzes defensive plane 1/38 (countermeasure -> artifact): edges=49 sources=45\n",
+		},
+		{
+			"a name in both families",
+			[]string{"rel", "blocks"},
 			"rel blocks offensive plane 4/41 (technique -> artifact): edges=2 sources=2\n" +
-				"rel blocks defensive plane 3/38 (countermeasure -> artifact): edges=6 sources=6\n"},
+				"rel blocks defensive plane 3/38 (countermeasure -> artifact): edges=6 sources=6\n",
+		},
 	}
 	if want := 654; len(distinct) != want {
 		t.Fatalf("distinct offensive pairs = %d, want %d", len(distinct), want)
@@ -519,7 +621,7 @@ func TestDomainNames(t *testing.T) {
 	want := []string{"enterprise", "ics", "mobile", "sparta"}
 	domains := []gr4ph.Domain{gr4ph.DomainEnterprise, gr4ph.DomainICS, gr4ph.DomainMobile, gr4ph.DomainSPARTA}
 	for i, dom := range domains {
-		mustTTP(t, b, fmt.Sprintf("T%d", 9000+i), fmt.Sprintf("Technique %d", i), dom, gr4ph.NoParent)
+		mustTTP(t, b, fmt.Sprintf("T%d", 9000+i), fmt.Sprintf("Technique %d", i), dom, gr4ph.NoParent, false)
 	}
 	graph, err := b.Build()
 	if err != nil {
@@ -675,22 +777,40 @@ func TestErrors(t *testing.T) {
 		{"undefined flag in artifact", []string{"artifact", "-nope", "X"}, "gr4ph: flag provided but not defined: -nope\n", 2, true},
 		{"undefined flag in cm", []string{"cm", "-nope", "X"}, "gr4ph: flag provided but not defined: -nope\n", 2, true},
 		{"undefined flag in rel", []string{"rel", "-nope", "any"}, "gr4ph: flag provided but not defined: -nope\n", 2, true},
-		{"-family outside off/def", []string{"rel", "-family", "sideways", "accesses"},
-			"gr4ph: -family must be off or def, got sideways\n", 2, false},
+		{
+			"-family outside off/def",
+			[]string{"rel", "-family", "sideways", "accesses"},
+			"gr4ph: -family must be off or def, got sideways\n", 2, false,
+		},
 		{"unresolved technique", []string{"ttp", "no-such"}, "gr4ph: no such technique: no-such\n", 1, false},
 		{"unresolved artifact", []string{"artifact", "no-such"}, "gr4ph: no such artifact: no-such\n", 1, false},
 		{"unresolved countermeasure", []string{"cm", "no-such"}, "gr4ph: no such countermeasure: no-such\n", 1, false},
 		{"unresolved relation", []string{"rel", "no-such"}, "gr4ph: no such relation: no-such\n", 1, false},
-		{"relation of the other family", []string{"rel", "-family", "off", "analyzes"},
-			"gr4ph: no such offensive relation: analyzes\n", 1, false},
-		{"relation of the other family, defensively", []string{"rel", "-family", "def", "accesses"},
-			"gr4ph: no such defensive relation: accesses\n", 1, false},
-		{"offensive relation filter outside its family", []string{"ttp", "-rel", "analyzes", "T1003.001"},
-			"gr4ph: no such offensive relation: analyzes\n", 1, false},
-		{"defensive relation filter in artifact", []string{"artifact", "-defrel", "accesses", "Process"},
-			"gr4ph: no such defensive relation: accesses\n", 1, false},
-		{"defensive relation filter in cm", []string{"cm", "-defrel", "accesses", "Process"},
-			"gr4ph: no such defensive relation: accesses\n", 1, false},
+		{
+			"relation of the other family",
+			[]string{"rel", "-family", "off", "analyzes"},
+			"gr4ph: no such offensive relation: analyzes\n", 1, false,
+		},
+		{
+			"relation of the other family, defensively",
+			[]string{"rel", "-family", "def", "accesses"},
+			"gr4ph: no such defensive relation: accesses\n", 1, false,
+		},
+		{
+			"offensive relation filter outside its family",
+			[]string{"ttp", "-rel", "analyzes", "T1003.001"},
+			"gr4ph: no such offensive relation: analyzes\n", 1, false,
+		},
+		{
+			"defensive relation filter in artifact",
+			[]string{"artifact", "-defrel", "accesses", "Process"},
+			"gr4ph: no such defensive relation: accesses\n", 1, false,
+		},
+		{
+			"defensive relation filter in cm",
+			[]string{"cm", "-defrel", "accesses", "Process"},
+			"gr4ph: no such defensive relation: accesses\n", 1, false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

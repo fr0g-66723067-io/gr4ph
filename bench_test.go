@@ -27,7 +27,7 @@ func generatedEngine(tb testing.TB, nTTP, nArt, nCM, nEdges int) *Engine {
 			parent = TTP(i - k)
 		}
 		id := "T" + strconv.Itoa(i)
-		if _, err := b.AddTTP(id, "Technique "+id, DomainEnterprise, parent); err != nil {
+		if _, err := b.AddTTP(id, "Technique "+id, DomainEnterprise, parent, false); err != nil {
 			tb.Fatalf("AddTTP: %v", err)
 		}
 	}

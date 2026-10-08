@@ -11,14 +11,14 @@ import (
 func TestBuilderIdempotencyAndDenseOrder(t *testing.T) {
 	b := NewBuilder()
 
-	t0, err := b.AddTTP("T1003", "OS Credential Dumping", DomainEnterprise, NoParent)
+	t0, err := b.AddTTP("T1003", "OS Credential Dumping", DomainEnterprise, NoParent, false)
 	if err != nil {
 		t.Fatalf("AddTTP: %v", err)
 	}
 	if t0 != 0 {
 		t.Fatalf("first ttp id = %d, want 0", t0)
 	}
-	again, err := b.AddTTP("  t1003 ", "ignored", DomainICS, NoParent)
+	again, err := b.AddTTP("  t1003 ", "ignored", DomainICS, NoParent, false)
 	if err != nil {
 		t.Fatalf("AddTTP repeat: %v", err)
 	}
@@ -90,8 +90,8 @@ func TestBuilderIdempotencyAndDenseOrder(t *testing.T) {
 // key, so the lowest id wins.
 func TestBuilderAliasFirstWins(t *testing.T) {
 	b := NewBuilder()
-	t0, _ := b.AddTTP("T1003", "LSASS Memory", DomainEnterprise, NoParent)
-	t1, _ := b.AddTTP("T1059", "T1003", DomainEnterprise, NoParent, "Command and Scripting Interpreter")
+	t0, _ := b.AddTTP("T1003", "LSASS Memory", DomainEnterprise, NoParent, false)
+	t1, _ := b.AddTTP("T1059", "T1003", DomainEnterprise, NoParent, false, "Command and Scripting Interpreter")
 	if t0 != 0 || t1 != 1 {
 		t.Fatalf("ids = %d,%d want 0,1", t0, t1)
 	}
@@ -117,16 +117,70 @@ func TestBuilderAliasFirstWins(t *testing.T) {
 	}
 }
 
+// TestBuilderLiveLabelBeatsRevoked pins the priority rule for shared label and
+// alias keys, using real ATT&CK ids: a live technique takes the key from a
+// revoked holder, the earliest registration keeps it between holders of the same
+// standing, and a technique's id key is never taken.
+func TestBuilderLiveLabelBeatsRevoked(t *testing.T) {
+	// Revoked registered first, live second.
+	b := NewBuilder()
+	old, err := b.AddTTP("T1015", "Accessibility Features", DomainEnterprise, NoParent, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, err := b.AddTTP("T1546.008", "Accessibility Features", DomainEnterprise, NoParent, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := b.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := e.Incident("Accessibility Features"); !ok || got != live {
+		t.Fatalf("Incident(Accessibility Features) = %d,%v want %d,true", got, ok, live)
+	}
+	if got, ok := e.Incident(" T1015 "); !ok || got != old {
+		t.Fatalf("Incident(T1015) = %d,%v want %d,true (the id form is exact)", got, ok, old)
+	}
+	if !e.TTPRevoked(old) || e.TTPRevoked(live) {
+		t.Fatalf("TTPRevoked = %v/%v, want true/false", e.TTPRevoked(old), e.TTPRevoked(live))
+	}
+	// Live registered first: the live holder keeps the key.
+	b = NewBuilder()
+	live, _ = b.AddTTP("T1546.008", "Accessibility Features", DomainEnterprise, NoParent, false)
+	old, _ = b.AddTTP("T1015", "Accessibility Features", DomainEnterprise, NoParent, true)
+	e, _ = b.Build()
+	if got, _ := e.Incident("Accessibility Features"); got != live {
+		t.Fatalf("Incident(Accessibility Features) = %d, want %d", got, live)
+	}
+	// Every holder revoked: the earliest registration keeps the key.
+	b = NewBuilder()
+	first, _ := b.AddTTP("T1073", "DLL Side-Loading", DomainEnterprise, NoParent, true)
+	b.AddTTP("T1574.002", "DLL Side-Loading", DomainEnterprise, NoParent, true)
+	e, _ = b.Build()
+	if got, _ := e.Incident("DLL Side-Loading"); got != first {
+		t.Fatalf("Incident(DLL Side-Loading) = %d, want %d", got, first)
+	}
+	// A live label never takes a revoked technique's id key.
+	b = NewBuilder()
+	byID, _ := b.AddTTP("T1003", "OS Credential Dumping", DomainEnterprise, NoParent, true)
+	b.AddTTP("T2", "T1003", DomainEnterprise, NoParent, false)
+	e, _ = b.Build()
+	if got, ok := e.Incident("T1003"); !ok || got != byID {
+		t.Fatalf("Incident(T1003) = %d,%v want %d,true", got, ok, byID)
+	}
+}
+
 // TestBuilderValidation pins the cold-path input contract: an empty (or
 // whitespace-only) key and an unknown domain are rejected without touching the
 // builder's state.
 func TestBuilderValidation(t *testing.T) {
 	b := NewBuilder()
 
-	if _, err := b.AddTTP("", "L", DomainEnterprise, NoParent); !errors.Is(err, ErrEmptyKey) {
+	if _, err := b.AddTTP("", "L", DomainEnterprise, NoParent, false); !errors.Is(err, ErrEmptyKey) {
 		t.Fatalf("AddTTP empty id: %v", err)
 	}
-	if _, err := b.AddTTP("   ", "L", DomainEnterprise, NoParent); !errors.Is(err, ErrEmptyKey) {
+	if _, err := b.AddTTP("   ", "L", DomainEnterprise, NoParent, false); !errors.Is(err, ErrEmptyKey) {
 		t.Fatalf("AddTTP blank id: %v", err)
 	}
 	if _, err := b.AddArtifact("", "L"); !errors.Is(err, ErrEmptyKey) {
@@ -147,10 +201,10 @@ func TestBuilderValidation(t *testing.T) {
 			b.CountermeasureCount(), b.RelCount(), b.DefRelCount())
 	}
 
-	if _, err := b.AddTTP("T1", "L", Domain(4), NoParent); !errors.Is(err, ErrUnknownDomain) {
+	if _, err := b.AddTTP("T1", "L", Domain(4), NoParent, false); !errors.Is(err, ErrUnknownDomain) {
 		t.Fatalf("AddTTP domain 4: %v", err)
 	}
-	if _, err := b.AddTTP("T1", "L", Domain(255), NoParent); !errors.Is(err, ErrUnknownDomain) {
+	if _, err := b.AddTTP("T1", "L", Domain(255), NoParent, false); !errors.Is(err, ErrUnknownDomain) {
 		t.Fatalf("AddTTP domain 255: %v", err)
 	}
 	if b.TTPCount() != 0 {
@@ -159,13 +213,13 @@ func TestBuilderValidation(t *testing.T) {
 
 	for i, dom := range []Domain{DomainEnterprise, DomainICS, DomainMobile, DomainSPARTA} {
 		id := "T" + strconv.Itoa(i)
-		if _, err := b.AddTTP(id, "label "+id, dom, NoParent); err != nil {
+		if _, err := b.AddTTP(id, "label "+id, dom, NoParent, false); err != nil {
 			t.Fatalf("AddTTP %s domain %d: %v", id, dom, err)
 		}
 	}
 
 	// An empty label is not an error, but it claims no lookup key.
-	t9, err := b.AddTTP("T9", "", DomainEnterprise, NoParent)
+	t9, err := b.AddTTP("T9", "", DomainEnterprise, NoParent, false)
 	if err != nil {
 		t.Fatalf("AddTTP empty label: %v", err)
 	}
@@ -188,8 +242,8 @@ func TestBuilderValidation(t *testing.T) {
 // hazard: after Build, no Add* may reach the live engine's slices.
 func TestBuilderSingleUse(t *testing.T) {
 	b := NewBuilder()
-	t0, _ := b.AddTTP("T1003", "OS Credential Dumping", DomainEnterprise, NoParent)
-	c1, _ := b.AddTTP("T1003.001", "LSASS Memory", DomainEnterprise, t0)
+	t0, _ := b.AddTTP("T1003", "OS Credential Dumping", DomainEnterprise, NoParent, false)
+	c1, _ := b.AddTTP("T1003.001", "LSASS Memory", DomainEnterprise, t0, false)
 	a0, _ := b.AddArtifact("Process", "Process")
 	cm0, _ := b.AddCountermeasure("CredentialHardening", "Credential Hardening")
 	r, _ := b.AddRel("accesses")
@@ -215,7 +269,7 @@ func TestBuilderSingleUse(t *testing.T) {
 	if _, err := b.AddDefRel("later"); !errors.Is(err, ErrBuilderUsed) {
 		t.Fatalf("AddDefRel after Build: %v", err)
 	}
-	if _, err := b.AddTTP("T1059", "later", DomainEnterprise, NoParent); !errors.Is(err, ErrBuilderUsed) {
+	if _, err := b.AddTTP("T1059", "later", DomainEnterprise, NoParent, false); !errors.Is(err, ErrBuilderUsed) {
 		t.Fatalf("AddTTP after Build: %v", err)
 	}
 	if _, err := b.AddArtifact("later", "later"); !errors.Is(err, ErrBuilderUsed) {
@@ -257,7 +311,7 @@ func TestBuilderSingleUse(t *testing.T) {
 // a by-value copy, so a copy taken before Build is rejected too.
 func TestBuilderCopyCannotMutateEngine(t *testing.T) {
 	b := NewBuilder()
-	t0, err := b.AddTTP("T1003", "OS Credential Dumping", DomainEnterprise, NoParent)
+	t0, err := b.AddTTP("T1003", "OS Credential Dumping", DomainEnterprise, NoParent, false)
 	if err != nil {
 		t.Fatalf("AddTTP: %v", err)
 	}
@@ -285,7 +339,7 @@ func TestBuilderCopyCannotMutateEngine(t *testing.T) {
 	if _, err := c.AddRel("later"); !errors.Is(err, ErrBuilderUsed) {
 		t.Fatalf("copy AddRel after Build = %v, want ErrBuilderUsed", err)
 	}
-	if _, err := c.AddTTP("T1059", "later", DomainEnterprise, NoParent); !errors.Is(err, ErrBuilderUsed) {
+	if _, err := c.AddTTP("T1059", "later", DomainEnterprise, NoParent, false); !errors.Is(err, ErrBuilderUsed) {
 		t.Fatalf("copy AddTTP after Build = %v, want ErrBuilderUsed", err)
 	}
 	if _, err := c.Build(); !errors.Is(err, ErrBuilderUsed) {
@@ -304,7 +358,7 @@ func TestBuilderCopyCannotMutateEngine(t *testing.T) {
 
 func TestBuilderBoundsEdges(t *testing.T) {
 	b := NewBuilder()
-	b.AddTTP("T1003", "OS Credential Dumping", DomainEnterprise, NoParent)
+	b.AddTTP("T1003", "OS Credential Dumping", DomainEnterprise, NoParent, false)
 	b.AddArtifact("Process", "Process")
 	b.AddCountermeasure("CredentialHardening", "Credential Hardening")
 	r, _ := b.AddRel("accesses")
@@ -428,14 +482,14 @@ func TestBuilderBoundsNodes(t *testing.T) {
 	b := NewBuilder()
 	for i := range MaxNodes {
 		id := "T" + strconv.Itoa(i)
-		if _, err := b.AddTTP(id, "label "+id, DomainEnterprise, NoParent); err != nil {
+		if _, err := b.AddTTP(id, "label "+id, DomainEnterprise, NoParent, false); err != nil {
 			t.Fatalf("AddTTP #%d: %v", i, err)
 		}
 	}
 	if b.TTPCount() != MaxNodes {
 		t.Fatalf("TTPCount = %d, want %d", b.TTPCount(), MaxNodes)
 	}
-	if _, err := b.AddTTP("T-overflow", "x", DomainEnterprise, NoParent); !errors.Is(err, ErrTooManyNodes) {
+	if _, err := b.AddTTP("T-overflow", "x", DomainEnterprise, NoParent, false); !errors.Is(err, ErrTooManyNodes) {
 		t.Fatalf("AddTTP past cap: %v", err)
 	}
 	for i := range MaxNodes {
@@ -469,23 +523,23 @@ func TestBuilderBoundsNodes(t *testing.T) {
 func TestBuilderHierarchy(t *testing.T) {
 	b := NewBuilder()
 	// Depth-first registration: children immediately after their parent.
-	p0, err := b.AddTTP("T1003", "OS Credential Dumping", DomainEnterprise, NoParent)
+	p0, err := b.AddTTP("T1003", "OS Credential Dumping", DomainEnterprise, NoParent, false)
 	if err != nil {
 		t.Fatalf("parent: %v", err)
 	}
-	c1, err := b.AddTTP("T1003.001", "LSASS Memory", DomainEnterprise, p0)
+	c1, err := b.AddTTP("T1003.001", "LSASS Memory", DomainEnterprise, p0, false)
 	if err != nil {
 		t.Fatalf("child 1: %v", err)
 	}
-	c2, err := b.AddTTP("T1003.002", "Security Account Manager", DomainEnterprise, p0)
+	c2, err := b.AddTTP("T1003.002", "Security Account Manager", DomainEnterprise, p0, false)
 	if err != nil {
 		t.Fatalf("child 2: %v", err)
 	}
-	p1, err := b.AddTTP("T1004", "Winlogon Helper DLL", DomainEnterprise, NoParent)
+	p1, err := b.AddTTP("T1004", "Winlogon Helper DLL", DomainEnterprise, NoParent, false)
 	if err != nil {
 		t.Fatalf("parent 1: %v", err)
 	}
-	c3, err := b.AddTTP("T1004.001", "Winlogon Helper DLL Sub", DomainEnterprise, p1)
+	c3, err := b.AddTTP("T1004.001", "Winlogon Helper DLL Sub", DomainEnterprise, p1, false)
 	if err != nil {
 		t.Fatalf("child 3: %v", err)
 	}
@@ -521,7 +575,7 @@ func TestBuilderHierarchy(t *testing.T) {
 	}
 	// The builder is single-use: a re-add after Build is rejected and must not
 	// touch the engine's slices.
-	if _, err := b.AddTTP("T1003.001", "ignored", DomainICS, NoParent); !errors.Is(err, ErrBuilderUsed) {
+	if _, err := b.AddTTP("T1003.001", "ignored", DomainICS, NoParent, false); !errors.Is(err, ErrBuilderUsed) {
 		t.Fatalf("post-Build re-add: %v", err)
 	}
 	if n := e.TTPChildCount(p0); n != 2 {
@@ -531,28 +585,28 @@ func TestBuilderHierarchy(t *testing.T) {
 
 func TestBuilderBoundsHierarchy(t *testing.T) {
 	b := NewBuilder()
-	b.AddTTP("T1003", "OS Credential Dumping", DomainEnterprise, NoParent)
+	b.AddTTP("T1003", "OS Credential Dumping", DomainEnterprise, NoParent, false)
 
 	// Forward / out-of-range parent.
-	if _, err := b.AddTTP("T1003.001", "sub", DomainEnterprise, TTP(7)); !errors.Is(err, ErrUnknownParent) {
+	if _, err := b.AddTTP("T1003.001", "sub", DomainEnterprise, TTP(7), false); !errors.Is(err, ErrUnknownParent) {
 		t.Fatalf("forward parent: %v", err)
 	}
 	// Real child of T1003 at index 1.
-	if _, err := b.AddTTP("T1003.001", "sub", DomainEnterprise, TTP(0)); err != nil {
+	if _, err := b.AddTTP("T1003.001", "sub", DomainEnterprise, TTP(0), false); err != nil {
 		t.Fatalf("child: %v", err)
 	}
 	// Index 1 is a sub-technique: it cannot parent a grandchild.
-	if _, err := b.AddTTP("T1003.001.001", "grandchild", DomainEnterprise, TTP(1)); !errors.Is(err, ErrDepthExceeded) {
+	if _, err := b.AddTTP("T1003.001.001", "grandchild", DomainEnterprise, TTP(1), false); !errors.Is(err, ErrDepthExceeded) {
 		t.Fatalf("grandchild: %v", err)
 	}
 	// NoParent is not a parent: the node registers top-level.
-	if _, err := b.AddTTP("T1004", "top-level", DomainEnterprise, NoParent); err != nil {
+	if _, err := b.AddTTP("T1004", "top-level", DomainEnterprise, NoParent, false); err != nil {
 		t.Fatalf("top-level: %v", err)
 	}
 	// Registering an unrelated node breaks the contiguous child block: index 3
 	// cannot extend T1003's block (which ends at index 1).
-	b.AddTTP("T1005", "unrelated", DomainEnterprise, NoParent)
-	if _, err := b.AddTTP("T1003.003", "late child", DomainEnterprise, TTP(0)); !errors.Is(err, ErrNonContiguousChild) {
+	b.AddTTP("T1005", "unrelated", DomainEnterprise, NoParent, false)
+	if _, err := b.AddTTP("T1003.003", "late child", DomainEnterprise, TTP(0), false); !errors.Is(err, ErrNonContiguousChild) {
 		t.Fatalf("non-contiguous child: %v", err)
 	}
 }
@@ -719,14 +773,14 @@ func TestBuilderReservedRelName(t *testing.T) {
 // is a no-op for every argument, including an invalid domain.
 func TestBuilderAddTTPIdempotentArguments(t *testing.T) {
 	b := NewBuilder()
-	if _, err := b.AddTTP("T1", "One", Domain(9), NoParent); !errors.Is(err, ErrUnknownDomain) {
+	if _, err := b.AddTTP("T1", "One", Domain(9), NoParent, false); !errors.Is(err, ErrUnknownDomain) {
 		t.Fatalf("fresh AddTTP with bad domain = %v, want ErrUnknownDomain", err)
 	}
-	t0, err := b.AddTTP("T1", "One", DomainEnterprise, NoParent)
+	t0, err := b.AddTTP("T1", "One", DomainEnterprise, NoParent, false)
 	if err != nil {
 		t.Fatalf("AddTTP: %v", err)
 	}
-	again, err := b.AddTTP("T1", "Two", Domain(9), NoParent, "alias")
+	again, err := b.AddTTP("T1", "Two", Domain(9), NoParent, false, "alias")
 	if err != nil {
 		t.Fatalf("repeat AddTTP = %v, want nil (a duplicate ignores its arguments)", err)
 	}

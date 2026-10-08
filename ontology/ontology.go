@@ -56,7 +56,7 @@ func Register(b *gr4ph.Builder) error {
 
 	for i, id := range TTPIDs {
 		parent := gr4ph.TTP(TTPParents[i])
-		if _, err := b.AddTTP(id, TTPLabels[i], TTPDomains[i], parent, TTPAliases[i]...); err != nil {
+		if _, err := b.AddTTP(id, TTPLabels[i], TTPDomains[i], parent, TTPRevoked[i], TTPAliases[i]...); err != nil {
 			return fmt.Errorf("technique %s: %w", id, err)
 		}
 	}

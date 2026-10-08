@@ -50,15 +50,15 @@ func run(w io.Writer) error {
 		return err
 	}
 
-	t1003, err := b.AddTTP("T1003", "OS Credential Dumping", gr4ph.DomainEnterprise, gr4ph.NoParent)
+	t1003, err := b.AddTTP("T1003", "OS Credential Dumping", gr4ph.DomainEnterprise, gr4ph.NoParent, false)
 	if err != nil {
 		return err
 	}
-	t1003a, err := b.AddTTP("T1003.001", "LSASS Memory", gr4ph.DomainEnterprise, t1003)
+	t1003a, err := b.AddTTP("T1003.001", "LSASS Memory", gr4ph.DomainEnterprise, t1003, false)
 	if err != nil {
 		return err
 	}
-	if _, err := b.AddTTP("T1059", "Command and Scripting Interpreter", gr4ph.DomainEnterprise, gr4ph.NoParent); err != nil {
+	if _, err := b.AddTTP("T1059", "Command and Scripting Interpreter", gr4ph.DomainEnterprise, gr4ph.NoParent, false); err != nil {
 		return err
 	}
 
