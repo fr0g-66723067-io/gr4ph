@@ -28,6 +28,8 @@ var ErrBuilderNotEmpty = errors.New("ontology: Register requires a fresh builder
 //
 //   - RelNames[i] / DefRelNames[i] must become plane i+1, matching the
 //     generated Rel*/DefRel* constants;
+//   - TacticIDs[i] / PlatformNames[i] must become attribute index i, matching
+//     the emitted TacticTTP/PlatformTTP rows;
 //   - TTPIDs[i] must become technique index i, which makes TTPParents[i] a
 //     valid direct index (parents sort before, and register before, their
 //     children) and keeps every child block contiguous.
@@ -40,7 +42,8 @@ var ErrBuilderNotEmpty = errors.New("ontology: Register requires a fresh builder
 // engine.
 func Register(b *gr4ph.Builder) error {
 	if b.Built() || b.TTPCount() != 0 || b.ArtifactCount() != 0 || b.CountermeasureCount() != 0 ||
-		b.RelCount() != 0 || b.DefRelCount() != 0 {
+		b.RelCount() != 0 || b.DefRelCount() != 0 || b.TacticCount() != 0 || b.PlatformCount() != 0 ||
+		b.DataComponentCount() != 0 || b.GroupCount() != 0 {
 		return ErrBuilderNotEmpty
 	}
 	for _, name := range RelNames {
@@ -51,6 +54,18 @@ func Register(b *gr4ph.Builder) error {
 	for _, name := range DefRelNames {
 		if _, err := b.AddDefRel(name); err != nil {
 			return fmt.Errorf("defensive relation %s: %w", name, err)
+		}
+	}
+	// The attribute vocabularies register before the techniques because the
+	// emitted TacticTTP/PlatformTTP rows are indexed by these dense ids.
+	for i, id := range TacticIDs {
+		if _, err := b.AddTactic(id, TacticLabels[i]); err != nil {
+			return fmt.Errorf("tactic %s: %w", id, err)
+		}
+	}
+	for _, name := range PlatformNames {
+		if _, err := b.AddPlatform(name); err != nil {
+			return fmt.Errorf("platform %s: %w", name, err)
 		}
 	}
 
@@ -70,6 +85,16 @@ func Register(b *gr4ph.Builder) error {
 			return fmt.Errorf("countermeasure %s: %w", id, err)
 		}
 	}
+	for i, id := range DataComponentIDs {
+		if _, err := b.AddDataComponent(id, DataComponentLabels[i]); err != nil {
+			return fmt.Errorf("data component %s: %w", id, err)
+		}
+	}
+	for i, id := range GroupIDs {
+		if _, err := b.AddGroup(id, GroupLabels[i], GroupKinds[i]); err != nil {
+			return fmt.Errorf("group %s: %w", id, err)
+		}
+	}
 
 	for i := range OffEdgeTTP {
 		if err := b.AddEdge(gr4ph.TTP(OffEdgeTTP[i]), gr4ph.Artifact(OffEdgeArt[i]), gr4ph.Rel(OffEdgeRel[i])); err != nil {
@@ -84,6 +109,35 @@ func Register(b *gr4ph.Builder) error {
 	for i := range DefendsCM {
 		if err := b.AddDefendsEdge(gr4ph.Countermeasure(DefendsCM[i]), gr4ph.TTP(DefendsTTP[i])); err != nil {
 			return fmt.Errorf("defends-against pair %d: %w", i, err)
+		}
+	}
+	for i := range TacticTTP {
+		for _, t := range TacticTTP[i] {
+			if err := b.AddTacticEdge(gr4ph.TTP(t), gr4ph.Tactic(i)); err != nil {
+				return fmt.Errorf("tactic assignment %d/%d: %w", i, t, err)
+			}
+		}
+	}
+	for i := range PlatformTTP {
+		for _, t := range PlatformTTP[i] {
+			if err := b.AddPlatformEdge(gr4ph.TTP(t), gr4ph.Platform(i)); err != nil {
+				return fmt.Errorf("platform assignment %d/%d: %w", i, t, err)
+			}
+		}
+	}
+	for i := range DetectsDC {
+		if err := b.AddDetectsEdge(gr4ph.DataComponent(DetectsDC[i]), gr4ph.TTP(DetectsTTP[i])); err != nil {
+			return fmt.Errorf("detects pair %d: %w", i, err)
+		}
+	}
+	for i := range UsesGroup {
+		if err := b.AddGroupUsesEdge(gr4ph.Group(UsesGroup[i]), gr4ph.TTP(UsesTTP[i])); err != nil {
+			return fmt.Errorf("uses pair %d: %w", i, err)
+		}
+	}
+	for i := range SoftwareUseGroup {
+		if err := b.AddGroupSoftwareEdge(gr4ph.Group(SoftwareUseGroup[i]), gr4ph.Group(SoftwareUseTarget[i])); err != nil {
+			return fmt.Errorf("software-use pair %d: %w", i, err)
 		}
 	}
 	return nil

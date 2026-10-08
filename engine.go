@@ -36,9 +36,15 @@ import "strconv"
 // because there is no plane 0. Obtain an Engine from Builder.Build.
 type Engine struct {
 	nTTP, nArt, nCM int // partition sizes
+	nDC, nGrp       int
 	nRel, nDefRel   int // planes per family, including the union plane 0
+	nTactic         int // tactic vocabulary size (TA ids)
+	nPlatform       int // platform vocabulary size
 
 	wTTP, wArt, wCM int // words per row for each partition
+	wDC, wGrp       int
+	wTactic         int // one word per technique (the tactic mask)
+	wPlatform       int // one word per technique (the platform mask)
 
 	// Six matrix blocks. Every row is exactly one stride long (no padding),
 	// and every directed relation is materialised in both directions.
@@ -49,12 +55,38 @@ type Engine struct {
 	cmTTP  []uint64 // [nCM][wTTP]           countermeasure-major over techniques
 	ttpCM  []uint64 // [nTTP][wCM]           technique-major transpose
 
+	// The attribute columns and their transposes, the data-component partition
+	// and the grouping partition. Each family has one inferred predicate, so
+	// these blocks have no planes dimension.
+	tacticTTP   []uint64 // [nTactic][wTTP]   tactic -> techniques
+	ttpTactic   []uint64 // [nTTP][wTactic]   the per-technique tactic mask
+	platformTTP []uint64 // [nPlatform][wTTP] platform -> techniques
+	ttpPlatform []uint64 // [nTTP][wPlatform] the per-technique platform mask
+	ttpFlags    []uint64 // [nTTP]            per-technique flags (derived)
+	dcTTP       []uint64 // [nDC][wTTP]       data component -> techniques
+	ttpDC       []uint64 // [nTTP][wDC]       technique -> data components
+	grpTTP      []uint64 // [nGrp][wTTP]      group -> techniques
+	ttpGrp      []uint64 // [nTTP][wGrp]      technique -> groups
+	grpSoftware []uint64 // [nGrp][wGrp]      group -> software
+	softwareGrp []uint64 // [nGrp][wGrp]      software -> groups
+
 	ttpIDs        []string // index-parallel cold tables
 	ttpLabels     []string
 	ttpDomains    []Domain
 	ttpParents    []uint16 // parent index or NoParent
 	ttpChildCount []uint16 // children occupy indices t+1 .. t+count
 	ttpRevoked    []bool   // ATT&CK revoked or deprecated, index-parallel
+
+	tacticIDs     []string // index-parallel vocabulary tables
+	tacticLabels  []string
+	platformNames []string
+
+	dcIDs    []string
+	dcLabels []string
+
+	groupIDs    []string
+	groupLabels []string
+	groupKinds  []GroupKind
 
 	artNames  []string
 	artLabels []string
@@ -65,27 +97,46 @@ type Engine struct {
 	relNames    []string // index 0 is "any"
 	defRelNames []string // index 0 is "any"
 
-	ttpIndex    map[string]uint16
-	artIndex    map[string]uint16
-	cmIndex     map[string]uint16
-	relIndex    map[string]Rel
-	defRelIndex map[string]DefRel
+	ttpIndex      map[string]uint16
+	artIndex      map[string]uint16
+	cmIndex       map[string]uint16
+	dcIndex       map[string]uint16
+	groupIndex    map[string]uint16
+	tacticIndex   map[string]uint16
+	platformIndex map[string]uint16
+	relIndex      map[string]Rel
+	defRelIndex   map[string]DefRel
 }
 
-// --- row offsets (the whole hot path is these six formulas) ---
+// --- row offsets (one formula per block row) ---
 
 func (e *Engine) ttpArtOff(r Rel, t TTP) int { return (int(r)*e.nTTP + int(t)) * e.wArt }
+
 func (e *Engine) artTTPOff(r Rel, a Artifact) int {
 	return (int(r)*e.nArt + int(a)) * e.wTTP
 }
+
 func (e *Engine) cmArtOff(dr DefRel, cm Countermeasure) int {
 	return (int(dr)*e.nCM + int(cm)) * e.wArt
 }
+
 func (e *Engine) artCMOff(dr DefRel, a Artifact) int {
 	return (int(dr)*e.nArt + int(a)) * e.wCM
 }
 func (e *Engine) cmTTPOff(cm Countermeasure) int { return int(cm) * e.wTTP }
 func (e *Engine) ttpCMOff(t TTP) int             { return int(t) * e.wCM }
+
+func (e *Engine) tacticTTPOff(ta Tactic) int    { return int(ta) * e.wTTP }
+func (e *Engine) ttpTacticOff(t TTP) int        { return int(t) * e.wTactic }
+func (e *Engine) platformTTPOff(p Platform) int { return int(p) * e.wTTP }
+func (e *Engine) ttpPlatformOff(t TTP) int      { return int(t) * e.wPlatform }
+func (e *Engine) ttpFlagsOff(t TTP) int         { return int(t) }
+func (e *Engine) dcTTPOff(dc DataComponent) int { return int(dc) * e.wTTP }
+func (e *Engine) ttpDCOff(t TTP) int            { return int(t) * e.wDC }
+func (e *Engine) grpTTPOff(g Group) int         { return int(g) * e.wTTP }
+func (e *Engine) ttpGrpOff(t TTP) int           { return int(t) * e.wGrp }
+func (e *Engine) grpSoftwareOff(g Group) int    { return int(g) * e.wGrp }
+func (e *Engine) softwareGrpOff(g Group) int    { return int(g) * e.wGrp }
 
 // row slices one block row. off must come from the matching offset helper and
 // the id must have passed its bounds predicate.
@@ -98,6 +149,8 @@ func (e *Engine) row(block []uint64, off, stride int) []uint64 {
 func (e *Engine) okTTP(t TTP) bool            { return int(t) < e.nTTP }
 func (e *Engine) okArt(a Artifact) bool       { return int(a) < e.nArt }
 func (e *Engine) okCM(cm Countermeasure) bool { return int(cm) < e.nCM }
+func (e *Engine) okDC(dc DataComponent) bool  { return int(dc) < e.nDC }
+func (e *Engine) okGroup(g Group) bool        { return int(g) < e.nGrp }
 
 func (e *Engine) mustTTP(t TTP) {
 	if int(t) >= e.nTTP {
@@ -114,6 +167,30 @@ func (e *Engine) mustArt(a Artifact) {
 func (e *Engine) mustCM(cm Countermeasure) {
 	if int(cm) >= e.nCM {
 		panic("gr4ph: countermeasure out of range")
+	}
+}
+
+func (e *Engine) mustDC(dc DataComponent) {
+	if int(dc) >= e.nDC {
+		panic("gr4ph: data component out of range")
+	}
+}
+
+func (e *Engine) mustGroup(g Group) {
+	if int(g) >= e.nGrp {
+		panic("gr4ph: group out of range")
+	}
+}
+
+func (e *Engine) mustTactic(ta Tactic) {
+	if int(ta) >= e.nTactic {
+		panic("gr4ph: tactic out of range")
+	}
+}
+
+func (e *Engine) mustPlatform(p Platform) {
+	if int(p) >= e.nPlatform {
+		panic("gr4ph: platform out of range")
 	}
 }
 
@@ -148,6 +225,19 @@ func (e *Engine) ArtifactCount() int { return e.nArt }
 // CountermeasureCount returns the number of countermeasures.
 func (e *Engine) CountermeasureCount() int { return e.nCM }
 
+// DataComponentCount returns the number of data components.
+func (e *Engine) DataComponentCount() int { return e.nDC }
+
+// GroupCount returns the number of grouping nodes: actors, software and
+// campaigns share one partition.
+func (e *Engine) GroupCount() int { return e.nGrp }
+
+// TacticCount returns the size of the tactic vocabulary (ATT&CK TA ids).
+func (e *Engine) TacticCount() int { return e.nTactic }
+
+// PlatformCount returns the size of the platform vocabulary.
+func (e *Engine) PlatformCount() int { return e.nPlatform }
+
 // RelCount returns the number of offensive relation predicates (excluding
 // RelAny); it is 0 for the zero Engine, which has no planes.
 func (e *Engine) RelCount() int { return max(e.nRel-1, 0) }
@@ -158,7 +248,8 @@ func (e *Engine) DefRelCount() int { return max(e.nDefRel-1, 0) }
 
 // WordsPerRow returns the number of uint64 words in one row over cols:
 // ceil(count(cols)/64), i.e. the minimum scratch length for a query returning
-// ids of that partition. A Kind outside the three partitions panics.
+// ids of that partition. KindDataComponent is the scratch kind of
+// DataComponentsForTTPRollup. A Kind outside these partitions panics.
 func (e *Engine) WordsPerRow(cols Kind) int {
 	switch cols {
 	case KindTTP:
@@ -167,6 +258,8 @@ func (e *Engine) WordsPerRow(cols Kind) int {
 		return e.wArt
 	case KindCountermeasure:
 		return e.wCM
+	case KindDataComponent:
+		return e.wDC
 	}
 	panic("gr4ph: unknown kind")
 }
@@ -197,6 +290,86 @@ func (e *Engine) Artifact(s string) (Artifact, bool) {
 func (e *Engine) Countermeasure(s string) (Countermeasure, bool) {
 	i, ok := e.cmIndex[normalize(s)]
 	return Countermeasure(i), ok
+}
+
+// DataComponent resolves a data component id ("DC0084") or label to an id.
+func (e *Engine) DataComponent(s string) (DataComponent, bool) {
+	i, ok := e.dcIndex[normalize(s)]
+	return DataComponent(i), ok
+}
+
+// Group resolves a grouping-node id ("G0007", "S0002", "C0001") or label to an
+// id. Labels are unique within a kind but not across kinds ("Frankenstein" is
+// both C0001 and G0101), so the earliest registration keeps a shared label.
+func (e *Engine) Group(s string) (Group, bool) {
+	i, ok := e.groupIndex[normalize(s)]
+	return Group(i), ok
+}
+
+// Tactic resolves an ATT&CK tactic id ("TA0005") to its dense index (the bit
+// position in TTPTactics). Only the TA id is a key: tactic labels repeat across
+// domains, so 11 of them name two or three tactics.
+func (e *Engine) Tactic(id string) (Tactic, bool) {
+	i, ok := e.tacticIndex[normalize(id)]
+	return Tactic(i), ok
+}
+
+// Platform resolves an ATT&CK platform name ("Windows") to its dense index (the
+// bit position in TTPPlatforms).
+func (e *Engine) Platform(name string) (Platform, bool) {
+	i, ok := e.platformIndex[normalize(name)]
+	return Platform(i), ok
+}
+
+// TacticID returns the tactic id string, e.g. "TA0005".
+func (e *Engine) TacticID(ta Tactic) string {
+	e.mustTactic(ta)
+	return e.tacticIDs[ta]
+}
+
+// TacticLabel returns the tactic label, e.g. "Stealth". Labels repeat across
+// domains: TacticID is the unambiguous key.
+func (e *Engine) TacticLabel(ta Tactic) string {
+	e.mustTactic(ta)
+	return e.tacticLabels[ta]
+}
+
+// PlatformName returns the platform name, e.g. "Windows".
+func (e *Engine) PlatformName(p Platform) string {
+	e.mustPlatform(p)
+	return e.platformNames[p]
+}
+
+// DataComponentID returns the data component id string, e.g. "DC0084".
+func (e *Engine) DataComponentID(dc DataComponent) string {
+	e.mustDC(dc)
+	return e.dcIDs[dc]
+}
+
+// DataComponentLabel returns the data component label, e.g. "Active Directory
+// Credential Request".
+func (e *Engine) DataComponentLabel(dc DataComponent) string {
+	e.mustDC(dc)
+	return e.dcLabels[dc]
+}
+
+// GroupID returns the grouping-node id string, e.g. "G0007".
+func (e *Engine) GroupID(g Group) string {
+	e.mustGroup(g)
+	return e.groupIDs[g]
+}
+
+// GroupLabel returns the grouping-node label, e.g. "APT28".
+func (e *Engine) GroupLabel(g Group) string {
+	e.mustGroup(g)
+	return e.groupLabels[g]
+}
+
+// GroupKind returns the ATT&CK object type of g: GroupActor, GroupSoftware or
+// GroupCampaign.
+func (e *Engine) GroupKind(g Group) GroupKind {
+	e.mustGroup(g)
+	return e.groupKinds[g]
 }
 
 // TTPName returns the technique id string, e.g. "T1003.001".
@@ -681,6 +854,181 @@ func (e *Engine) CountermeasureDegree(cm Countermeasure) int {
 		return 0
 	}
 	return popcountRow(e.row(e.cmTTP, e.cmTTPOff(cm), e.wTTP))
+}
+
+// --- hot path: attributes, data components and groups ---
+
+// TTPTactics returns the tactic mask of t: bit i is TacticID(i). It is 0 for a
+// technique with no ATT&CK tactic (the D3FEND-named nodes) and for an
+// out-of-range id. One word per technique, so the read is a single load.
+func (e *Engine) TTPTactics(t TTP) uint64 {
+	if !e.okTTP(t) {
+		return 0
+	}
+	return e.ttpTactic[e.ttpTacticOff(t)]
+}
+
+// TTPPlatforms returns the platform mask of t: bit i is PlatformName(i).
+func (e *Engine) TTPPlatforms(t TTP) uint64 {
+	if !e.okTTP(t) {
+		return 0
+	}
+	return e.ttpPlatform[e.ttpPlatformOff(t)]
+}
+
+// TTPFlags returns the attribute flags of t: FlagSubTechnique for a
+// sub-technique, 0 for a top-level technique or an out-of-range id. Build
+// derives the bit from the hierarchy.
+func (e *Engine) TTPFlags(t TTP) uint64 {
+	if !e.okTTP(t) {
+		return 0
+	}
+	return e.ttpFlags[e.ttpFlagsOff(t)]
+}
+
+// TTPSubTechnique reports whether t is a sub-technique (TTPFlags bit
+// FlagSubTechnique).
+func (e *Engine) TTPSubTechnique(t TTP) bool {
+	return e.TTPFlags(t)&FlagSubTechnique != 0
+}
+
+// TTPsForTactic writes the techniques of tactic ta.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
+func (e *Engine) TTPsForTactic(ta Tactic, dst []TTP) int {
+	if int(ta) >= e.nTactic {
+		return 0
+	}
+	return enumerate(e.row(e.tacticTTP, e.tacticTTPOff(ta), e.wTTP), dst)
+}
+
+// TTPsForPlatform writes the techniques that run on platform p.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
+func (e *Engine) TTPsForPlatform(p Platform, dst []TTP) int {
+	if int(p) >= e.nPlatform {
+		return 0
+	}
+	return enumerate(e.row(e.platformTTP, e.platformTTPOff(p), e.wTTP), dst)
+}
+
+// TTPsForDataComponent writes the techniques dc's log sources can detect.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
+func (e *Engine) TTPsForDataComponent(dc DataComponent, dst []TTP) int {
+	if !e.okDC(dc) {
+		return 0
+	}
+	return enumerate(e.row(e.dcTTP, e.dcTTPOff(dc), e.wTTP), dst)
+}
+
+// DataComponentsForTTP writes the data components that detect exactly t.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
+func (e *Engine) DataComponentsForTTP(t TTP, dst []DataComponent) int {
+	if !e.okTTP(t) {
+		return 0
+	}
+	return enumerate(e.row(e.ttpDC, e.ttpDCOff(t), e.wDC), dst)
+}
+
+// DataComponentsForTTPRollup writes the union of the data components detecting
+// t and all its direct sub-techniques: the ATT&CK detections hang off the
+// sub-technique, so a parent's own row is usually empty.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
+func (e *Engine) DataComponentsForTTPRollup(t TTP, scratch []uint64, dst []DataComponent) int {
+	e.checkScratch(scratch, KindDataComponent)
+	if !e.okTTP(t) {
+		return 0
+	}
+	row := scratch[:e.wDC]
+	copyRow(row, e.row(e.ttpDC, e.ttpDCOff(t), e.wDC))
+	for c := int(t) + 1; c <= int(t)+int(e.ttpChildCount[t]); c++ {
+		orRowInto(row, e.row(e.ttpDC, e.ttpDCOff(TTP(c)), e.wDC))
+	}
+	return enumerate(row, dst)
+}
+
+// DataComponentDegree returns the number of techniques dc can detect.
+func (e *Engine) DataComponentDegree(dc DataComponent) int {
+	if !e.okDC(dc) {
+		return 0
+	}
+	return popcountRow(e.row(e.dcTTP, e.dcTTPOff(dc), e.wTTP))
+}
+
+// TTPsForGroup writes the techniques g is recorded as using, exactly as linked
+// (sub-techniques stay sub-techniques).
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
+func (e *Engine) TTPsForGroup(g Group, dst []TTP) int {
+	if !e.okGroup(g) {
+		return 0
+	}
+	return enumerate(e.row(e.grpTTP, e.grpTTPOff(g), e.wTTP), dst)
+}
+
+// TTPsForGroupRollup is TTPsForGroup with every sub-technique collapsed onto
+// its parent.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
+func (e *Engine) TTPsForGroupRollup(g Group, scratch []uint64, dst []TTP) int {
+	e.checkScratch(scratch, KindTTP)
+	if !e.okGroup(g) {
+		return 0
+	}
+	row := scratch[:e.wTTP]
+	clear(row)
+	eachBit(e.row(e.grpTTP, e.grpTTPOff(g), e.wTTP), func(t int) bool {
+		if p := e.ttpParents[t]; p != uint16(NoParent) {
+			setBit(row, int(p))
+		} else {
+			setBit(row, t)
+		}
+		return true
+	})
+	return enumerate(row, dst)
+}
+
+// GroupsForTTP writes every grouping node — actor, software or campaign — that
+// uses t. Filter with GroupKind on the results for one kind.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
+func (e *Engine) GroupsForTTP(t TTP, dst []Group) int {
+	if !e.okTTP(t) {
+		return 0
+	}
+	return enumerate(e.row(e.ttpGrp, e.ttpGrpOff(t), e.wGrp), dst)
+}
+
+// SoftwareForGroup writes the software g uses (empty for a software node).
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
+func (e *Engine) SoftwareForGroup(g Group, dst []Group) int {
+	if !e.okGroup(g) {
+		return 0
+	}
+	return enumerate(e.row(e.grpSoftware, e.grpSoftwareOff(g), e.wGrp), dst)
+}
+
+// GroupsForSoftware writes the actors and campaigns recorded as using software
+// node g (empty for an actor or campaign).
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
+func (e *Engine) GroupsForSoftware(g Group, dst []Group) int {
+	if !e.okGroup(g) {
+		return 0
+	}
+	return enumerate(e.row(e.softwareGrp, e.softwareGrpOff(g), e.wGrp), dst)
+}
+
+// SoftwareDegree returns the number of software nodes g uses.
+func (e *Engine) SoftwareDegree(g Group) int {
+	if !e.okGroup(g) {
+		return 0
+	}
+	return popcountRow(e.row(e.grpSoftware, e.grpSoftwareOff(g), e.wGrp))
 }
 
 // enumerate writes the set bits of row into dst as ascending ids of type T

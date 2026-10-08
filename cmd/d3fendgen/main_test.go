@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"go/parser"
 	"go/token"
 	"io"
@@ -218,7 +219,7 @@ func TestAssembleRejectsBadHierarchy(t *testing.T) {
 		"T1.1":   {label: "one-one", sub: true},
 		"T1.1.1": {label: "three levels", sub: true},
 	}
-	if _, err := assemble(deep, empty); err == nil || !strings.Contains(err.Error(), "deeper than two levels") {
+	if _, err := assemble(deep, emptyGraph(), empty); err == nil || !strings.Contains(err.Error(), "deeper than two levels") {
 		t.Fatalf("err = %v, want a depth error", err)
 	}
 
@@ -229,7 +230,7 @@ func TestAssembleRejectsBadHierarchy(t *testing.T) {
 		"T1.1":   {label: "one-one", sub: true},
 		"T1.1.1": {label: "three levels"},
 	}
-	if _, err := assemble(deepNoFlag, empty); err == nil || !strings.Contains(err.Error(), "deeper than two levels") {
+	if _, err := assemble(deepNoFlag, emptyGraph(), empty); err == nil || !strings.Contains(err.Error(), "deeper than two levels") {
 		t.Fatalf("err = %v, want a depth error", err)
 	}
 
@@ -240,7 +241,7 @@ func TestAssembleRejectsBadHierarchy(t *testing.T) {
 		"T1-9": {label: "intruder"},
 		"T1.2": {label: "one-two", sub: true},
 	}
-	if _, err := assemble(gap, empty); err == nil || !strings.Contains(err.Error(), "child block") {
+	if _, err := assemble(gap, emptyGraph(), empty); err == nil || !strings.Contains(err.Error(), "child block") {
 		t.Fatalf("err = %v, want a contiguity error", err)
 	}
 }
@@ -262,7 +263,7 @@ func TestAssembleShapeDrift(t *testing.T) {
 		parentOf:    map[string]map[string]bool{},
 		parentLabel: map[string]string{},
 	}
-	m, err := assemble(map[string]*ttpInfo{}, d)
+	m, err := assemble(map[string]*ttpInfo{}, emptyGraph(), d)
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
 	}
@@ -287,13 +288,15 @@ func TestCheckShapeHistogram(t *testing.T) {
 		parentOf:    map[string]map[string]bool{},
 		parentLabel: map[string]string{},
 	}
-	m, err := assemble(map[string]*ttpInfo{}, d)
+	m, err := assemble(map[string]*ttpInfo{}, emptyGraph(), d)
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
 	}
 	// The single technique has no ATT&CK object, so assemble tags it SPARTA.
-	small := shape{ttps: 1, artifacts: 1, cms: 1, offRels: 1, defRels: 1,
-		offEdges: 1, defEdges: 1, defends: 1, offPairs: 1}
+	small := shape{
+		ttps: 1, artifacts: 1, cms: 1, offRels: 1, defRels: 1,
+		offEdges: 1, defEdges: 1, defends: 1, offPairs: 1,
+	}
 	if err := m.checkShape(small); err == nil || !strings.Contains(err.Error(), "domain histogram") {
 		t.Fatalf("err = %v, want a domain-histogram error", err)
 	}
@@ -317,15 +320,17 @@ func TestCheckShapeHierarchy(t *testing.T) {
 		parentOf:    map[string]map[string]bool{},
 		parentLabel: map[string]string{},
 	}
-	m, err := assemble(map[string]*ttpInfo{}, d)
+	m, err := assemble(map[string]*ttpInfo{}, emptyGraph(), d)
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
 	}
 	// Everything matches except the hierarchy: the single technique has no
 	// parent, so topLevel is 1 and subs 0.
-	want := shape{ttps: 1, artifacts: 1, cms: 1, offRels: 1, defRels: 1,
+	want := shape{
+		ttps: 1, artifacts: 1, cms: 1, offRels: 1, defRels: 1,
 		offEdges: 1, defEdges: 1, defends: 1, offPairs: 1, sparta: 1,
-		topLevel: 0, subs: 1}
+		topLevel: 0, subs: 1,
+	}
 	if err := m.checkShape(want); err == nil || !strings.Contains(err.Error(), "hierarchy") {
 		t.Fatalf("err = %v, want a hierarchy error", err)
 	}
@@ -417,18 +422,54 @@ const testCSV = "def_tech_label,def_artifact_rel_label,def_artifact_label,off_ar
 	"http://x#CM1,http://x#analyzes,http://x#A1,http://x#A1,http://x#accesses,http://x#T1.1,http://x#T1\n"
 
 const testEnterpriseJSON = `{"objects":[
-  {"type":"attack-pattern","name":"One","revoked":true,
+  {"type":"x-mitre-tactic","id":"tactic--1","name":"Initial Access","x_mitre_shortname":"initial-access",
+   "external_references":[{"source_name":"mitre-attack","external_id":"TA0001"}]},
+  {"type":"x-mitre-tactic","id":"tactic--2","name":"Execution","x_mitre_shortname":"execution",
+   "external_references":[{"source_name":"mitre-attack","external_id":"TA0002"}]},
+  {"type":"attack-pattern","id":"pattern--1","name":"One","revoked":true,
+   "x_mitre_platforms":["Windows","Linux"],
+   "kill_chain_phases":[{"kill_chain_name":"mitre-attack","phase_name":"initial-access"}],
    "external_references":[{"source_name":"mitre-attack","external_id":"T1"}]},
-  {"type":"attack-pattern","name":"One One","x_mitre_is_subtechnique":true,
-   "external_references":[{"source_name":"mitre-attack","external_id":"T1.1"}]}]}`
+  {"type":"attack-pattern","id":"pattern--11","name":"One One","x_mitre_is_subtechnique":true,
+   "x_mitre_platforms":["Windows"],
+   "kill_chain_phases":[{"kill_chain_name":"mitre-attack","phase_name":"execution"}],
+   "external_references":[{"source_name":"mitre-attack","external_id":"T1.1"}]},
+  {"type":"x-mitre-data-component","id":"dc--1","name":"Process Creation",
+   "external_references":[{"source_name":"mitre-attack","external_id":"DC0001"}]},
+  {"type":"x-mitre-detection-strategy","id":"strategy--1",
+   "x_mitre_analytic_refs":["analytic--1"]},
+  {"type":"x-mitre-analytic","id":"analytic--1",
+   "x_mitre_log_source_references":[{"x_mitre_data_component_ref":"dc--1"}]},
+  {"type":"intrusion-set","id":"actor--1","name":"Actor One",
+   "external_references":[{"source_name":"mitre-attack","external_id":"G0001"}]},
+  {"type":"malware","id":"software--1","name":"Software One",
+   "external_references":[{"source_name":"mitre-attack","external_id":"S0001"}]},
+  {"type":"campaign","id":"campaign--1","name":"Campaign One",
+   "external_references":[{"source_name":"mitre-attack","external_id":"C0001"}]},
+  {"type":"relationship","id":"rel--1","relationship_type":"detects",
+   "source_ref":"strategy--1","target_ref":"pattern--1"},
+  {"type":"relationship","id":"rel--2","relationship_type":"uses",
+   "source_ref":"actor--1","target_ref":"pattern--1"},
+  {"type":"relationship","id":"rel--3","relationship_type":"uses",
+   "source_ref":"actor--1","target_ref":"software--1"}]}`
 
 // testShape is the shape of the graph the fixtures produce: sorted ids
 // SP-1, SP-1.1, T1, T1.1, T2, T3 — two enterprise techniques, one ICS (T2),
 // one mobile (T3) and two synthesised SPARTA nodes (SP-1, SP-1.1).
-var testShape = shape{ttps: 6, artifacts: 2, cms: 1, offRels: 1, defRels: 2,
+var testShape = shape{
+	ttps: 6, artifacts: 2, cms: 1, offRels: 1, defRels: 2,
 	offEdges: 2, defEdges: 2, defends: 2, offPairs: 2,
 	enterprise: 2, mobile: 1, ics: 1, sparta: 2,
-	topLevel: 4, subs: 2, parents: 2, maxChildren: 1}
+	topLevel: 4, subs: 2, parents: 2, maxChildren: 1,
+	tactics: 2, platforms: 2, tacticAssignments: 2, platformAssignments: 3,
+	dataComponents: 1, detectsPairs: 1,
+	groups: 3, actors: 1, software: 1, campaigns: 1,
+	groupUses: 1, softwareUses: 1,
+}
+
+// emptyGraph is an attackGraph with no data components, groups or edges: the
+// tests that do not exercise the new ATT&CK graph pass it to assemble.
+func emptyGraph() *attackGraph { return newAttackGraph() }
 
 // writeFixtures lays the fixture sources out in a fresh temp dir and returns
 // their paths plus the directory itself.
@@ -494,6 +535,9 @@ func TestRunEndToEnd(t *testing.T) {
 		`"Sp One"`,
 		`{"One One Alt"}`,
 		"var TTPRevoked = [...]bool{",
+		"var TacticTTP = [...][]uint16{",
+		"var GroupKinds = [...]gr4ph.GroupKind{",
+		"gr4ph.GroupSoftware",
 	} {
 		if !strings.Contains(string(src), want) {
 			t.Errorf("generated source is missing %q", want)
@@ -510,7 +554,10 @@ func TestRunEndToEnd(t *testing.T) {
 		"  relations      1 offensive, 2 defensive\n" +
 		"  edges          2 offensive, 2 defensive, 2 defends-against\n" +
 		"  hierarchy      4 top-level, 2 sub-techniques, 2 parents, max 1 children\n" +
-		"  revoked        1\n"
+		"  revoked        1\n" +
+		"  tactics        2, platforms 2, assignments 2/3\n" +
+		"  data components 1, detects edges 1\n" +
+		"  groups         3 (1 actors, 1 software, 1 campaigns), uses edges 1 technique, 1 software\n"
 	if got := buf.String(); got != wantSummary {
 		t.Fatalf("summary mismatch\n--- got ---\n%s--- want ---\n%s", got, wantSummary)
 	}
@@ -650,7 +697,7 @@ func TestAssembleSynthesisedParents(t *testing.T) {
 	// A prefix D3FEND names itself needs no synthesis, and its sub-technique
 	// may leave off_tech_parent empty.
 	d := parse(t, header+row("D-1", "D One", "", "")+row("D-1.1", "D One One", "D-1", "D One"))
-	m, err := assemble(map[string]*ttpInfo{}, d)
+	m, err := assemble(map[string]*ttpInfo{}, emptyGraph(), d)
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
 	}
@@ -668,7 +715,7 @@ func TestAssembleSynthesisedParents(t *testing.T) {
 
 	// A parent that exists in no table at all is synthesised from
 	// off_tech_parent_label.
-	m2, err := assemble(map[string]*ttpInfo{},
+	m2, err := assemble(map[string]*ttpInfo{}, emptyGraph(),
 		parse(t, header+row("D-1.1", "D One One", "D-1", "D One")))
 	if err != nil {
 		t.Fatalf("assemble (synthesised parent): %v", err)
@@ -681,14 +728,14 @@ func TestAssembleSynthesisedParents(t *testing.T) {
 	}
 
 	// A parent IRI that disagrees with the id prefix is rejected.
-	if _, err := assemble(map[string]*ttpInfo{},
+	if _, err := assemble(map[string]*ttpInfo{}, emptyGraph(),
 		parse(t, header+row("D-1.1", "D One One", "OTHER", "Other"))); err == nil ||
 		!strings.Contains(err.Error(), "disagrees with its id prefix") {
 		t.Fatalf("mismatching parent err = %v, want a prefix-disagreement error", err)
 	}
 
 	// A synthesised parent without a label is rejected.
-	if _, err := assemble(map[string]*ttpInfo{},
+	if _, err := assemble(map[string]*ttpInfo{}, emptyGraph(),
 		parse(t, header+row("D-1.1", "D One One", "D-1", ""))); err == nil ||
 		!strings.Contains(err.Error(), "no off_tech_parent_label") {
 		t.Fatalf("unlabelled parent err = %v, want a missing-label error", err)
@@ -696,7 +743,7 @@ func TestAssembleSynthesisedParents(t *testing.T) {
 
 	// A three-level id is a depth error, not a missing-label one, even though
 	// its intermediate node does not exist either.
-	if _, err := assemble(map[string]*ttpInfo{},
+	if _, err := assemble(map[string]*ttpInfo{}, emptyGraph(),
 		parse(t, header+row("D-1.1.1", "D One One One", "D-1.1", "D One One"))); err == nil ||
 		!strings.Contains(err.Error(), "deeper than two levels") {
 		t.Fatalf("three-level id err = %v, want a depth error", err)
@@ -707,7 +754,7 @@ func TestAssembleSynthesisedParents(t *testing.T) {
 	agree := row("D-1.1", "D One One", "D-1", "D One")
 	disagree := row("D-1.1", "D One One", "D-2", "D One")
 	for _, rows := range [][]string{{agree, disagree}, {disagree, agree}} {
-		if _, err := assemble(map[string]*ttpInfo{},
+		if _, err := assemble(map[string]*ttpInfo{}, emptyGraph(),
 			parse(t, header+strings.Join(rows, ""))); err == nil ||
 			!strings.Contains(err.Error(), "disagrees with its id prefix") {
 			t.Fatalf("row order %v: err = %v, want a prefix-disagreement error", rows, err)
@@ -734,7 +781,7 @@ func TestAssembleArtifactLabelFallback(t *testing.T) {
 	if _, ok := d.artLabel["A"]; ok {
 		t.Fatalf("artLabel[A] = %q, want no label at all", d.artLabel["A"])
 	}
-	m, err := assemble(map[string]*ttpInfo{"T1": {label: "One"}}, d)
+	m, err := assemble(map[string]*ttpInfo{"T1": {label: "One"}}, emptyGraph(), d)
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
 	}
@@ -756,7 +803,7 @@ func TestAssembleArtifactLabelFallback(t *testing.T) {
 	if got := d.artLabel["A"]; got != "Defensive Name" {
 		t.Fatalf("artLabel[A] = %q, want the defensive label", got)
 	}
-	m, err = assemble(map[string]*ttpInfo{"T1": {label: "One"}}, d)
+	m, err = assemble(map[string]*ttpInfo{"T1": {label: "One"}}, emptyGraph(), d)
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
 	}
@@ -769,27 +816,43 @@ func TestAssembleArtifactLabelFallback(t *testing.T) {
 // gate) and parses the result, so a formatting or literal bug cannot ship.
 func TestEmitProducesValidGo(t *testing.T) {
 	m := &model{
-		ttpIDs:        []string{"T1003", "T1003.001", "T1004", "T1004.001"},
-		ttpLabels:     []string{"OS Credential Dumping", "LSASS Memory", "Winlogon Helper DLL", "Winlogon Helper DLL Sub"},
-		ttpAliases:    [][]string{nil, {"A", "B"}, nil, nil},
-		ttpDomains:    []domain{domEnterprise, domICS, domMobile, domSPARTA},
-		ttpParents:    []int{-1, -1, -1, -1},
-		ttpChildCount: []int{0, 0, 0, 0},
-		ttpRevoked:    []bool{false, true, false, false},
-		artNames:      []string{"Process"},
-		artLabels:     []string{"Process"},
-		cmIDs:         []string{"ProcessIsolation"},
-		cmLabels:      []string{"Process Isolation"},
-		offRelNames:   []string{"accesses"},
-		defRelNames:   []string{"analyzes"},
-		offT:          []int{1},
-		offA:          []int{0},
-		offR:          []int{1},
-		defC:          []int{0},
-		defA:          []int{0},
-		defR:          []int{1},
-		defendsC:      []int{0},
-		defendsT:      []int{1},
+		ttpIDs:            []string{"T1003", "T1003.001", "T1004", "T1004.001"},
+		ttpLabels:         []string{"OS Credential Dumping", "LSASS Memory", "Winlogon Helper DLL", "Winlogon Helper DLL Sub"},
+		ttpAliases:        [][]string{nil, {"A", "B"}, nil, nil},
+		ttpDomains:        []domain{domEnterprise, domICS, domMobile, domSPARTA},
+		ttpParents:        []int{-1, -1, -1, -1},
+		ttpChildCount:     []int{0, 0, 0, 0},
+		ttpRevoked:        []bool{false, true, false, false},
+		artNames:          []string{"Process"},
+		artLabels:         []string{"Process"},
+		cmIDs:             []string{"ProcessIsolation"},
+		cmLabels:          []string{"Process Isolation"},
+		tacticIDs:         []string{"TA0006"},
+		tacticLabels:      []string{"Credential Access"},
+		tacticTTP:         [][]int{{1, 3}},
+		platformNames:     []string{"Windows"},
+		platformTTP:       [][]int{{0}},
+		dcIDs:             []string{"DC0001"},
+		dcLabels:          []string{"Process Creation"},
+		detectsDC:         []int{0},
+		detectsTTP:        []int{1},
+		groupIDs:          []string{"G0001", "S0001"},
+		groupLabels:       []string{"Actor One", "Software One"},
+		groupKinds:        []groupKind{kindActor, kindSoftware},
+		usesGroup:         []int{0},
+		usesTTP:           []int{1},
+		softwareUseGroup:  []int{0},
+		softwareUseTarget: []int{1},
+		offRelNames:       []string{"accesses"},
+		defRelNames:       []string{"analyzes"},
+		offT:              []int{1},
+		offA:              []int{0},
+		offR:              []int{1},
+		defC:              []int{0},
+		defA:              []int{0},
+		defR:              []int{1},
+		defendsC:          []int{0},
+		defendsT:          []int{1},
 	}
 
 	src, err := emit(m)
@@ -899,7 +962,7 @@ func TestParseD3FENDUnlabelledEndpoint(t *testing.T) {
 	if got := d.cmLabel["CM"]; got != "CM" {
 		t.Fatalf("cmLabel[CM] = %q, want CM", got)
 	}
-	m, err := assemble(map[string]*ttpInfo{}, d)
+	m, err := assemble(map[string]*ttpInfo{}, emptyGraph(), d)
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
 	}
@@ -938,7 +1001,7 @@ func TestParseD3FENDDefensiveOnlyArtifact(t *testing.T) {
 
 	// The row's off_tech cell only infers defends-against, so T1 comes from
 	// ATT&CK; A comes from the defensive side alone.
-	m, err := assemble(map[string]*ttpInfo{"T1": {label: "One"}}, d)
+	m, err := assemble(map[string]*ttpInfo{"T1": {label: "One"}}, emptyGraph(), d)
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
 	}
@@ -975,7 +1038,7 @@ func TestAssembleParentPrecedence(t *testing.T) {
 		"T1.1": {label: "One One", sub: true},
 		"T2":   {label: "Two"},
 	}
-	m, err := assemble(stix, d)
+	m, err := assemble(stix, emptyGraph(), d)
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
 	}
@@ -995,7 +1058,7 @@ func TestAssembleParentPrecedence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseD3FEND: %v", err)
 	}
-	if _, err := assemble(map[string]*ttpInfo{}, badD); err == nil ||
+	if _, err := assemble(map[string]*ttpInfo{}, emptyGraph(), badD); err == nil ||
 		!strings.Contains(err.Error(), "disagrees with its id prefix") {
 		t.Fatalf("synthesised-parent err = %v, want a prefix-disagreement error", err)
 	}
@@ -1024,13 +1087,13 @@ func TestAssembleSubtechniqueFlagMismatch(t *testing.T) {
 
 	// A dotted id whose flag is false.
 	stix := map[string]*ttpInfo{"T1": {label: "One"}, "T1.1": {label: "One One"}}
-	if _, err := assemble(stix, d); err == nil || !strings.Contains(err.Error(), "x_mitre_is_subtechnique") {
+	if _, err := assemble(stix, emptyGraph(), d); err == nil || !strings.Contains(err.Error(), "x_mitre_is_subtechnique") {
 		t.Fatalf("dot without the flag: err = %v, want a flag-disagreement error", err)
 	}
 
 	// A dotless id whose flag is true.
 	stix = map[string]*ttpInfo{"T1": {label: "One", sub: true}}
-	if _, err := assemble(stix, d); err == nil || !strings.Contains(err.Error(), "x_mitre_is_subtechnique") {
+	if _, err := assemble(stix, emptyGraph(), d); err == nil || !strings.Contains(err.Error(), "x_mitre_is_subtechnique") {
 		t.Fatalf("flag without a dot: err = %v, want a flag-disagreement error", err)
 	}
 
@@ -1043,7 +1106,7 @@ func TestAssembleSubtechniqueFlagMismatch(t *testing.T) {
 		t.Fatalf("parseD3FEND: %v", err)
 	}
 	stix = map[string]*ttpInfo{"T1.1": {label: "One One", sub: true}}
-	if _, err := assemble(stix, orphanD); err == nil || !strings.Contains(err.Error(), "orphan") {
+	if _, err := assemble(stix, emptyGraph(), orphanD); err == nil || !strings.Contains(err.Error(), "orphan") {
 		t.Fatalf("orphan: err = %v, want an orphan error", err)
 	}
 }
@@ -1082,5 +1145,203 @@ func TestParseAttackUpgradeCarriesDomain(t *testing.T) {
 	}
 	if got.domain != domMobile {
 		t.Fatalf("domain = %v, want the live object's domain (%v)", got.domain, domMobile)
+	}
+}
+
+// --- ATT&CK attributes, data components and grouping nodes ---
+
+// assembleBundle runs one fixture bundle through the same three passes run
+// uses (parseAttack, parseAttackGraph, assemble) with an empty D3FEND CSV, so
+// the model carries exactly the bundle's techniques.
+func assembleBundle(t *testing.T, bundle string) (*model, error) {
+	t.Helper()
+	stix := map[string]*ttpInfo{}
+	if err := parseAttack([]byte(bundle), domEnterprise, stix); err != nil {
+		return nil, err
+	}
+	g := newAttackGraph()
+	if err := parseAttackGraph([]byte(bundle), g); err != nil {
+		return nil, err
+	}
+	d, err := parseD3FEND([]byte(csvHeader))
+	if err != nil {
+		t.Fatalf("parseD3FEND: %v", err)
+	}
+	return assemble(stix, g, d)
+}
+
+// TestAssembleAttributeMasks pins the attribute encoding: byte-sorted
+// vocabularies, ascending per-row technique indices, deduplicated platform
+// names, and the label of each tactic taken from the bundle that defined it.
+func TestAssembleAttributeMasks(t *testing.T) {
+	bundle := `{"objects":[
+	  {"type":"x-mitre-tactic","id":"tactic--1","name":"Initial Access","x_mitre_shortname":"initial-access",
+	   "external_references":[{"source_name":"mitre-attack","external_id":"TA0001"}]},
+	  {"type":"x-mitre-tactic","id":"tactic--2","name":"Execution","x_mitre_shortname":"execution",
+	   "external_references":[{"source_name":"mitre-attack","external_id":"TA0002"}]},
+	  {"type":"attack-pattern","id":"p--1","name":"One","x_mitre_platforms":["Windows","Linux","Windows"],
+	   "kill_chain_phases":[{"kill_chain_name":"mitre-attack","phase_name":"execution"},
+	                       {"kill_chain_name":"mitre-attack","phase_name":"initial-access"}],
+	   "external_references":[{"source_name":"mitre-attack","external_id":"T1"}]},
+	  {"type":"attack-pattern","id":"p--2","name":"Two","x_mitre_platforms":["Windows"],
+	   "kill_chain_phases":[{"kill_chain_name":"mitre-attack","phase_name":"execution"}],
+	   "external_references":[{"source_name":"mitre-attack","external_id":"T2"}]}]}`
+	m, err := assembleBundle(t, bundle)
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if got := strings.Join(m.tacticIDs, ","); got != "TA0001,TA0002" {
+		t.Errorf("tacticIDs = %q, want TA0001,TA0002", got)
+	}
+	if got := strings.Join(m.tacticLabels, ","); got != "Initial Access,Execution" {
+		t.Errorf("tacticLabels = %q, want the bundles' labels", got)
+	}
+	if len(m.tacticTTP) != 2 || fmt.Sprint(m.tacticTTP[0]) != "[0]" || fmt.Sprint(m.tacticTTP[1]) != "[0 1]" {
+		t.Errorf("tacticTTP = %v, want [[0] [0 1]]", m.tacticTTP)
+	}
+	// A duplicate platform spelling on one technique must collapse, and the
+	// vocabulary is byte-sorted.
+	if got := strings.Join(m.platformNames, ","); got != "Linux,Windows" {
+		t.Errorf("platformNames = %q, want Linux,Windows", got)
+	}
+	if len(m.platformTTP) != 2 || fmt.Sprint(m.platformTTP[0]) != "[0]" || fmt.Sprint(m.platformTTP[1]) != "[0 1]" {
+		t.Errorf("platformTTP = %v, want [[0] [0 1]]", m.platformTTP)
+	}
+}
+
+// TestAssembleDetectsFold pins the folded detects relation: strategy ->
+// analytic -> log source reference -> data component, deduplicated when two
+// strategies reach the same component, and a component with no strategy stays
+// a node with no pair.
+func TestAssembleDetectsFold(t *testing.T) {
+	bundle := `{"objects":[
+	  {"type":"attack-pattern","id":"p--1","name":"One",
+	   "external_references":[{"source_name":"mitre-attack","external_id":"T1"}]},
+	  {"type":"x-mitre-data-component","id":"dc--1","name":"Process Creation",
+	   "external_references":[{"source_name":"mitre-attack","external_id":"DC0001"}]},
+	  {"type":"x-mitre-data-component","id":"dc--2","name":"File Creation",
+	   "external_references":[{"source_name":"mitre-attack","external_id":"DC0002"}]},
+	  {"type":"x-mitre-detection-strategy","id":"s--1","x_mitre_analytic_refs":["a--1"]},
+	  {"type":"x-mitre-detection-strategy","id":"s--2","x_mitre_analytic_refs":["a--1"]},
+	  {"type":"x-mitre-analytic","id":"a--1",
+	   "x_mitre_log_source_references":[{"x_mitre_data_component_ref":"dc--1"}]},
+	  {"type":"relationship","id":"r--1","relationship_type":"detects","source_ref":"s--1","target_ref":"p--1"},
+	  {"type":"relationship","id":"r--2","relationship_type":"detects","source_ref":"s--2","target_ref":"p--1"}]}`
+	m, err := assembleBundle(t, bundle)
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if got := strings.Join(m.dcIDs, ","); got != "DC0001,DC0002" {
+		t.Errorf("dcIDs = %q, want DC0001,DC0002 (both are nodes)", got)
+	}
+	if len(m.detectsDC) != 1 || m.detectsDC[0] != 0 || m.detectsTTP[0] != 0 {
+		t.Fatalf("detects pairs = %v/%v, want one pair (DC0001, T1)", m.detectsDC, m.detectsTTP)
+	}
+	if got := strings.Join(m.dcLabels, ","); got != "Process Creation,File Creation" {
+		t.Errorf("dcLabels = %q", got)
+	}
+}
+
+// TestAssembleGroupUses pins the grouping partition: three kinds in one
+// partition with their histogram, uses edges split into the technique family
+// and the software family, and the attributed-to relationship (out of scope)
+// contributing nothing.
+func TestAssembleGroupUses(t *testing.T) {
+	bundle := `{"objects":[
+	  {"type":"attack-pattern","id":"p--1","name":"One",
+	   "external_references":[{"source_name":"mitre-attack","external_id":"T1"}]},
+	  {"type":"intrusion-set","id":"g--1","name":"Actor One",
+	   "external_references":[{"source_name":"mitre-attack","external_id":"G0001"}]},
+	  {"type":"malware","id":"s--1","name":"Software One",
+	   "external_references":[{"source_name":"mitre-attack","external_id":"S0001"}]},
+	  {"type":"campaign","id":"c--1","name":"Campaign One",
+	   "external_references":[{"source_name":"mitre-attack","external_id":"C0001"}]},
+	  {"type":"relationship","id":"r--1","relationship_type":"uses","source_ref":"g--1","target_ref":"p--1"},
+	  {"type":"relationship","id":"r--2","relationship_type":"uses","source_ref":"c--1","target_ref":"p--1"},
+	  {"type":"relationship","id":"r--3","relationship_type":"uses","source_ref":"g--1","target_ref":"s--1"},
+	  {"type":"relationship","id":"r--4","relationship_type":"attributed-to","source_ref":"c--1","target_ref":"g--1"}]}`
+	m, err := assembleBundle(t, bundle)
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if got := strings.Join(m.groupIDs, ","); got != "C0001,G0001,S0001" {
+		t.Fatalf("groupIDs = %q, want C0001,G0001,S0001", got)
+	}
+	if len(m.groupKinds) != 3 || m.groupKinds[0] != kindCampaign || m.groupKinds[1] != kindActor || m.groupKinds[2] != kindSoftware {
+		t.Errorf("groupKinds = %v, want [campaign actor software]", m.groupKinds)
+	}
+	if fmt.Sprint(m.usesGroup) != "[0 1]" || fmt.Sprint(m.usesTTP) != "[0 0]" {
+		t.Errorf("uses pairs = %v/%v, want (C0001,T1) and (G0001,T1)", m.usesGroup, m.usesTTP)
+	}
+	if fmt.Sprint(m.softwareUseGroup) != "[1]" || fmt.Sprint(m.softwareUseTarget) != "[2]" {
+		t.Errorf("software pairs = %v/%v, want (G0001,S0001)", m.softwareUseGroup, m.softwareUseTarget)
+	}
+}
+
+// TestAssembleAttributeErrors pins every loud failure of the two new passes:
+// an unmapped reference must never be dropped silently.
+func TestAssembleAttributeErrors(t *testing.T) {
+	cases := []struct {
+		name   string
+		bundle string
+		want   string
+	}{
+		{
+			"tactic without an external id",
+			`{"objects":[{"type":"x-mitre-tactic","id":"t--1","name":"X","x_mitre_shortname":"x"}]}`,
+			"has no mitre-attack external id",
+		},
+		{
+			"kill chain phase with no tactic",
+			`{"objects":[{"type":"attack-pattern","id":"p--1","name":"One",
+			  "kill_chain_phases":[{"kill_chain_name":"mitre-attack","phase_name":"nope"}],
+			  "external_references":[{"source_name":"mitre-attack","external_id":"T1"}]}]}`,
+			`kill chain phase "nope" matches no tactic`,
+		},
+		{
+			"detects on a technique with no external id",
+			`{"objects":[
+			  {"type":"x-mitre-data-component","id":"dc--1","name":"C",
+			   "external_references":[{"source_name":"mitre-attack","external_id":"DC0001"}]},
+			  {"type":"x-mitre-detection-strategy","id":"s--1","x_mitre_analytic_refs":["a--1"]},
+			  {"type":"x-mitre-analytic","id":"a--1",
+			   "x_mitre_log_source_references":[{"x_mitre_data_component_ref":"dc--1"}]},
+			  {"type":"relationship","id":"r--1","relationship_type":"detects","source_ref":"s--1","target_ref":"p--ghost"}]}`,
+			"detects references technique p--ghost with no external id",
+		},
+		{
+			"detection strategy with no analytic",
+			`{"objects":[
+			  {"type":"attack-pattern","id":"p--1","name":"One",
+			   "external_references":[{"source_name":"mitre-attack","external_id":"T1"}]},
+			  {"type":"x-mitre-detection-strategy","id":"s--1"},
+			  {"type":"relationship","id":"r--1","relationship_type":"detects","source_ref":"s--1","target_ref":"p--1"}]}`,
+			"detection strategy s--1 has no analytic",
+		},
+		{
+			"analytic with an unknown data component",
+			`{"objects":[
+			  {"type":"attack-pattern","id":"p--1","name":"One",
+			   "external_references":[{"source_name":"mitre-attack","external_id":"T1"}]},
+			  {"type":"x-mitre-detection-strategy","id":"s--1","x_mitre_analytic_refs":["a--1"]},
+			  {"type":"x-mitre-analytic","id":"a--1",
+			   "x_mitre_log_source_references":[{"x_mitre_data_component_ref":"dc--ghost"}]},
+			  {"type":"relationship","id":"r--1","relationship_type":"detects","source_ref":"s--1","target_ref":"p--1"}]}`,
+			"analytic a--1 references unknown data component dc--ghost",
+		},
+		{
+			"group id prefix mismatch",
+			`{"objects":[{"type":"intrusion-set","id":"g--1","name":"Wrong",
+			  "external_references":[{"source_name":"mitre-attack","external_id":"S0009"}]}]}`,
+			"group S0009: id does not match the intrusion-set object",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := assembleBundle(t, c.bundle)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("err = %v, want %q", err, c.want)
+			}
+		})
 	}
 }

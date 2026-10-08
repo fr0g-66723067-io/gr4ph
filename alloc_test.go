@@ -22,9 +22,12 @@ func TestZeroAllocSynthetic(t *testing.T) {
 	scratchT := make([]uint64, e.WordsPerRow(KindTTP))
 	scratchA := make([]uint64, e.WordsPerRow(KindArtifact))
 	scratchC := make([]uint64, e.WordsPerRow(KindCountermeasure))
+	scratchD := make([]uint64, e.WordsPerRow(KindDataComponent))
 	dstT := make([]TTP, e.TTPCount())
 	dstA := make([]Artifact, e.ArtifactCount())
 	dstC := make([]Countermeasure, e.CountermeasureCount())
+	dstD := make([]DataComponent, e.DataComponentCount())
+	dstG := make([]Group, e.GroupCount())
 	arts := []Artifact{0, 1, 2, 3}
 	ttps := []TTP{0, 1, 2, 3, 4, 5}
 
@@ -75,6 +78,28 @@ func TestZeroAllocSynthetic(t *testing.T) {
 			sink += e.TTPsForCountermeasureRollup(0, scratchT, dstT)
 		}},
 		{"CountermeasureDegree", func() { sink += e.CountermeasureDegree(0) }},
+		{"TTPTactics", func() { sink += int(e.TTPTactics(1)) }},
+		{"TTPPlatforms", func() { sink += int(e.TTPPlatforms(1)) }},
+		{"TTPFlags", func() { sink += int(e.TTPFlags(1)) }},
+		{"TTPSubTechnique", func() {
+			if e.TTPSubTechnique(1) {
+				sink++
+			}
+		}},
+		{"TTPsForTactic", func() { sink += e.TTPsForTactic(0, dstT) }},
+		{"TTPsForPlatform", func() { sink += e.TTPsForPlatform(0, dstT) }},
+		{"TTPsForDataComponent", func() { sink += e.TTPsForDataComponent(0, dstT) }},
+		{"DataComponentsForTTP", func() { sink += e.DataComponentsForTTP(1, dstD) }},
+		{"DataComponentsForTTPRollup", func() {
+			sink += e.DataComponentsForTTPRollup(0, scratchD, dstD)
+		}},
+		{"DataComponentDegree", func() { sink += e.DataComponentDegree(0) }},
+		{"TTPsForGroup", func() { sink += e.TTPsForGroup(0, dstT) }},
+		{"TTPsForGroupRollup", func() { sink += e.TTPsForGroupRollup(0, scratchT, dstT) }},
+		{"GroupsForTTP", func() { sink += e.GroupsForTTP(0, dstG) }},
+		{"SoftwareForGroup", func() { sink += e.SoftwareForGroup(0, dstG) }},
+		{"GroupsForSoftware", func() { sink += e.GroupsForSoftware(1, dstG) }},
+		{"SoftwareDegree", func() { sink += e.SoftwareDegree(0) }},
 		{"TTPParent", func() {
 			if _, ok := e.TTPParent(1); ok {
 				sink++

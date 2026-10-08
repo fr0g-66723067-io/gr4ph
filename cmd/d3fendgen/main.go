@@ -73,6 +73,14 @@ type shape struct {
 	enterprise, mobile, ics, sparta int
 	topLevel, subs, parents         int
 	maxChildren                     int
+
+	tactics, platforms                  int
+	tacticAssignments                   int
+	platformAssignments                 int
+	dataComponents                      int
+	detectsPairs                        int
+	groups, actors, software, campaigns int
+	groupUses, softwareUses             int
 }
 
 // pinnedShape is ATT&CK 19.2 x D3FEND 1.6.0, measured from the pinned sources.
@@ -82,6 +90,11 @@ var pinnedShape = shape{
 	offEdges: 670, defEdges: 182, defends: 4133, offPairs: 654,
 	enterprise: 858, mobile: 176, ics: 106, sparta: 46,
 	topLevel: 605, subs: 581, parents: 148, maxChildren: 18,
+
+	tactics: 41, platforms: 15, tacticAssignments: 1431, platformAssignments: 2527,
+	dataComponents: 123, detectsPairs: 3263,
+	groups: 1212, actors: 195, software: 957, campaigns: 60,
+	groupUses: 18885, softwareUses: 1339,
 }
 
 // domain mirrors gr4ph.Domain, kept local so this package stays dependency-free.
@@ -127,6 +140,7 @@ func run(entSrc, icsSrc, mobSrc, d3Src, out string, w io.Writer, want shape) err
 	// re-tagged by ICS or mobile (no cross-domain collisions exist in 19.2, so
 	// this is only a defensive tiebreak).
 	stix := make(map[string]*ttpInfo)
+	g := newAttackGraph()
 	for _, s := range []struct {
 		src string
 		dom domain
@@ -136,6 +150,9 @@ func run(entSrc, icsSrc, mobSrc, d3Src, out string, w io.Writer, want shape) err
 			return err
 		}
 		if err := parseAttack(data, s.dom, stix); err != nil {
+			return fmt.Errorf("%s: %w", s.src, err)
+		}
+		if err := parseAttackGraph(data, g); err != nil {
 			return fmt.Errorf("%s: %w", s.src, err)
 		}
 	}
@@ -149,7 +166,7 @@ func run(entSrc, icsSrc, mobSrc, d3Src, out string, w io.Writer, want shape) err
 		return fmt.Errorf("%s: %w", d3Src, err)
 	}
 
-	m, err := assemble(stix, d3)
+	m, err := assemble(stix, g, d3)
 	if err != nil {
 		return err
 	}
@@ -179,6 +196,12 @@ func run(entSrc, icsSrc, mobSrc, d3Src, out string, w io.Writer, want shape) err
 	fmt.Fprintf(w, "  hierarchy      %d top-level, %d sub-techniques, %d parents, max %d children\n",
 		m.topLevel(), len(m.ttpIDs)-m.topLevel(), m.parentCount(), m.maxChildren())
 	fmt.Fprintf(w, "  revoked        %d\n", m.revokedCount())
+	actor, software, campaign := m.kindHistogram()
+	fmt.Fprintf(w, "  tactics        %d, platforms %d, assignments %d/%d\n",
+		len(m.tacticIDs), len(m.platformNames), sumRows(m.tacticTTP), sumRows(m.platformTTP))
+	fmt.Fprintf(w, "  data components %d, detects edges %d\n", len(m.dcIDs), len(m.detectsDC))
+	fmt.Fprintf(w, "  groups         %d (%d actors, %d software, %d campaigns), uses edges %d technique, %d software\n",
+		len(m.groupIDs), actor, software, campaign, len(m.usesGroup), len(m.softwareUseGroup))
 	return nil
 }
 
@@ -217,6 +240,12 @@ type ttpInfo struct {
 	// bad marks a revoked or deprecated object, which is kept (D3FEND still
 	// references it) but loses its name to a live object with the same id.
 	bad bool
+	// tactics holds the technique's ATT&CK tactic ids (TA ids) from its
+	// kill_chain_phases, sorted; platforms holds x_mitre_platforms. Both come
+	// from the object that won the id, so a duplicate id never mixes two
+	// objects' attributes.
+	tactics   []string
+	platforms []string
 }
 
 type stixBundle struct {
@@ -224,12 +253,30 @@ type stixBundle struct {
 }
 
 type stixObject struct {
-	Type               string            `json:"type"`
-	Name               string            `json:"name"`
-	Revoked            bool              `json:"revoked"`
-	Deprecated         bool              `json:"x_mitre_deprecated"`
-	Subtechnique       bool              `json:"x_mitre_is_subtechnique"`
-	ExternalReferences []stixExternalRef `json:"external_references"`
+	UUID               string               `json:"id"`
+	Type               string               `json:"type"`
+	Name               string               `json:"name"`
+	Revoked            bool                 `json:"revoked"`
+	Deprecated         bool                 `json:"x_mitre_deprecated"`
+	Subtechnique       bool                 `json:"x_mitre_is_subtechnique"`
+	Shortname          string               `json:"x_mitre_shortname"`
+	Platforms          []string             `json:"x_mitre_platforms"`
+	KillChainPhases    []stixKillChainPhase `json:"kill_chain_phases"`
+	AnalyticRefs       []string             `json:"x_mitre_analytic_refs"`
+	LogSourceRefs      []stixLogSourceRef   `json:"x_mitre_log_source_references"`
+	RelationshipType   string               `json:"relationship_type"`
+	SourceRef          string               `json:"source_ref"`
+	TargetRef          string               `json:"target_ref"`
+	ExternalReferences []stixExternalRef    `json:"external_references"`
+}
+
+type stixKillChainPhase struct {
+	ChainName string `json:"kill_chain_name"`
+	PhaseName string `json:"phase_name"`
+}
+
+type stixLogSourceRef struct {
+	DataComponentRef string `json:"x_mitre_data_component_ref"`
 }
 
 type stixExternalRef struct {
@@ -237,43 +284,302 @@ type stixExternalRef struct {
 	ExternalID string `json:"external_id"`
 }
 
+// attackID returns the id of the object's mitre-attack reference, or "" when it
+// has none. It is the single rule that decides which ATT&CK objects this
+// generator sees.
+func attackID(obj stixObject) string {
+	for _, ref := range obj.ExternalReferences {
+		if ref.SourceName == "mitre-attack" {
+			return ref.ExternalID
+		}
+	}
+	return ""
+}
+
 // parseAttack adds every attack-pattern in data to out, keyed by ATT&CK id.
 // Ids are deduplicated: the first non-revoked, non-deprecated name wins, else
 // the first in file order (ICS and mobile repeat ids across objects).
+//
+// The bundle's own tactics resolve each technique's kill_chain_phases, so the 11
+// shortnames that appear in more than one domain (with a different TA id each)
+// can never mis-tag a technique: the phase's bundle decides.
 func parseAttack(data []byte, dom domain, out map[string]*ttpInfo) error {
 	var bundle stixBundle
 	if err := json.Unmarshal(data, &bundle); err != nil {
 		return fmt.Errorf("parse STIX: %w", err)
 	}
+	tac := map[string]string{}
+	for _, obj := range bundle.Objects {
+		if obj.Type != "x-mitre-tactic" {
+			continue
+		}
+		id := attackID(obj)
+		if id == "" {
+			return fmt.Errorf("tactic %s has no mitre-attack external id", obj.Shortname)
+		}
+		tac[obj.Shortname] = id
+	}
 	for _, obj := range bundle.Objects {
 		if obj.Type != "attack-pattern" {
 			continue
 		}
-		var id string
-		for _, ref := range obj.ExternalReferences {
-			if ref.SourceName == "mitre-attack" {
-				id = ref.ExternalID
-				break
-			}
-		}
+		id := attackID(obj)
 		if id == "" {
 			continue
 		}
 		bad := obj.Revoked || obj.Deprecated
 		prev, ok := out[id]
 		if !ok {
-			out[id] = &ttpInfo{label: obj.Name, domain: dom, sub: obj.Subtechnique, bad: bad}
+			info := &ttpInfo{label: obj.Name, domain: dom, sub: obj.Subtechnique, bad: bad}
+			if err := info.setAttributes(obj, tac, id); err != nil {
+				return err
+			}
+			out[id] = info
 			continue
 		}
 		if prev.bad && !bad {
-			// The whole record comes from the live twin: name, flag and domain.
+			// The whole record comes from the live twin: name, flag, domain and
+			// attributes.
 			prev.label = obj.Name
 			prev.domain = dom
 			prev.sub = obj.Subtechnique
 			prev.bad = false
+			if err := prev.setAttributes(obj, tac, id); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
+}
+
+// setAttributes records the technique's tactic ids and platforms from one STIX
+// object. A phase name the bundle's tactics do not define is an error: it would
+// silently drop a bit.
+func (t *ttpInfo) setAttributes(obj stixObject, tac map[string]string, id string) error {
+	tactics := map[string]bool{}
+	for _, p := range obj.KillChainPhases {
+		ta, ok := tac[p.PhaseName]
+		if !ok {
+			return fmt.Errorf("technique %s: kill chain phase %q matches no tactic", id, p.PhaseName)
+		}
+		tactics[ta] = true
+	}
+	t.tactics = sortedKeys(tactics)
+	platforms := map[string]bool{}
+	for _, p := range obj.Platforms {
+		platforms[p] = true
+	}
+	t.platforms = sortedKeys(platforms)
+	return nil
+}
+
+// --- ATT&CK graph: data components and grouping nodes ---
+
+// attackGraph is the non-technique ATT&CK data: the folded detects relation, the
+// grouping nodes and their uses edges, all keyed by ATT&CK external id. It is
+// filled one bundle at a time and assembled with the technique table.
+type attackGraph struct {
+	stub     map[string]string    // STIX uuid -> attack-pattern external id
+	dcUUID   map[string]string    // STIX uuid -> data-component external id
+	dcNodes  map[string]dcNode    // data-component external id -> label
+	anRefs   map[string][]string  // detection-strategy uuid -> analytic uuids
+	dcRefs   map[string][]string  // analytic uuid -> data-component uuids
+	detects  map[[2]string]bool   // (data component, technique)
+	grpUUID  map[string]string    // STIX uuid -> grouping-node external id
+	nodes    map[string]groupNode // grouping-node external id -> label + kind
+	uses     map[[2]string]bool   // (group, technique)
+	software map[[2]string]bool   // (group, software node)
+	tactics  map[string]string    // tactic id (TA id) -> label
+}
+
+func newAttackGraph() *attackGraph {
+	return &attackGraph{
+		stub:     map[string]string{},
+		dcUUID:   map[string]string{},
+		dcNodes:  map[string]dcNode{},
+		anRefs:   map[string][]string{},
+		dcRefs:   map[string][]string{},
+		detects:  map[[2]string]bool{},
+		grpUUID:  map[string]string{},
+		nodes:    map[string]groupNode{},
+		uses:     map[[2]string]bool{},
+		software: map[[2]string]bool{},
+		tactics:  map[string]string{},
+	}
+}
+
+// dcNode is one data component: the label plus the flag that decides which of two
+// duplicate records wins.
+type dcNode struct {
+	label string
+	bad   bool
+}
+
+// groupNode is one grouping node: an ATT&CK intrusion set, malware, tool or
+// campaign.
+type groupNode struct {
+	label string
+	kind  groupKind
+	bad   bool
+}
+
+// groupKind mirrors gr4ph.GroupKind, kept local so this package stays
+// dependency-free.
+type groupKind uint8
+
+const (
+	kindActor groupKind = iota
+	kindSoftware
+	kindCampaign
+)
+
+// groupKindOf maps a STIX object type to its grouping kind, and reports whether
+// the type is a grouping node at all.
+func groupKindOf(typ string) (groupKind, bool) {
+	switch typ {
+	case "intrusion-set":
+		return kindActor, true
+	case "malware", "tool":
+		return kindSoftware, true
+	case "campaign":
+		return kindCampaign, true
+	}
+	return 0, false
+}
+
+// idPrefix is the ATT&CK external-id prefix each grouping kind uses.
+func (k groupKind) idPrefix() string {
+	switch k {
+	case kindActor:
+		return "G"
+	case kindSoftware:
+		return "S"
+	}
+	return "C"
+}
+
+func (k groupKind) constName() string {
+	switch k {
+	case kindActor:
+		return "gr4ph.GroupActor"
+	case kindSoftware:
+		return "gr4ph.GroupSoftware"
+	}
+	return "gr4ph.GroupCampaign"
+}
+
+// parseAttackGraph folds one bundle into g. The detects relation has no direct
+// edge in the pinned bundles: a detection strategy detects a technique and names
+// analytics, which name log source references, which name data components, so the
+// fold is technique <-detects- strategy ->analytics-> log sources -> data
+// component.
+//
+// Every reference that resolves to nothing is an error, not a silent drop: the
+// pinned 19.2 bundles resolve completely (measured), so a drop would be upstream
+// drift this generator must report.
+func parseAttackGraph(data []byte, g *attackGraph) error {
+	var bundle stixBundle
+	if err := json.Unmarshal(data, &bundle); err != nil {
+		return fmt.Errorf("parse STIX: %w", err)
+	}
+	for _, obj := range bundle.Objects {
+		id := attackID(obj)
+		switch obj.Type {
+		case "attack-pattern":
+			if id != "" {
+				g.stub[obj.UUID] = id
+			}
+		case "x-mitre-data-component":
+			if id == "" {
+				continue
+			}
+			g.dcUUID[obj.UUID] = id
+			live := !obj.Revoked && !obj.Deprecated
+			if prev, ok := g.dcNodes[id]; !ok || (prev.bad && live) {
+				g.dcNodes[id] = dcNode{label: obj.Name, bad: !live}
+			}
+		case "x-mitre-detection-strategy":
+			g.anRefs[obj.UUID] = obj.AnalyticRefs
+		case "x-mitre-tactic":
+			if id != "" {
+				g.tactics[id] = obj.Name
+			}
+		case "x-mitre-analytic":
+			for _, ls := range obj.LogSourceRefs {
+				if ls.DataComponentRef != "" {
+					g.dcRefs[obj.UUID] = append(g.dcRefs[obj.UUID], ls.DataComponentRef)
+				}
+			}
+		default:
+			kind, isGroup := groupKindOf(obj.Type)
+			if !isGroup || id == "" {
+				continue
+			}
+			if !strings.HasPrefix(id, kind.idPrefix()) {
+				return fmt.Errorf("group %s: id does not match the %s object", id, obj.Type)
+			}
+			g.grpUUID[obj.UUID] = id
+			live := !obj.Revoked && !obj.Deprecated
+			if prev, ok := g.nodes[id]; !ok || (prev.bad && live) {
+				g.nodes[id] = groupNode{label: obj.Name, kind: kind, bad: !live}
+			}
+		}
+	}
+
+	for _, obj := range bundle.Objects {
+		if obj.Type != "relationship" {
+			continue
+		}
+		switch obj.RelationshipType {
+		case "detects":
+			ttp, ok := g.stub[obj.TargetRef]
+			if !ok {
+				return fmt.Errorf("detects references technique %s with no external id", obj.TargetRef)
+			}
+			dcs, err := g.detectedComponents(obj.SourceRef)
+			if err != nil {
+				return err
+			}
+			for _, dc := range dcs {
+				g.detects[[2]string{dc, ttp}] = true
+			}
+		case "uses":
+			from, ok := g.grpUUID[obj.SourceRef]
+			if !ok {
+				return fmt.Errorf("uses references %s with no external id", obj.SourceRef)
+			}
+			if to, ok := g.stub[obj.TargetRef]; ok {
+				g.uses[[2]string{from, to}] = true
+				continue
+			}
+			to, ok := g.grpUUID[obj.TargetRef]
+			if !ok || g.nodes[to].kind != kindSoftware {
+				return fmt.Errorf("uses references unknown target %s", obj.TargetRef)
+			}
+			g.software[[2]string{from, to}] = true
+		}
+	}
+	return nil
+}
+
+// detectedComponents resolves the data components of one detection strategy:
+// strategy -> analytics -> log source references -> data components.
+func (g *attackGraph) detectedComponents(det string) ([]string, error) {
+	analytics := g.anRefs[det]
+	if len(analytics) == 0 {
+		return nil, fmt.Errorf("detection strategy %s has no analytic", det)
+	}
+	var out []string
+	for _, an := range analytics {
+		for _, ref := range g.dcRefs[an] {
+			dc, ok := g.dcUUID[ref]
+			if !ok {
+				return nil, fmt.Errorf("analytic %s references unknown data component %s", an, ref)
+			}
+			out = append(out, dc)
+		}
+	}
+	return out, nil
 }
 
 // --- D3FEND CSV ---
@@ -508,6 +814,30 @@ type model struct {
 	ttpChildCount []int
 	ttpRevoked    []bool
 
+	// Attribute vocabularies and their rows: tacticTTP[i] holds the indices of
+	// the techniques of tacticIDs[i], ascending.
+	tacticIDs     []string
+	tacticLabels  []string
+	tacticTTP     [][]int
+	platformNames []string
+	platformTTP   [][]int
+
+	dcIDs    []string
+	dcLabels []string
+	// detects pairs, parallel and sorted by (dc, ttp).
+	detectsDC  []int
+	detectsTTP []int
+
+	groupIDs    []string
+	groupLabels []string
+	groupKinds  []groupKind
+	// uses pairs, parallel and sorted by (group, technique), and software-use
+	// pairs sorted by (group, software).
+	usesGroup         []int
+	usesTTP           []int
+	softwareUseGroup  []int
+	softwareUseTarget []int
+
 	artNames  []string
 	artLabels []string
 
@@ -520,6 +850,30 @@ type model struct {
 	offT, offA, offR   []int // parallel
 	defC, defA, defR   []int
 	defendsC, defendsT []int
+}
+
+// sumRows returns the total length of a slice of rows.
+func sumRows(rows [][]int) int {
+	n := 0
+	for _, r := range rows {
+		n += len(r)
+	}
+	return n
+}
+
+// kindHistogram counts grouping nodes by kind.
+func (m *model) kindHistogram() (actor, software, campaign int) {
+	for _, k := range m.groupKinds {
+		switch k {
+		case kindActor:
+			actor++
+		case kindSoftware:
+			software++
+		default:
+			campaign++
+		}
+	}
+	return actor, software, campaign
 }
 
 func (m *model) topLevel() int {
@@ -579,7 +933,7 @@ func (m *model) domainHistogram() string {
 	return fmt.Sprintf("%d enterprise, %d mobile, %d ics, %d sparta", e, mo, i, sp)
 }
 
-func assemble(stix map[string]*ttpInfo, d3 *d3fendData) (*model, error) {
+func assemble(stix map[string]*ttpInfo, g *attackGraph, d3 *d3fendData) (*model, error) {
 	offIDs := sortedKeys(d3.ttpLabel)
 
 	// Synthesised parents: the prefix of a sub-technique that exists in no
@@ -641,6 +995,10 @@ func assemble(stix map[string]*ttpInfo, d3 *d3fendData) (*model, error) {
 		index[id] = i
 	}
 
+	// Attribute rows, collected in index order so every row is ascending.
+	tacticOf := map[string][]int{}
+	platformOf := map[string][]int{}
+
 	for i, id := range ids {
 		info := stix[id]
 		var label string
@@ -671,6 +1029,18 @@ func assemble(stix map[string]*ttpInfo, d3 *d3fendData) (*model, error) {
 			}
 		}
 		m.ttpAliases = append(m.ttpAliases, aliases)
+
+		// Attribute rows: the technique's tactics and platforms. Only the 1140
+		// STIX-sourced nodes have them; the D3FEND-named nodes contribute to no
+		// row, and a platform name that occurs on no technique is dropped.
+		if info != nil {
+			for _, ta := range info.tactics {
+				tacticOf[ta] = append(tacticOf[ta], i)
+			}
+			for _, p := range info.platforms {
+				platformOf[p] = append(platformOf[p], i)
+			}
+		}
 
 		// Parent: the id prefix, when that prefix is a node. The id prefix is
 		// authoritative (it agrees with x_mitre_is_subtechnique on every node
@@ -705,6 +1075,37 @@ func assemble(stix map[string]*ttpInfo, d3 *d3fendData) (*model, error) {
 			m.ttpChildCount[p]++
 		}
 	}
+
+	// Attribute vocabularies: sorted ids and names, with the label of each
+	// tactic taken from the bundle that defined it (labels repeat across
+	// domains, so the id is the key). Both rows are non-empty by construction:
+	// a tactic id or platform name enters a vocabulary only by being referenced
+	// by a technique. The checks below record that, so a later change to the
+	// collection cannot quietly emit an empty row.
+	m.tacticIDs = sortedKeys(tacticOf)
+	for _, ta := range m.tacticIDs {
+		label, ok := g.tactics[ta]
+		if !ok {
+			return nil, fmt.Errorf("tactic %s has no label", ta)
+		}
+		m.tacticLabels = append(m.tacticLabels, label)
+		m.tacticTTP = append(m.tacticTTP, tacticOf[ta])
+	}
+	m.platformNames = sortedKeys(platformOf)
+	for _, p := range m.platformNames {
+		m.platformTTP = append(m.platformTTP, platformOf[p])
+	}
+	for i, ta := range m.tacticIDs {
+		if len(m.tacticTTP[i]) == 0 {
+			return nil, fmt.Errorf("tactic %s has no technique", ta)
+		}
+	}
+	for i, name := range m.platformNames {
+		if len(m.platformTTP[i]) == 0 {
+			return nil, fmt.Errorf("platform %s has no technique", name)
+		}
+	}
+
 	// Contiguous child blocks: the children of p must be exactly the indices
 	// p+1 .. p+count[p], which is what makes the O(1) child range valid.
 	filled := make([]int, len(ids))
@@ -793,16 +1194,7 @@ func assemble(stix map[string]*ttpInfo, d3 *d3fendData) (*model, error) {
 		m.defR = append(m.defR, defRelIndex[t[2]])
 	}
 
-	pairs := make([][2]string, 0, len(d3.defends))
-	for p := range d3.defends {
-		pairs = append(pairs, p)
-	}
-	sort.Slice(pairs, func(i, j int) bool {
-		if pairs[i][0] != pairs[j][0] {
-			return pairs[i][0] < pairs[j][0]
-		}
-		return pairs[i][1] < pairs[j][1]
-	})
+	pairs := sortedPairs(d3.defends)
 	for _, p := range pairs {
 		ci, ok := cmIndex[p[0]]
 		if !ok {
@@ -816,7 +1208,82 @@ func assemble(stix map[string]*ttpInfo, d3 *d3fendData) (*model, error) {
 		m.defendsT = append(m.defendsT, ti)
 	}
 
+	// Data components: the detects relation is folded from the detection
+	// strategies, so a data component is a node whether or not it detects
+	// anything.
+	m.dcIDs = sortedKeys(g.dcNodes)
+	for _, dc := range m.dcIDs {
+		m.dcLabels = append(m.dcLabels, g.dcNodes[dc].label)
+	}
+	dcIndex := make(map[string]int, len(m.dcIDs))
+	for i, dc := range m.dcIDs {
+		dcIndex[dc] = i
+	}
+	for _, p := range sortedPairs(g.detects) {
+		di, ok := dcIndex[p[0]]
+		if !ok {
+			return nil, fmt.Errorf("detects references unknown data component %s", p[0])
+		}
+		ti, ok := index[p[1]]
+		if !ok {
+			return nil, fmt.Errorf("detects references unknown technique %s", p[1])
+		}
+		m.detectsDC = append(m.detectsDC, di)
+		m.detectsTTP = append(m.detectsTTP, ti)
+	}
+
+	// Grouping nodes: actors, software and campaigns share one partition, and
+	// their uses edges split into the technique family and the software family.
+	m.groupIDs = sortedKeys(g.nodes)
+	for _, id := range m.groupIDs {
+		m.groupLabels = append(m.groupLabels, g.nodes[id].label)
+		m.groupKinds = append(m.groupKinds, g.nodes[id].kind)
+	}
+	groupIndex := make(map[string]int, len(m.groupIDs))
+	for i, id := range m.groupIDs {
+		groupIndex[id] = i
+	}
+	for _, p := range sortedPairs(g.uses) {
+		gi, ok := groupIndex[p[0]]
+		if !ok {
+			return nil, fmt.Errorf("uses references unknown group %s", p[0])
+		}
+		ti, ok := index[p[1]]
+		if !ok {
+			return nil, fmt.Errorf("uses references unknown technique %s", p[1])
+		}
+		m.usesGroup = append(m.usesGroup, gi)
+		m.usesTTP = append(m.usesTTP, ti)
+	}
+	for _, p := range sortedPairs(g.software) {
+		gi, ok := groupIndex[p[0]]
+		if !ok {
+			return nil, fmt.Errorf("uses references unknown group %s", p[0])
+		}
+		si, ok := groupIndex[p[1]]
+		if !ok {
+			return nil, fmt.Errorf("uses references unknown software %s", p[1])
+		}
+		m.softwareUseGroup = append(m.softwareUseGroup, gi)
+		m.softwareUseTarget = append(m.softwareUseTarget, si)
+	}
+
 	return m, nil
+}
+
+// sortedPairs returns the pairs of a set in (first, second) order.
+func sortedPairs(m map[[2]string]bool) [][2]string {
+	out := make([][2]string, 0, len(m))
+	for p := range m {
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i][0] != out[j][0] {
+			return out[i][0] < out[j][0]
+		}
+		return out[i][1] < out[j][1]
+	})
+	return out
 }
 
 // checkShape compares the assembled graph against want and fails on any drift:
@@ -828,9 +1295,14 @@ func (m *model) checkShape(want shape) error {
 		return fmt.Errorf("shape drift: %d/%d relation planes exceed the %d-plane space",
 			len(m.offRelNames), len(m.defRelNames), maxPlanes)
 	}
-	if len(m.ttpIDs) > maxNodes || len(m.artNames) > maxNodes || len(m.cmIDs) > maxNodes {
-		return fmt.Errorf("shape drift: node count exceeds %d (techniques %d, artifacts %d, countermeasures %d)",
-			maxNodes, len(m.ttpIDs), len(m.artNames), len(m.cmIDs))
+	if len(m.ttpIDs) > maxNodes || len(m.artNames) > maxNodes || len(m.cmIDs) > maxNodes ||
+		len(m.dcIDs) > maxNodes || len(m.groupIDs) > maxNodes {
+		return fmt.Errorf("shape drift: node count exceeds %d (techniques %d, artifacts %d, countermeasures %d, data components %d, groups %d)",
+			maxNodes, len(m.ttpIDs), len(m.artNames), len(m.cmIDs), len(m.dcIDs), len(m.groupIDs))
+	}
+	if len(m.tacticIDs) > 64 || len(m.platformNames) > 64 {
+		return fmt.Errorf("shape drift: attribute vocabulary exceeds the 64-bit mask (tactics %d, platforms %d)",
+			len(m.tacticIDs), len(m.platformNames))
 	}
 
 	counts := []struct {
@@ -846,6 +1318,15 @@ func (m *model) checkShape(want shape) error {
 		{"offensive edges", len(m.offT), want.offEdges},
 		{"defensive edges", len(m.defC), want.defEdges},
 		{"defends-against pairs", len(m.defendsC), want.defends},
+		{"tactics", len(m.tacticIDs), want.tactics},
+		{"platforms", len(m.platformNames), want.platforms},
+		{"tactic assignments", sumRows(m.tacticTTP), want.tacticAssignments},
+		{"platform assignments", sumRows(m.platformTTP), want.platformAssignments},
+		{"data components", len(m.dcIDs), want.dataComponents},
+		{"detects pairs", len(m.detectsDC), want.detectsPairs},
+		{"groups", len(m.groupIDs), want.groups},
+		{"uses pairs", len(m.usesGroup), want.groupUses},
+		{"software-use pairs", len(m.softwareUseGroup), want.softwareUses},
 	}
 	for _, c := range counts {
 		if c.got != c.want {
@@ -882,6 +1363,14 @@ func (m *model) checkShape(want shape) error {
 	if e != want.enterprise || mo != want.mobile || i != want.ics || sp != want.sparta {
 		return fmt.Errorf("shape drift: domain histogram %d/%d/%d/%d (enterprise/mobile/ics/sparta), want %d/%d/%d/%d",
 			e, mo, i, sp, want.enterprise, want.mobile, want.ics, want.sparta)
+	}
+
+	// The grouping partition's own histogram: a kind mapped to the wrong node
+	// would leave the total right and the split wrong.
+	actor, software, campaign := m.kindHistogram()
+	if actor != want.actors || software != want.software || campaign != want.campaigns {
+		return fmt.Errorf("shape drift: group histogram %d/%d/%d (actors/software/campaigns), want %d/%d/%d",
+			actor, software, campaign, want.actors, want.software, want.campaigns)
 	}
 
 	// The hierarchy counts are part of the shape the report prints, and the
@@ -959,6 +1448,13 @@ func emit(m *model) ([]byte, error) {
 	fmt.Fprintf(&b, "\tNOffEdges       = %d\n", len(m.offT))
 	fmt.Fprintf(&b, "\tNDefEdges       = %d\n", len(m.defC))
 	fmt.Fprintf(&b, "\tNDefends        = %d\n", len(m.defendsC))
+	fmt.Fprintf(&b, "\tNTactic         = %d\n", len(m.tacticIDs))
+	fmt.Fprintf(&b, "\tNPlatform       = %d\n", len(m.platformNames))
+	fmt.Fprintf(&b, "\tNDataComponent  = %d\n", len(m.dcIDs))
+	fmt.Fprintf(&b, "\tNGroup          = %d\n", len(m.groupIDs))
+	fmt.Fprintf(&b, "\tNDetects        = %d\n", len(m.detectsDC))
+	fmt.Fprintf(&b, "\tNUses           = %d\n", len(m.usesGroup))
+	fmt.Fprintf(&b, "\tNSoftwareUses   = %d\n", len(m.softwareUseGroup))
 	b.WriteString(")\n\n")
 
 	b.WriteString("// Offensive relation planes, alphabetical: plane i+1 is RelNames[i].\nconst (\n")
@@ -993,6 +1489,22 @@ func emit(m *model) ([]byte, error) {
 	writeInts(&b, "DefEdgeRel", "uint8", "Defensive edges: defensive relation plane (>= 1).", m.defR, 10)
 	writeInts(&b, "DefendsCM", "uint16", "Defends-against pairs: countermeasure index.", m.defendsC, 10)
 	writeInts(&b, "DefendsTTP", "uint16", "Defends-against pairs: technique index.", m.defendsT, 10)
+	writeStrings(&b, "TacticIDs", "ATT&CK tactic ids (TA ids), sorted byte-wise.", m.tacticIDs)
+	writeStrings(&b, "TacticLabels", "Tactic labels, index-parallel to TacticIDs. Labels repeat across domains: an id is the key.", m.tacticLabels)
+	writeStrings(&b, "PlatformNames", "ATT&CK platform names that occur on at least one technique, sorted byte-wise.", m.platformNames)
+	writeIndexLists(&b, "TacticTTP", "Technique indices per tactic, ascending.", m.tacticTTP)
+	writeIndexLists(&b, "PlatformTTP", "Technique indices per platform, ascending.", m.platformTTP)
+	writeStrings(&b, "DataComponentIDs", "ATT&CK data component ids (DC ids), sorted byte-wise.", m.dcIDs)
+	writeStrings(&b, "DataComponentLabels", "Data component labels, index-parallel to DataComponentIDs.", m.dcLabels)
+	writeInts(&b, "DetectsDC", "uint16", "Detects pairs: data component index.", m.detectsDC, 10)
+	writeInts(&b, "DetectsTTP", "uint16", "Detects pairs: technique index.", m.detectsTTP, 10)
+	writeStrings(&b, "GroupIDs", "Grouping-node ids (intrusion set G, software S, campaign C), sorted byte-wise.", m.groupIDs)
+	writeStrings(&b, "GroupLabels", "Grouping-node labels, index-parallel to GroupIDs.", m.groupLabels)
+	writeGroupKinds(&b, "GroupKinds", "ATT&CK object type of each grouping node.", m.groupKinds)
+	writeInts(&b, "UsesGroup", "uint16", "Uses pairs: group index.", m.usesGroup, 10)
+	writeInts(&b, "UsesTTP", "uint16", "Uses pairs: technique index.", m.usesTTP, 10)
+	writeInts(&b, "SoftwareUseGroup", "uint16", "Software-use pairs: using group index.", m.softwareUseGroup, 10)
+	writeInts(&b, "SoftwareUseTarget", "uint16", "Software-use pairs: used software index.", m.softwareUseTarget, 10)
 
 	formatted, err := format.Source(b.Bytes())
 	if err != nil {
@@ -1069,6 +1581,33 @@ func writeInts(b *bytes.Buffer, name, typ, doc string, vals []int, perLine int) 
 		} else {
 			b.WriteString(" ")
 		}
+	}
+	b.WriteString("}\n\n")
+}
+
+func writeIndexLists(b *bytes.Buffer, name, doc string, vals [][]int) {
+	fmt.Fprintf(b, "// %s holds %s\nvar %s = [...][]uint16{\n", name, doc, name)
+	for _, v := range vals {
+		if len(v) == 0 {
+			b.WriteString("\tnil,\n")
+			continue
+		}
+		b.WriteString("\t{")
+		for i, n := range v {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(b, "%d", n)
+		}
+		b.WriteString("},\n")
+	}
+	b.WriteString("}\n\n")
+}
+
+func writeGroupKinds(b *bytes.Buffer, name, doc string, vals []groupKind) {
+	fmt.Fprintf(b, "// %s holds %s\nvar %s = [...]gr4ph.GroupKind{\n", name, doc, name)
+	for _, v := range vals {
+		fmt.Fprintf(b, "\t%s,\n", v.constName())
 	}
 	b.WriteString("}\n\n")
 }

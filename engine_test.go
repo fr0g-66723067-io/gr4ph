@@ -140,12 +140,107 @@ func buildSynthetic(t *testing.T) *Engine {
 		}
 	}
 
+	// Attribute vocabularies: tactic 0 Initial Access, tactic 1 Execution;
+	// platform 0 Windows, platform 1 Linux.
+	tactic := func(id, label string) Tactic {
+		t.Helper()
+		v, err := b.AddTactic(id, label)
+		if err != nil {
+			t.Fatalf("AddTactic(%s): %v", id, err)
+		}
+		return v
+	}
+	ta1 := tactic("TA0001", "Initial Access")
+	ta2 := tactic("TA0002", "Execution")
+	platform := func(name string) Platform {
+		t.Helper()
+		v, err := b.AddPlatform(name)
+		if err != nil {
+			t.Fatalf("AddPlatform(%s): %v", name, err)
+		}
+		return v
+	}
+	windows := platform("Windows")
+	linux := platform("Linux")
+
+	// Data components: DC0001 detects T1003.001 only (so the parent's own row
+	// is empty and its roll-up picks the component up); DC0002 has no edge.
+	dc := func(id, label string) DataComponent {
+		t.Helper()
+		v, err := b.AddDataComponent(id, label)
+		if err != nil {
+			t.Fatalf("AddDataComponent(%s): %v", id, err)
+		}
+		return v
+	}
+	dcProcess := dc("DC0001", "Process Creation")
+	dc("DC0002", "File Creation") // registered, deliberately edge-less
+
+	// Grouping nodes: one actor, one software, one campaign.
+	group := func(id, label string, kind GroupKind) Group {
+		t.Helper()
+		v, err := b.AddGroup(id, label, kind)
+		if err != nil {
+			t.Fatalf("AddGroup(%s): %v", id, err)
+		}
+		return v
+	}
+	actor := group("G0001", "Actor One", GroupActor)
+	software := group("S0001", "Software One", GroupSoftware)
+	campaign := group("C0001", "Campaign One", GroupCampaign)
+
+	for _, a := range []struct {
+		t  TTP
+		ta Tactic
+	}{
+		{t1003, ta1},
+		{t1003a, ta2},
+	} {
+		if err := b.AddTacticEdge(a.t, a.ta); err != nil {
+			t.Fatalf("AddTacticEdge: %v", err)
+		}
+	}
+	for _, a := range []struct {
+		t TTP
+		p Platform
+	}{
+		{t1003, windows},
+		{t1003, linux},
+		{t1003a, windows},
+	} {
+		if err := b.AddPlatformEdge(a.t, a.p); err != nil {
+			t.Fatalf("AddPlatformEdge: %v", err)
+		}
+	}
+	if err := b.AddDetectsEdge(dcProcess, t1003a); err != nil {
+		t.Fatalf("AddDetectsEdge: %v", err)
+	}
+	for _, u := range []struct {
+		g Group
+		t TTP
+	}{
+		{actor, t1003},
+		{actor, t1003a},
+		{campaign, t1059},
+	} {
+		if err := b.AddGroupUsesEdge(u.g, u.t); err != nil {
+			t.Fatalf("AddGroupUsesEdge: %v", err)
+		}
+	}
+	if err := b.AddGroupSoftwareEdge(actor, software); err != nil {
+		t.Fatalf("AddGroupSoftwareEdge: %v", err)
+	}
+
 	e, err := b.Build()
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
 	if e.TTPCount() != 6 || e.ArtifactCount() != 4 || e.CountermeasureCount() != 2 {
 		t.Fatalf("counts = %d %d %d, want 6 4 2", e.TTPCount(), e.ArtifactCount(), e.CountermeasureCount())
+	}
+	if e.TacticCount() != 2 || e.PlatformCount() != 2 || e.DataComponentCount() != 2 || e.GroupCount() != 3 {
+		t.Fatalf("vocabulary counts = %d %d %d %d, want 2 2 2 3",
+			e.TacticCount(), e.PlatformCount(), e.DataComponentCount(), e.GroupCount())
 	}
 	return e
 }
@@ -832,4 +927,200 @@ func mustPanic(t *testing.T, name, want string, f func()) {
 		}
 	}()
 	f()
+}
+
+// TestEngineAttributes pins the attribute blocks: the per-technique masks, the
+// derived sub-technique flag, the reverse rows and the lookup rules.
+func TestEngineAttributes(t *testing.T) {
+	e := buildSynthetic(t)
+	t1003, _ := e.Incident("T1003")
+	t1003a, _ := e.Incident("T1003.001")
+	t1059, _ := e.Incident("T1059")
+
+	if got := e.TTPTactics(t1003); got != 1 {
+		t.Errorf("TTPTactics(T1003) = %#b, want bit 0 (TA0001)", got)
+	}
+	if got := e.TTPTactics(t1003a); got != 2 {
+		t.Errorf("TTPTactics(T1003.001) = %#b, want bit 1 (TA0002)", got)
+	}
+	if got := e.TTPTactics(t1059); got != 0 {
+		t.Errorf("TTPTactics(T1059) = %#b, want 0", got)
+	}
+	if got := e.TTPPlatforms(t1003); got != 3 {
+		t.Errorf("TTPPlatforms(T1003) = %#b, want Windows|Linux", got)
+	}
+	if got := e.TTPPlatforms(t1003a); got != 1 {
+		t.Errorf("TTPPlatforms(T1003.001) = %#b, want Windows", got)
+	}
+	if !e.TTPSubTechnique(t1003a) || e.TTPSubTechnique(t1003) {
+		t.Errorf("TTPSubTechnique = %v/%v, want true/false", e.TTPSubTechnique(t1003a), e.TTPSubTechnique(t1003))
+	}
+	if got := e.TTPFlags(t1003a); got != FlagSubTechnique {
+		t.Errorf("TTPFlags(T1003.001) = %#b, want FlagSubTechnique", got)
+	}
+
+	dst := make([]TTP, e.TTPCount())
+	if n := e.TTPsForTactic(0, dst); n != 1 || dst[0] != t1003 {
+		t.Errorf("TTPsForTactic(0) = %d %v, want [T1003]", n, dst[:max(n, 0)])
+	}
+	if n := e.TTPsForTactic(1, dst); n != 1 || dst[0] != t1003a {
+		t.Errorf("TTPsForTactic(1) = %d %v, want [T1003.001]", n, dst[:max(n, 0)])
+	}
+	if n := e.TTPsForPlatform(0, dst); n != 2 || dst[0] != t1003 || dst[1] != t1003a {
+		t.Errorf("TTPsForPlatform(Windows) = %d %v, want [T1003 T1003.001]", n, dst[:max(n, 0)])
+	}
+	if n := e.TTPsForPlatform(1, dst); n != 1 || dst[0] != t1003 {
+		t.Errorf("TTPsForPlatform(Linux) = %d %v, want [T1003]", n, dst[:max(n, 0)])
+	}
+
+	if ta, ok := e.Tactic("ta0001"); !ok || ta != 0 {
+		t.Errorf("Tactic(ta0001) = %v %v, want 0 true (normalised)", ta, ok)
+	}
+	if _, ok := e.Tactic("Initial Access"); ok {
+		t.Error("Tactic(label) resolved: tactic labels repeat across domains, the TA id is the key")
+	}
+	if _, ok := e.Platform("windows"); !ok {
+		t.Error("Platform(windows) did not resolve")
+	}
+	if e.TacticID(0) != "TA0001" || e.TacticLabel(1) != "Execution" || e.PlatformName(1) != "Linux" {
+		t.Errorf("vocabulary accessors = %q %q %q", e.TacticID(0), e.TacticLabel(1), e.PlatformName(1))
+	}
+
+	// Totality: an out-of-range id answers 0/false instead of panicking.
+	if got := e.TTPTactics(TTP(99)); got != 0 {
+		t.Errorf("TTPTactics(out of range) = %#b, want 0", got)
+	}
+	if got := e.TTPFlags(TTP(99)); got != 0 {
+		t.Errorf("TTPFlags(out of range) = %#b, want 0", got)
+	}
+	if n := e.TTPsForTactic(Tactic(99), dst); n != 0 {
+		t.Errorf("TTPsForTactic(99) = %d, want 0", n)
+	}
+	if n := e.TTPsForPlatform(Platform(99), dst); n != 0 {
+		t.Errorf("TTPsForPlatform(99) = %d, want 0", n)
+	}
+}
+
+// TestEngineDataComponents pins the detects family: the exact answer is the
+// technique's own row, the roll-up adds every child's components, and a
+// component with no edge stays a node of degree 0.
+func TestEngineDataComponents(t *testing.T) {
+	e := buildSynthetic(t)
+	t1003, _ := e.Incident("T1003")
+	t1003a, _ := e.Incident("T1003.001")
+	dcProcess, _ := e.DataComponent("DC0001")
+	dcFile, _ := e.DataComponent("DC0002")
+
+	dstDC := make([]DataComponent, e.DataComponentCount())
+	if n := e.DataComponentsForTTP(t1003a, dstDC); n != 1 || dstDC[0] != dcProcess {
+		t.Errorf("DataComponentsForTTP(T1003.001) = %d %v, want [DC0001]", n, dstDC[:max(n, 0)])
+	}
+	if n := e.DataComponentsForTTP(t1003, dstDC); n != 0 {
+		t.Errorf("DataComponentsForTTP(T1003) = %d, want 0 (the child carries the detection)", n)
+	}
+	scratch := make([]uint64, e.WordsPerRow(KindDataComponent))
+	if n := e.DataComponentsForTTPRollup(t1003, scratch, dstDC); n != 1 || dstDC[0] != dcProcess {
+		t.Errorf("DataComponentsForTTPRollup(T1003) = %d %v, want [DC0001]", n, dstDC[:max(n, 0)])
+	}
+	// The child's own roll-up reaches nothing new: it has no children.
+	if n := e.DataComponentsForTTPRollup(t1003a, scratch, dstDC); n != 1 {
+		t.Errorf("DataComponentsForTTPRollup(T1003.001) = %d, want 1", n)
+	}
+
+	dstTTP := make([]TTP, e.TTPCount())
+	if n := e.TTPsForDataComponent(dcProcess, dstTTP); n != 1 || dstTTP[0] != t1003a {
+		t.Errorf("TTPsForDataComponent(DC0001) = %d %v, want [T1003.001]", n, dstTTP[:max(n, 0)])
+	}
+	if got := e.DataComponentDegree(dcProcess); got != 1 {
+		t.Errorf("DataComponentDegree(DC0001) = %d, want 1", got)
+	}
+	if got := e.DataComponentDegree(dcFile); got != 0 {
+		t.Errorf("DataComponentDegree(DC0002) = %d, want 0", got)
+	}
+	if e.DataComponentID(dcProcess) != "DC0001" || e.DataComponentLabel(dcProcess) != "Process Creation" {
+		t.Errorf("data component accessors = %q %q", e.DataComponentID(dcProcess), e.DataComponentLabel(dcProcess))
+	}
+
+	// Totality.
+	if n := e.DataComponentsForTTPRollup(TTP(99), scratch, dstDC); n != 0 {
+		t.Errorf("DataComponentsForTTPRollup(out of range) = %d, want 0", n)
+	}
+	if n := e.TTPsForDataComponent(DataComponent(99), dstTTP); n != 0 {
+		t.Errorf("TTPsForDataComponent(out of range) = %d, want 0", n)
+	}
+}
+
+// TestEngineGroups pins the grouping partition: one uses family split into
+// techniques and software, both directions, the roll-up, and the kinds.
+func TestEngineGroups(t *testing.T) {
+	e := buildSynthetic(t)
+	actor, _ := e.Group("G0001")
+	software, _ := e.Group("S0001")
+	campaign, _ := e.Group("C0001")
+	t1003, _ := e.Incident("T1003")
+	t1003a, _ := e.Incident("T1003.001")
+	t1059, _ := e.Incident("T1059")
+
+	dstTTP := make([]TTP, e.TTPCount())
+	if n := e.TTPsForGroup(actor, dstTTP); n != 2 || dstTTP[0] != t1003 || dstTTP[1] != t1003a {
+		t.Errorf("TTPsForGroup(G0001) = %d %v, want [T1003 T1003.001]", n, dstTTP[:max(n, 0)])
+	}
+	scratch := make([]uint64, e.WordsPerRow(KindTTP))
+	if n := e.TTPsForGroupRollup(actor, scratch, dstTTP); n != 1 || dstTTP[0] != t1003 {
+		t.Errorf("TTPsForGroupRollup(G0001) = %d %v, want [T1003]", n, dstTTP[:max(n, 0)])
+	}
+	if n := e.TTPsForGroup(campaign, dstTTP); n != 1 || dstTTP[0] != t1059 {
+		t.Errorf("TTPsForGroup(C0001) = %d %v, want [T1059]", n, dstTTP[:max(n, 0)])
+	}
+	if n := e.TTPsForGroup(software, dstTTP); n != 0 {
+		t.Errorf("TTPsForGroup(S0001) = %d, want 0 (software uses no techniques here)", n)
+	}
+
+	dstG := make([]Group, e.GroupCount())
+	if n := e.GroupsForTTP(t1003, dstG); n != 1 || dstG[0] != actor {
+		t.Errorf("GroupsForTTP(T1003) = %d %v, want [G0001]", n, dstG[:max(n, 0)])
+	}
+	if n := e.GroupsForTTP(t1059, dstG); n != 1 || dstG[0] != campaign {
+		t.Errorf("GroupsForTTP(T1059) = %d %v, want [C0001]", n, dstG[:max(n, 0)])
+	}
+
+	if n := e.SoftwareForGroup(actor, dstG); n != 1 || dstG[0] != software {
+		t.Errorf("SoftwareForGroup(G0001) = %d %v, want [S0001]", n, dstG[:max(n, 0)])
+	}
+	if n := e.GroupsForSoftware(software, dstG); n != 1 || dstG[0] != actor {
+		t.Errorf("GroupsForSoftware(S0001) = %d %v, want [G0001]", n, dstG[:max(n, 0)])
+	}
+	if n := e.SoftwareForGroup(software, dstG); n != 0 {
+		t.Errorf("SoftwareForGroup(S0001) = %d, want 0", n)
+	}
+	if got := e.SoftwareDegree(actor); got != 1 {
+		t.Errorf("SoftwareDegree(G0001) = %d, want 1", got)
+	}
+
+	if k := e.GroupKind(actor); k != GroupActor {
+		t.Errorf("GroupKind(G0001) = %v, want GroupActor", k)
+	}
+	if k := e.GroupKind(software); k != GroupSoftware {
+		t.Errorf("GroupKind(S0001) = %v, want GroupSoftware", k)
+	}
+	if k := e.GroupKind(campaign); k != GroupCampaign {
+		t.Errorf("GroupKind(C0001) = %v, want GroupCampaign", k)
+	}
+	if e.GroupID(software) != "S0001" || e.GroupLabel(actor) != "Actor One" {
+		t.Errorf("group accessors = %q %q", e.GroupID(software), e.GroupLabel(actor))
+	}
+	if _, ok := e.Group("Actor One"); !ok {
+		t.Error("Group(label) did not resolve")
+	}
+
+	// Totality.
+	if n := e.TTPsForGroup(Group(99), dstTTP); n != 0 {
+		t.Errorf("TTPsForGroup(out of range) = %d, want 0", n)
+	}
+	if n := e.GroupsForTTP(TTP(99), dstG); n != 0 {
+		t.Errorf("GroupsForTTP(out of range) = %d, want 0", n)
+	}
+	if n := e.SoftwareForGroup(Group(99), dstG); n != 0 {
+		t.Errorf("SoftwareForGroup(out of range) = %d, want 0", n)
+	}
 }

@@ -28,6 +28,27 @@ type DefRel uint8
 // Domain tags a technique with the ATT&CK domain it came from.
 type Domain uint8
 
+// Tactic is a dense index into the tactic vocabulary (ATT&CK TA ids), assigned in
+// registration order. A technique's tactic mask is a uint64 whose bit i is
+// TacticID(i).
+type Tactic uint8
+
+// Platform is a dense index into the platform vocabulary, assigned in
+// registration order. A technique's platform mask is a uint64 whose bit i is
+// PlatformName(i).
+type Platform uint8
+
+// DataComponent is a dense index into the data-component partition (ATT&CK DC
+// ids), the log-source layer that detects techniques.
+type DataComponent uint16
+
+// Group is a dense index into the grouping partition: ATT&CK actors (intrusion
+// sets), software (malware and tools) and campaigns share one id space.
+type Group uint16
+
+// GroupKind tags a grouping node with the ATT&CK object type it came from.
+type GroupKind uint8
+
 // Kind selects a node partition for WordsPerRow.
 type Kind uint8
 
@@ -49,6 +70,17 @@ const (
 	KindArtifact Kind = 1
 	// KindCountermeasure selects the countermeasure partition.
 	KindCountermeasure Kind = 2
+	// KindDataComponent selects the data-component partition.
+	KindDataComponent Kind = 3
+)
+
+const (
+	// GroupActor is an ATT&CK intrusion set.
+	GroupActor GroupKind = 0
+	// GroupSoftware is ATT&CK malware or a tool.
+	GroupSoftware GroupKind = 1
+	// GroupCampaign is an ATT&CK campaign.
+	GroupCampaign GroupKind = 2
 )
 
 // RelAny is the union plane of every offensive relation.
@@ -56,6 +88,11 @@ const RelAny Rel = 0
 
 // DefRelAny is the union plane of every defensive relation.
 const DefRelAny DefRel = 0
+
+// FlagSubTechnique is the technique-attribute flag bit of a sub-technique. Build
+// derives it from the hierarchy, so it can never disagree with TTPParents; bits
+// 1..63 are unassigned.
+const FlagSubTechnique uint64 = 1 << 0
 
 // reservedRelName is the union plane's name: relNames[0]/defRelNames[0] carry it,
 // and it is a lookup key for RelAny/DefRelAny rather than a registrable predicate.
@@ -101,6 +138,21 @@ var (
 	ErrBuilderUsed = errors.New("gr4ph: builder already built")
 	// ErrReservedName: the key is the reserved union-plane name "any".
 	ErrReservedName = errors.New(`gr4ph: reserved name "any"`)
+	// ErrTooManyTactics: more than 256 registered tactics.
+	ErrTooManyTactics = errors.New("gr4ph: tactic space exhausted (256)")
+	// ErrTooManyPlatforms: more than 256 registered platforms.
+	ErrTooManyPlatforms = errors.New("gr4ph: platform space exhausted (256)")
+	// ErrUnknownTactic: the tactic id was never registered.
+	ErrUnknownTactic = errors.New("gr4ph: unknown tactic id")
+	// ErrUnknownPlatform: the platform id was never registered.
+	ErrUnknownPlatform = errors.New("gr4ph: unknown platform id")
+	// ErrUnknownDataComponent: the data component id was never registered.
+	ErrUnknownDataComponent = errors.New("gr4ph: unknown data component id")
+	// ErrUnknownGroup: the grouping-node id was never registered.
+	ErrUnknownGroup = errors.New("gr4ph: unknown group id")
+	// ErrUnknownGroupKind: the grouping kind is not one of the three GroupKind
+	// constants.
+	ErrUnknownGroupKind = errors.New("gr4ph: unknown group kind")
 )
 
 // Builder accumulates the cold-path graph: node keys (id, label, aliases),
@@ -131,14 +183,32 @@ type Builder struct {
 	cmIDs    []string
 	cmLabels []string
 
+	// The tactic and platform vocabularies and their assignment edges.
+	tacticIDs     []string
+	tacticLabels  []string
+	platformNames []string
+
+	// The data-component partition and its detects edges.
+	dcIDs    []string
+	dcLabels []string
+
+	// The grouping partition: ids, labels, kinds and the two uses families.
+	groupIDs    []string
+	groupLabels []string
+	groupKinds  []GroupKind
+
 	relNames    []string // index 0 is "any"
 	defRelNames []string // index 0 is "any"
 
-	ttpIndex    map[string]uint16
-	artIndex    map[string]uint16
-	cmIndex     map[string]uint16
-	relIndex    map[string]Rel
-	defRelIndex map[string]DefRel
+	ttpIndex      map[string]uint16
+	artIndex      map[string]uint16
+	cmIndex       map[string]uint16
+	dcIndex       map[string]uint16
+	groupIndex    map[string]uint16
+	tacticIndex   map[string]uint16
+	platformIndex map[string]uint16
+	relIndex      map[string]Rel
+	defRelIndex   map[string]DefRel
 
 	// Edge SoA. Duplicates are harmless: Build ORs bits.
 	edgeT, edgeA []uint16
@@ -148,6 +218,14 @@ type Builder struct {
 	defEdgeR           []uint8
 
 	defendsC, defendsT []uint16
+
+	// Attribute assignment edges: technique -> tactic and technique -> platform.
+	tacticT, tacticTA    []uint16
+	platformT, platformP []uint16
+	// Data-component -> technique, group -> technique, group -> software.
+	detectsDC, detectsTTP    []uint16
+	usesGroup, usesTTP       []uint16
+	softwareFrom, softwareTo []uint16
 
 	// built is a pointer so that a copy of the Builder shares the flag: Build
 	// flips it for every handle, so no copy can reach the maps and slices the
@@ -169,6 +247,10 @@ func (b *Builder) seed() {
 	b.ttpIndex = make(map[string]uint16)
 	b.artIndex = make(map[string]uint16)
 	b.cmIndex = make(map[string]uint16)
+	b.dcIndex = make(map[string]uint16)
+	b.groupIndex = make(map[string]uint16)
+	b.tacticIndex = make(map[string]uint16)
+	b.platformIndex = make(map[string]uint16)
 	b.relIndex = map[string]Rel{reservedRelName: RelAny}
 	b.defRelIndex = map[string]DefRel{reservedRelName: DefRelAny}
 	b.built = new(bool)
@@ -269,6 +351,113 @@ func (b *Builder) AddDefRel(name string) (DefRel, error) {
 	b.defRelNames = append(b.defRelNames, strings.TrimSpace(name))
 	b.defRelIndex[key] = dr
 	return dr, nil
+}
+
+// AddTactic registers an ATT&CK tactic and returns its dense id (0..255). It is
+// idempotent on the normalised TA id. The TA id is the only lookup key: tactic
+// labels repeat across domains ("Impact" is TA0040, TA0105 and TA0034), so a
+// label key would be ambiguous.
+func (b *Builder) AddTactic(id, label string) (Tactic, error) {
+	if b.Built() {
+		return 0, ErrBuilderUsed
+	}
+	b.seed()
+	key := normalize(id)
+	if key == "" {
+		return 0, ErrEmptyKey
+	}
+	if ta, ok := b.tacticIndex[key]; ok {
+		return Tactic(ta), nil
+	}
+	if len(b.tacticIDs) >= 256 {
+		return 0, ErrTooManyTactics
+	}
+	ta := Tactic(len(b.tacticIDs))
+	b.tacticIDs = append(b.tacticIDs, strings.TrimSpace(id))
+	b.tacticLabels = append(b.tacticLabels, strings.TrimSpace(label))
+	b.tacticIndex[key] = uint16(ta)
+	return ta, nil
+}
+
+// AddPlatform registers a platform and returns its dense id (0..255). It is
+// idempotent on the normalised name.
+func (b *Builder) AddPlatform(name string) (Platform, error) {
+	if b.Built() {
+		return 0, ErrBuilderUsed
+	}
+	b.seed()
+	key := normalize(name)
+	if key == "" {
+		return 0, ErrEmptyKey
+	}
+	if p, ok := b.platformIndex[key]; ok {
+		return Platform(p), nil
+	}
+	if len(b.platformNames) >= 256 {
+		return 0, ErrTooManyPlatforms
+	}
+	p := Platform(len(b.platformNames))
+	b.platformNames = append(b.platformNames, strings.TrimSpace(name))
+	b.platformIndex[key] = uint16(p)
+	return p, nil
+}
+
+// AddDataComponent registers a data component and returns its dense id.
+// Idempotent on the normalised id; the label is a lookup key too. Ids and labels
+// share one key map, so a key that normalises to an existing one returns that
+// node as well: first registration wins.
+func (b *Builder) AddDataComponent(id, label string) (DataComponent, error) {
+	if b.Built() {
+		return 0, ErrBuilderUsed
+	}
+	b.seed()
+	key := normalize(id)
+	if key == "" {
+		return 0, ErrEmptyKey
+	}
+	if dc, ok := b.dcIndex[key]; ok {
+		return DataComponent(dc), nil
+	}
+	if len(b.dcIDs) >= MaxNodes {
+		return 0, ErrTooManyNodes
+	}
+	idx := len(b.dcIDs)
+	b.dcIDs = append(b.dcIDs, strings.TrimSpace(id))
+	b.dcLabels = append(b.dcLabels, strings.TrimSpace(label))
+	claim(b.dcIndex, key, uint16(idx))
+	claim(b.dcIndex, normalize(label), uint16(idx))
+	return DataComponent(idx), nil
+}
+
+// AddGroup registers a grouping node — an actor, a piece of software or a
+// campaign — and returns its dense id. Idempotent on the normalised id; the label
+// is a lookup key too (first registration wins, as for artifacts). kind must be
+// one of the three GroupKind constants.
+func (b *Builder) AddGroup(id, label string, kind GroupKind) (Group, error) {
+	if b.Built() {
+		return 0, ErrBuilderUsed
+	}
+	b.seed()
+	key := normalize(id)
+	if key == "" {
+		return 0, ErrEmptyKey
+	}
+	if g, ok := b.groupIndex[key]; ok {
+		return Group(g), nil
+	}
+	if kind > GroupCampaign {
+		return 0, ErrUnknownGroupKind
+	}
+	if len(b.groupIDs) >= MaxNodes {
+		return 0, ErrTooManyNodes
+	}
+	idx := len(b.groupIDs)
+	b.groupIDs = append(b.groupIDs, strings.TrimSpace(id))
+	b.groupLabels = append(b.groupLabels, strings.TrimSpace(label))
+	b.groupKinds = append(b.groupKinds, kind)
+	claim(b.groupIndex, key, uint16(idx))
+	claim(b.groupIndex, normalize(label), uint16(idx))
+	return Group(idx), nil
 }
 
 // AddTTP registers a technique and returns its dense id. Idempotent on the
@@ -451,6 +640,87 @@ func (b *Builder) AddDefendsEdge(cm Countermeasure, t TTP) error {
 	return nil
 }
 
+// AddTacticEdge records technique -> tactic. ta must be a registered tactic.
+func (b *Builder) AddTacticEdge(t TTP, ta Tactic) error {
+	if b.Built() {
+		return ErrBuilderUsed
+	}
+	if int(t) >= len(b.ttpIDs) {
+		return ErrUnknownTTP
+	}
+	if int(ta) >= len(b.tacticIDs) {
+		return ErrUnknownTactic
+	}
+	b.tacticT = append(b.tacticT, uint16(t))
+	b.tacticTA = append(b.tacticTA, uint16(ta))
+	return nil
+}
+
+// AddPlatformEdge records technique -> platform. p must be a registered platform.
+func (b *Builder) AddPlatformEdge(t TTP, p Platform) error {
+	if b.Built() {
+		return ErrBuilderUsed
+	}
+	if int(t) >= len(b.ttpIDs) {
+		return ErrUnknownTTP
+	}
+	if int(p) >= len(b.platformNames) {
+		return ErrUnknownPlatform
+	}
+	b.platformT = append(b.platformT, uint16(t))
+	b.platformP = append(b.platformP, uint16(p))
+	return nil
+}
+
+// AddDetectsEdge records data component -> technique: the component's log
+// sources can detect the technique. The family has a single inferred predicate.
+func (b *Builder) AddDetectsEdge(dc DataComponent, t TTP) error {
+	if b.Built() {
+		return ErrBuilderUsed
+	}
+	if int(dc) >= len(b.dcIDs) {
+		return ErrUnknownDataComponent
+	}
+	if int(t) >= len(b.ttpIDs) {
+		return ErrUnknownTTP
+	}
+	b.detectsDC = append(b.detectsDC, uint16(dc))
+	b.detectsTTP = append(b.detectsTTP, uint16(t))
+	return nil
+}
+
+// AddGroupUsesEdge records group -> technique: an actor or campaign uses the
+// technique, or a piece of software implements it. The family has a single
+// inferred predicate.
+func (b *Builder) AddGroupUsesEdge(g Group, t TTP) error {
+	if b.Built() {
+		return ErrBuilderUsed
+	}
+	if int(g) >= len(b.groupIDs) {
+		return ErrUnknownGroup
+	}
+	if int(t) >= len(b.ttpIDs) {
+		return ErrUnknownTTP
+	}
+	b.usesGroup = append(b.usesGroup, uint16(g))
+	b.usesTTP = append(b.usesTTP, uint16(t))
+	return nil
+}
+
+// AddGroupSoftwareEdge records group -> software: an actor or campaign uses a
+// piece of software. to must be a registered grouping node too.
+func (b *Builder) AddGroupSoftwareEdge(from, to Group) error {
+	if b.Built() {
+		return ErrBuilderUsed
+	}
+	if int(from) >= len(b.groupIDs) || int(to) >= len(b.groupIDs) {
+		return ErrUnknownGroup
+	}
+	b.softwareFrom = append(b.softwareFrom, uint16(from))
+	b.softwareTo = append(b.softwareTo, uint16(to))
+	return nil
+}
+
 // Built reports whether Build has been called. A built builder rejects every
 // Add* with ErrBuilderUsed.
 func (b *Builder) Built() bool { return b.built != nil && *b.built }
@@ -472,6 +742,18 @@ func (b *Builder) RelCount() int { return max(len(b.relNames)-1, 0) }
 // DefRelAny). It is 0 on the zero value, which has no planes yet.
 func (b *Builder) DefRelCount() int { return max(len(b.defRelNames)-1, 0) }
 
+// TacticCount returns the number of registered tactics.
+func (b *Builder) TacticCount() int { return len(b.tacticIDs) }
+
+// PlatformCount returns the number of registered platforms.
+func (b *Builder) PlatformCount() int { return len(b.platformNames) }
+
+// DataComponentCount returns the number of registered data components.
+func (b *Builder) DataComponentCount() int { return len(b.dcIDs) }
+
+// GroupCount returns the number of registered grouping nodes.
+func (b *Builder) GroupCount() int { return len(b.groupIDs) }
+
 // wordsFor returns the number of 64-bit words needed for n bits.
 func wordsFor(n int) int { return (n + 63) / 64 }
 
@@ -490,13 +772,21 @@ func (b *Builder) Build() (*Engine, error) {
 		nTTP: len(b.ttpIDs),
 		nArt: len(b.artNames),
 		nCM:  len(b.cmIDs),
+		nDC:  len(b.dcIDs),
+		nGrp: len(b.groupIDs),
 
-		nRel:    len(b.relNames),
-		nDefRel: len(b.defRelNames),
+		nRel:      len(b.relNames),
+		nDefRel:   len(b.defRelNames),
+		nTactic:   len(b.tacticIDs),
+		nPlatform: len(b.platformNames),
 
-		wTTP: wordsFor(len(b.ttpIDs)),
-		wArt: wordsFor(len(b.artNames)),
-		wCM:  wordsFor(len(b.cmIDs)),
+		wTTP:      wordsFor(len(b.ttpIDs)),
+		wArt:      wordsFor(len(b.artNames)),
+		wCM:       wordsFor(len(b.cmIDs)),
+		wDC:       wordsFor(len(b.dcIDs)),
+		wGrp:      wordsFor(len(b.groupIDs)),
+		wTactic:   wordsFor(len(b.tacticIDs)),
+		wPlatform: wordsFor(len(b.platformNames)),
 	}
 
 	// Six blocks, every row exactly stride words (no padding).
@@ -506,6 +796,20 @@ func (b *Builder) Build() (*Engine, error) {
 	e.artCM = make([]uint64, e.nDefRel*e.nArt*e.wCM)
 	e.cmTTP = make([]uint64, e.nCM*e.wTTP)
 	e.ttpCM = make([]uint64, e.nTTP*e.wCM)
+
+	// The attribute columns and their transposes, the two new partitions and the
+	// software family. Each has a single inferred predicate, so there is no
+	// planes dimension and nothing to fold.
+	e.tacticTTP = make([]uint64, e.nTactic*e.wTTP)
+	e.ttpTactic = make([]uint64, e.nTTP*e.wTactic)
+	e.platformTTP = make([]uint64, e.nPlatform*e.wTTP)
+	e.ttpPlatform = make([]uint64, e.nTTP*e.wPlatform)
+	e.dcTTP = make([]uint64, e.nDC*e.wTTP)
+	e.ttpDC = make([]uint64, e.nTTP*e.wDC)
+	e.grpTTP = make([]uint64, e.nGrp*e.wTTP)
+	e.ttpGrp = make([]uint64, e.nTTP*e.wGrp)
+	e.grpSoftware = make([]uint64, e.nGrp*e.wGrp)
+	e.softwareGrp = make([]uint64, e.nGrp*e.wGrp)
 
 	// Predicate planes (1..n-1) from edges, in both directions.
 	for i := range b.edgeT {
@@ -522,6 +826,40 @@ func (b *Builder) Build() (*Engine, error) {
 		cm, t := int(b.defendsC[i]), int(b.defendsT[i])
 		setBit(e.cmTTP[e.cmTTPOff(Countermeasure(cm)):], t)
 		setBit(e.ttpCM[e.ttpCMOff(TTP(t)):], cm)
+	}
+	for i := range b.tacticTA {
+		ta, t := int(b.tacticTA[i]), int(b.tacticT[i])
+		setBit(e.tacticTTP[e.tacticTTPOff(Tactic(ta)):], t)
+		setBit(e.ttpTactic[e.ttpTacticOff(TTP(t)):], ta)
+	}
+	for i := range b.platformP {
+		p, t := int(b.platformP[i]), int(b.platformT[i])
+		setBit(e.platformTTP[e.platformTTPOff(Platform(p)):], t)
+		setBit(e.ttpPlatform[e.ttpPlatformOff(TTP(t)):], p)
+	}
+	for i := range b.detectsDC {
+		dc, t := int(b.detectsDC[i]), int(b.detectsTTP[i])
+		setBit(e.dcTTP[e.dcTTPOff(DataComponent(dc)):], t)
+		setBit(e.ttpDC[e.ttpDCOff(TTP(t)):], dc)
+	}
+	for i := range b.usesGroup {
+		g, t := int(b.usesGroup[i]), int(b.usesTTP[i])
+		setBit(e.grpTTP[e.grpTTPOff(Group(g)):], t)
+		setBit(e.ttpGrp[e.ttpGrpOff(TTP(t)):], g)
+	}
+	for i := range b.softwareFrom {
+		from, to := int(b.softwareFrom[i]), int(b.softwareTo[i])
+		setBit(e.grpSoftware[e.grpSoftwareOff(Group(from)):], to)
+		setBit(e.softwareGrp[e.softwareGrpOff(Group(to)):], from)
+	}
+
+	// The sub-technique flag is derived from the hierarchy, the only source of
+	// the bit: it can never disagree with TTPParents.
+	e.ttpFlags = make([]uint64, e.nTTP)
+	for i := range b.ttpParents {
+		if b.ttpParents[i] != uint16(NoParent) {
+			e.ttpFlags[i] = FlagSubTechnique
+		}
 	}
 
 	// Fold the union planes (plane 0) from the predicate planes.
@@ -547,6 +885,18 @@ func (b *Builder) Build() (*Engine, error) {
 	e.cmIndex = b.cmIndex
 	e.relIndex = b.relIndex
 	e.defRelIndex = b.defRelIndex
+	e.tacticIDs = b.tacticIDs
+	e.tacticLabels = b.tacticLabels
+	e.platformNames = b.platformNames
+	e.dcIDs = b.dcIDs
+	e.dcLabels = b.dcLabels
+	e.groupIDs = b.groupIDs
+	e.groupLabels = b.groupLabels
+	e.groupKinds = b.groupKinds
+	e.tacticIndex = b.tacticIndex
+	e.platformIndex = b.platformIndex
+	e.dcIndex = b.dcIndex
+	e.groupIndex = b.groupIndex
 
 	return e, nil
 }

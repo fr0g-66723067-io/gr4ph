@@ -4,6 +4,7 @@ package ontology
 
 import (
 	"errors"
+	"math/bits"
 	"slices"
 	"strings"
 	"testing"
@@ -60,6 +61,42 @@ func rel(tb testing.TB, e *gr4ph.Engine, name string) gr4ph.Rel {
 		tb.Fatalf("unknown relation %q", name)
 	}
 	return r
+}
+
+func ta(tb testing.TB, e *gr4ph.Engine, id string) gr4ph.Tactic {
+	tb.Helper()
+	v, ok := e.Tactic(id)
+	if !ok {
+		tb.Fatalf("unknown tactic %q", id)
+	}
+	return v
+}
+
+func pf(tb testing.TB, e *gr4ph.Engine, name string) gr4ph.Platform {
+	tb.Helper()
+	v, ok := e.Platform(name)
+	if !ok {
+		tb.Fatalf("unknown platform %q", name)
+	}
+	return v
+}
+
+func dc(tb testing.TB, e *gr4ph.Engine, id string) gr4ph.DataComponent {
+	tb.Helper()
+	v, ok := e.DataComponent(id)
+	if !ok {
+		tb.Fatalf("unknown data component %q", id)
+	}
+	return v
+}
+
+func g(tb testing.TB, e *gr4ph.Engine, id string) gr4ph.Group {
+	tb.Helper()
+	v, ok := e.Group(id)
+	if !ok {
+		tb.Fatalf("unknown group %q", id)
+	}
+	return v
 }
 
 func defRel(tb testing.TB, e *gr4ph.Engine, name string) gr4ph.DefRel {
@@ -216,6 +253,17 @@ func TestOntologySizes(t *testing.T) {
 		{"NOffEdges", NOffEdges, 670},
 		{"NDefEdges", NDefEdges, 182},
 		{"NDefends", NDefends, 4133},
+		{"engine tactics / NTactic", e.TacticCount(), NTactic},
+		{"engine platforms / NPlatform", e.PlatformCount(), NPlatform},
+		{"engine data components / NDataComponent", e.DataComponentCount(), NDataComponent},
+		{"engine groups / NGroup", e.GroupCount(), NGroup},
+		{"NTactic", NTactic, 41},
+		{"NPlatform", NPlatform, 15},
+		{"NDataComponent", NDataComponent, 123},
+		{"NGroup", NGroup, 1212},
+		{"NDetects", NDetects, 3263},
+		{"NUses", NUses, 18885},
+		{"NSoftwareUses", NSoftwareUses, 1339},
 	}
 	for _, s := range sizes {
 		if s.got != s.want {
@@ -232,6 +280,10 @@ func TestOntologySizes(t *testing.T) {
 	}
 	if got := e.WordsPerRow(gr4ph.KindCountermeasure); got != 3 {
 		t.Fatalf("WordsPerRow(Countermeasure) = %d, want 3", got)
+	}
+	// 123/64 = 2.
+	if got := e.WordsPerRow(gr4ph.KindDataComponent); got != 2 {
+		t.Fatalf("WordsPerRow(DataComponent) = %d, want 2", got)
 	}
 
 	// Every table name resolves to the plane the generated constant claims.
@@ -966,10 +1018,20 @@ func TestZeroAllocOntology(t *testing.T) {
 	scratchT := make([]uint64, e.WordsPerRow(gr4ph.KindTTP))
 	scratchA := make([]uint64, e.WordsPerRow(gr4ph.KindArtifact))
 	scratchC := make([]uint64, e.WordsPerRow(gr4ph.KindCountermeasure))
+	scratchD := make([]uint64, e.WordsPerRow(gr4ph.KindDataComponent))
+	bufD := make([]gr4ph.DataComponent, e.DataComponentCount())
+	bufG := make([]gr4ph.Group, e.GroupCount())
 	process := art(t, e, "Process")
 	t1003 := ttp(t, e, "T1003")
 	t1003a := ttp(t, e, "T1003.001")
 	cm0 := cm(t, e, "CredentialHardening")
+	// Hoisted out of the cases: a helper call inside the closure allocates
+	// (testing.T.Helper), which would break the zero-allocation assertion.
+	tactic := ta(t, e, "TA0005")
+	platform := pf(t, e, "Windows")
+	dcProcess := dc(t, e, "DC0084")
+	group := g(t, e, "G0007")
+	soft := g(t, e, "S0002")
 	accesses := rel(t, e, "accesses")
 	arts := []gr4ph.Artifact{process, art(t, e, "File")}
 	ttps := []gr4ph.TTP{t1003, t1003a}
@@ -1029,6 +1091,30 @@ func TestZeroAllocOntology(t *testing.T) {
 			ontologySink += e.TTPsForCountermeasureRollup(cm0, scratchT, bufT)
 		}},
 		{"CountermeasureDegree", func() { ontologySink += e.CountermeasureDegree(cm0) }},
+		{"TTPTactics", func() { ontologySink += int(e.TTPTactics(t1003a)) }},
+		{"TTPPlatforms", func() { ontologySink += int(e.TTPPlatforms(t1003a)) }},
+		{"TTPFlags", func() { ontologySink += int(e.TTPFlags(t1003a)) }},
+		{"TTPSubTechnique", func() {
+			if e.TTPSubTechnique(t1003a) {
+				ontologySink++
+			}
+		}},
+		{"TTPsForTactic", func() { ontologySink += e.TTPsForTactic(tactic, bufT) }},
+		{"TTPsForPlatform", func() { ontologySink += e.TTPsForPlatform(platform, bufT) }},
+		{"TTPsForDataComponent", func() { ontologySink += e.TTPsForDataComponent(dcProcess, bufT) }},
+		{"DataComponentsForTTP", func() { ontologySink += e.DataComponentsForTTP(t1003a, bufD) }},
+		{"DataComponentsForTTPRollup", func() {
+			ontologySink += e.DataComponentsForTTPRollup(t1003, scratchD, bufD)
+		}},
+		{"DataComponentDegree", func() { ontologySink += e.DataComponentDegree(dcProcess) }},
+		{"TTPsForGroup", func() { ontologySink += e.TTPsForGroup(group, bufT) }},
+		{"TTPsForGroupRollup", func() {
+			ontologySink += e.TTPsForGroupRollup(group, scratchT, bufT)
+		}},
+		{"GroupsForTTP", func() { ontologySink += e.GroupsForTTP(t1003, bufG) }},
+		{"SoftwareForGroup", func() { ontologySink += e.SoftwareForGroup(group, bufG) }},
+		{"GroupsForSoftware", func() { ontologySink += e.GroupsForSoftware(soft, bufG) }},
+		{"SoftwareDegree", func() { ontologySink += e.SoftwareDegree(group) }},
 		{"TTPParent", func() {
 			if _, ok := e.TTPParent(t1003a); ok {
 				ontologySink++
@@ -1106,5 +1192,171 @@ func BenchmarkOntologyCountermeasuresForTTPRollup(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		ontologySink += e.CountermeasuresForTTPRollup(tp, scratch, dst)
+	}
+}
+
+// TestOntologyAttributes pins the new partitions on the real tables: the
+// attribute masks, the two new partitions and the grouping family, each against
+// a literal re-measured from the committed generated file (not from the plan).
+func TestOntologyAttributes(t *testing.T) {
+	e := build(t)
+	t1003 := ttp(t, e, "T1003")
+	t1003a := ttp(t, e, "T1003.001")
+	t1059 := ttp(t, e, "T1059")
+	scratchT := make([]uint64, e.WordsPerRow(gr4ph.KindTTP))
+
+	// Attribute masks. A D3FEND-named node has no ATT&CK object, so both masks
+	// are 0 while a STIX technique's are not.
+	if e.TTPTactics(t1003) == 0 {
+		t.Error("TTPTactics(T1003) = 0, want the Credential Access bit")
+	}
+	tac := ta(t, e, "TA0006")
+	if got := e.TTPTactics(t1003); got != 1<<uint(tac) {
+		t.Errorf("TTPTactics(T1003) = %#b, want only bit %d (TA0006)", got, tac)
+	}
+	de := ttp(t, e, "DE-0006")
+	if got := e.TTPTactics(de); got != 0 {
+		t.Errorf("TTPTactics(DE-0006) = %#b, want 0 (D3FEND-named node)", got)
+	}
+	if got := e.TTPPlatforms(de); got != 0 {
+		t.Errorf("TTPPlatforms(DE-0006) = %#b, want 0", got)
+	}
+	if got := e.TTPFlags(t1003); got != 0 {
+		t.Errorf("TTPFlags(T1003) = %#b, want 0 (top-level)", got)
+	}
+	if got := e.TTPFlags(t1003a); got != gr4ph.FlagSubTechnique {
+		t.Errorf("TTPFlags(T1003.001) = %#b, want FlagSubTechnique", got)
+	}
+	if !e.TTPSubTechnique(t1003a) || e.TTPSubTechnique(t1003) {
+		t.Error("TTPSubTechnique(T1003.001/T1003) = true/false expected")
+	}
+
+	// T1003 platforms: Linux, Windows, macOS (in vocabulary order).
+	var got []string
+	mask := e.TTPPlatforms(t1003)
+	for i := 0; i < e.PlatformCount(); i++ {
+		if mask&(1<<uint(i)) != 0 {
+			got = append(got, e.PlatformName(gr4ph.Platform(i)))
+		}
+	}
+	if s := strings.Join(got, ","); s != "Linux,Windows,macOS" {
+		t.Errorf("TTPPlatforms(T1003) names = %q, want Linux,Windows,macOS", s)
+	}
+	// T1546.008 sits in two tactics (TA0003, TA0004), on Windows.
+	t1546 := ttp(t, e, "T1546.008")
+	mask = e.TTPTactics(t1546)
+	if mask&(1<<uint(ta(t, e, "TA0003"))) == 0 || mask&(1<<uint(ta(t, e, "TA0004"))) == 0 {
+		t.Errorf("TTPTactics(T1546.008) = %#b, want TA0003 and TA0004", mask)
+	}
+
+	// Reverse rows: the tactic vocabulary is indexed by TA id, so the row of
+	// TA0005 has 212 techniques.
+	dstT := make([]gr4ph.TTP, e.TTPCount())
+	if n := e.TTPsForTactic(ta(t, e, "TA0005"), dstT); n != 212 {
+		t.Errorf("TTPsForTactic(TA0005) = %d, want 212", n)
+	}
+	if n := e.TTPsForPlatform(pf(t, e, "Windows"), dstT); n != 591 {
+		t.Errorf("TTPsForPlatform(Windows) = %d, want 591", n)
+	}
+	// T1059 is the widest platform row: 10 of the 15 names.
+	if n := bits.OnesCount64(e.TTPPlatforms(t1059)); n != 10 {
+		t.Errorf("popcount(TTPPlatforms(T1059)) = %d, want 10", n)
+	}
+	// A platform name ATT&CK defines but no technique in the table carries is
+	// not in the vocabulary: the emitted names come from the techniques.
+	if _, ok := e.Platform("Data Historian"); ok {
+		t.Error("Platform(Data Historian) resolved: only used names are emitted")
+	}
+
+	// Data components: DC0084 detects 9 techniques (its own row), and the
+	// roll-up is the one traversal that must union child rows.
+	dcProcess := dc(t, e, "DC0084")
+	if n := e.TTPsForDataComponent(dcProcess, dstT); n != 9 {
+		t.Errorf("TTPsForDataComponent(DC0084) = %d, want 9", n)
+	}
+	if got := e.DataComponentDegree(dcProcess); got != 9 {
+		t.Errorf("DataComponentDegree(DC0084) = %d, want 9", got)
+	}
+	dstD := make([]gr4ph.DataComponent, e.DataComponentCount())
+	scratchD := make([]uint64, e.WordsPerRow(gr4ph.KindDataComponent))
+	if n := e.DataComponentsForTTP(t1003a, dstD); n != 5 {
+		t.Errorf("DataComponentsForTTP(T1003.001) = %d, want 5", n)
+	}
+	// The parent has its own detections (5) and 8 children: the roll-up is the
+	// union, 13, strictly larger than the exact answer.
+	if n := e.DataComponentsForTTP(t1003, dstD); n != 5 {
+		t.Errorf("DataComponentsForTTP(T1003) = %d, want 5", n)
+	}
+	if n := e.DataComponentsForTTPRollup(t1003, scratchD, dstD); n != 13 {
+		t.Errorf("DataComponentsForTTPRollup(T1003) = %d, want 13", n)
+	}
+
+	// Grouping partition: one partition, three kinds, both directions.
+	actor := g(t, e, "G0007")
+	if k := e.GroupKind(actor); k != gr4ph.GroupActor {
+		t.Errorf("GroupKind(G0007) = %v, want GroupActor", k)
+	}
+	if n := e.TTPsForGroup(actor, dstT); n != 93 {
+		t.Errorf("TTPsForGroup(G0007) = %d, want 93", n)
+	}
+	dstG := make([]gr4ph.Group, e.GroupCount())
+	if n := e.SoftwareForGroup(actor, dstG); n != 30 {
+		t.Errorf("SoftwareForGroup(G0007) = %d, want 30", n)
+	}
+	if n := e.TTPsForGroupRollup(actor, scratchT, dstT); n != 73 {
+		t.Errorf("TTPsForGroupRollup(G0007) = %d, want 73 (sub-techniques collapse onto parents)", n)
+	}
+	software := g(t, e, "S0002")
+	if k := e.GroupKind(software); k != gr4ph.GroupSoftware {
+		t.Errorf("GroupKind(S0002) = %v, want GroupSoftware", k)
+	}
+	if n := e.TTPsForGroup(software, dstT); n != 17 {
+		t.Errorf("TTPsForGroup(S0002) = %d, want 17", n)
+	}
+	if n := e.GroupsForSoftware(software, dstG); n != 60 {
+		t.Errorf("GroupsForSoftware(S0002) = %d, want 60", n)
+	}
+	if n := e.SoftwareForGroup(software, dstG); n != 0 {
+		t.Errorf("SoftwareForGroup(S0002) = %d, want 0", n)
+	}
+
+	// The whole vocabulary is represented: every row is non-empty, and the
+	// assignment totals are the pinned 1431/2527.
+	tsum, psum := 0, 0
+	for i, row := range TacticTTP {
+		tsum += len(row)
+		if len(row) == 0 {
+			t.Errorf("TacticTTP[%d] (%s) is empty", i, e.TacticID(gr4ph.Tactic(i)))
+		}
+	}
+	for i, row := range PlatformTTP {
+		psum += len(row)
+		if len(row) == 0 {
+			t.Errorf("PlatformTTP[%d] (%s) is empty", i, e.PlatformName(gr4ph.Platform(i)))
+		}
+	}
+	if tsum != 1431 || psum != 2527 {
+		t.Errorf("assignment totals = %d/%d, want 1431/2527", tsum, psum)
+	}
+	// The two directions are materialised from one edge list, so the tactic
+	// masks and the reverse rows must agree exactly over the whole space.
+	for i := 0; i < e.TacticCount(); i++ {
+		tac := gr4ph.Tactic(i)
+		bit := uint64(1) << uint(i)
+		n := e.TTPsForTactic(tac, dstT)
+		for _, tt := range dstT[:n] {
+			if e.TTPTactics(tt)&bit == 0 {
+				t.Fatalf("TTPsForTactic(%s) lists %s whose mask lacks the bit", e.TacticID(tac), e.TTPName(tt))
+			}
+		}
+		sum := 0
+		for j := 0; j < e.TTPCount(); j++ {
+			if e.TTPTactics(gr4ph.TTP(j))&bit != 0 {
+				sum++
+			}
+		}
+		if sum != n {
+			t.Fatalf("tactic %s: %d masks carry the bit, the reverse row holds %d", e.TacticID(tac), sum, n)
+		}
 	}
 }
