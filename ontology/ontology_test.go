@@ -7,8 +7,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/fr0g-66723067/gr4ph"
-	"github.com/fr0g-66723067/gr4ph/internal/hotmethods"
+	"github.com/fr0g-66723067-io/gr4ph"
+	"github.com/fr0g-66723067-io/gr4ph/internal/hotmethods"
 )
 
 // build registers the frozen tables into a fresh engine.

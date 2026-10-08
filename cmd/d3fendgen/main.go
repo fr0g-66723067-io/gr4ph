@@ -925,7 +925,7 @@ func emit(m *model) ([]byte, error) {
 	b.WriteString("//\t©2023 The Aerospace Corporation. This work is reproduced and distributed\n")
 	b.WriteString("//\twith the permission of The Aerospace Corporation.\n\n")
 	b.WriteString("package ontology\n\n")
-	b.WriteString("import \"github.com/fr0g-66723067/gr4ph\"\n\n")
+	b.WriteString("import \"github.com/fr0g-66723067-io/gr4ph\"\n\n")
 
 	fmt.Fprintf(&b, "// Pinned upstream sources. Regenerate with `make gen`.\nconst (\n")
 	fmt.Fprintf(&b, "\tSourceEnterprise = %q\n", sourceEnterprise)

@@ -19,8 +19,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/fr0g-66723067/gr4ph"
-	"github.com/fr0g-66723067/gr4ph/ontology"
+	"github.com/fr0g-66723067-io/gr4ph"
+	"github.com/fr0g-66723067-io/gr4ph/ontology"
 )
 
 func main() {

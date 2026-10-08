@@ -13,7 +13,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/fr0g-66723067/gr4ph"
+	"github.com/fr0g-66723067-io/gr4ph"
 )
 
 // ErrBuilderNotEmpty is returned by Register when the builder already holds

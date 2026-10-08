@@ -13,7 +13,7 @@
 
 package ontology
 
-import "github.com/fr0g-66723067/gr4ph"
+import "github.com/fr0g-66723067-io/gr4ph"
 
 // Pinned upstream sources. Regenerate with `make gen`.
 const (

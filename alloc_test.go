@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/fr0g-66723067/gr4ph/internal/hotmethods"
+	"github.com/fr0g-66723067-io/gr4ph/internal/hotmethods"
 )
 
 // sink defeats dead-code elimination without allocating.

@@ -808,7 +808,7 @@ func TestEmitProducesValidGo(t *testing.T) {
 	for _, want := range []string{
 		"//go:build goexperiment.simd",
 		"package ontology",
-		`import "github.com/fr0g-66723067/gr4ph"`,
+		`import "github.com/fr0g-66723067-io/gr4ph"`,
 		"uint16(gr4ph.NoParent)",
 		"gr4ph.DomainEnterprise",
 		"gr4ph.DomainICS",

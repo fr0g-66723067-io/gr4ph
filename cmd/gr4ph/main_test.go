@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fr0g-66723067/gr4ph"
-	"github.com/fr0g-66723067/gr4ph/ontology"
+	"github.com/fr0g-66723067-io/gr4ph"
+	"github.com/fr0g-66723067-io/gr4ph/ontology"
 )
 
 // fixtureEngine builds the small graph every fixture expectation below is
