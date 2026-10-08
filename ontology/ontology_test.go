@@ -730,6 +730,89 @@ func TestOntologyLabelAmbiguity(t *testing.T) {
 			cmKey[key] = cm
 		}
 	}
+
+	// Data components: ids round-trip, no label names two nodes, and no label
+	// equals another node's id (so an id key can never be shadowed by a label).
+	dcKey := map[string]gr4ph.DataComponent{}
+	for i := range e.DataComponentCount() {
+		d := gr4ph.DataComponent(i)
+		if got, ok := e.DataComponent(e.DataComponentID(d)); !ok || got != d {
+			t.Fatalf("DataComponent(DataComponentID(%d)) = %d,%v want %d", i, got, ok, d)
+		}
+		key := e.DataComponentLabel(d)
+		if prev, ok := dcKey[key]; ok && prev != d {
+			t.Fatalf("data component key %q is claimed by %d and %d", key, prev, d)
+		}
+		dcKey[key] = d
+	}
+	if got, ok := e.DataComponent("Active Directory Credential Request"); !ok || got != dc(t, e, "DC0084") {
+		t.Fatalf("DataComponent(label) = %d,%v want DC0084", got, ok)
+	}
+
+	// Grouping nodes: the id always resolves; a label shared by two nodes
+	// resolves to the lowest-index carrier, which is the byte-smallest id
+	// because the tables are emitted sorted.
+	groupKey := map[string][]gr4ph.Group{}
+	for i := range e.GroupCount() {
+		g := gr4ph.Group(i)
+		if got, ok := e.Group(e.GroupID(g)); !ok || got != g {
+			t.Fatalf("Group(GroupID(%d)) = %d,%v want %d", i, got, ok, g)
+		}
+		key := e.GroupLabel(g)
+		groupKey[key] = append(groupKey[key], g)
+	}
+	sharedGroups := 0
+	for key, carriers := range groupKey {
+		if len(carriers) == 1 {
+			continue
+		}
+		sharedGroups++
+		// Every carrier of a shared label must belong to a different kind: a
+		// label is unique within one kind.
+		kinds := map[gr4ph.GroupKind]bool{}
+		for _, carrier := range carriers {
+			if kinds[e.GroupKind(carrier)] {
+				t.Errorf("label %q is shared within one grouping kind", key)
+			}
+			kinds[e.GroupKind(carrier)] = true
+		}
+		got, ok := e.Group(key)
+		if !ok || got != carriers[0] {
+			t.Errorf("Group(%q) = %d,%v want the lowest-index carrier %d", key, got, ok, carriers[0])
+		}
+	}
+	if sharedGroups != 12 {
+		t.Fatalf("group labels shared by two nodes = %d, want 12", sharedGroups)
+	}
+	// The two hard cases: the byte-smallest id wins, so a campaign beats the
+	// actor that shares its label, and an actor beats software.
+	if got, ok := e.Group("Frankenstein"); !ok || got != g(t, e, "C0001") || got == g(t, e, "G0101") {
+		t.Errorf("Group(Frankenstein) = %d,%v, want the campaign C0001", got, ok)
+	}
+	if got, ok := e.Group("Carbanak"); !ok || got != g(t, e, "G0008") {
+		t.Errorf("Group(Carbanak) = %d,%v, want the actor G0008", got, ok)
+	}
+
+	// Tactics and platforms: the TA id and the platform name are the keys, the
+	// tactic label is not (11 labels name 2-3 tactics across the domains).
+	for i := range e.TacticCount() {
+		ta := gr4ph.Tactic(i)
+		if got, ok := e.Tactic(e.TacticID(ta)); !ok || got != ta {
+			t.Fatalf("Tactic(TacticID(%d)) = %d,%v want %d", i, got, ok, ta)
+		}
+	}
+	if _, ok := e.Tactic("Stealth"); ok {
+		t.Error("Tactic(label) resolved: only the TA id keys a tactic")
+	}
+	for i := range e.PlatformCount() {
+		p := gr4ph.Platform(i)
+		if got, ok := e.Platform(e.PlatformName(p)); !ok || got != p {
+			t.Fatalf("Platform(PlatformName(%d)) = %d,%v want %d", i, got, ok, p)
+		}
+	}
+	if got, ok := e.Platform("windows"); !ok || got != pf(t, e, "Windows") {
+		t.Fatalf("Platform(windows) = %d,%v want the Windows id", got, ok)
+	}
 }
 
 func TestOntologyOffensiveGoldens(t *testing.T) {
@@ -1358,5 +1441,155 @@ func TestOntologyAttributes(t *testing.T) {
 		if sum != n {
 			t.Fatalf("tactic %s: %d masks carry the bit, the reverse row holds %d", e.TacticID(tac), sum, n)
 		}
+	}
+
+	// The same two-direction agreement for the other four pairs: each is
+	// materialised from one edge list, so a transposed or mis-strided row would
+	// leave a carrier count and a reverse row disagreeing.
+	for i := 0; i < e.PlatformCount(); i++ {
+		p := gr4ph.Platform(i)
+		bit := uint64(1) << uint(i)
+		n := e.TTPsForPlatform(p, dstT)
+		for _, tt := range dstT[:n] {
+			if e.TTPPlatforms(tt)&bit == 0 {
+				t.Fatalf("TTPsForPlatform(%s) lists %s whose mask lacks the bit", e.PlatformName(p), e.TTPName(tt))
+			}
+		}
+		sum := 0
+		for j := 0; j < e.TTPCount(); j++ {
+			if e.TTPPlatforms(gr4ph.TTP(j))&bit != 0 {
+				sum++
+			}
+		}
+		if sum != n {
+			t.Fatalf("platform %s: %d masks carry the bit, the reverse row holds %d", e.PlatformName(p), sum, n)
+		}
+	}
+	for i := 0; i < e.DataComponentCount(); i++ {
+		d := gr4ph.DataComponent(i)
+		n := e.TTPsForDataComponent(d, dstT)
+		for _, tt := range dstT[:n] {
+			found := false
+			for _, got := range dstD[:e.DataComponentsForTTP(tt, dstD)] {
+				if got == d {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("TTPsForDataComponent(%s) lists %s whose row lacks it", e.DataComponentID(d), e.TTPName(tt))
+			}
+		}
+		sum := 0
+		for j := 0; j < e.TTPCount(); j++ {
+			for _, got := range dstD[:e.DataComponentsForTTP(gr4ph.TTP(j), dstD)] {
+				if got == d {
+					sum++
+					break
+				}
+			}
+		}
+		if sum != n {
+			t.Fatalf("data component %s: %d rows carry it, the reverse row holds %d", e.DataComponentID(d), sum, n)
+		}
+	}
+	for i := 0; i < e.GroupCount(); i++ {
+		grp := gr4ph.Group(i)
+		// technique -> group and group -> technique must agree.
+		used := e.TTPsForGroup(grp, dstT)
+		for _, tt := range dstT[:used] {
+			found := false
+			for _, got := range dstG[:e.GroupsForTTP(tt, dstG)] {
+				if got == grp {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("TTPsForGroup(%s) lists %s whose row lacks it", e.GroupID(grp), e.TTPName(tt))
+			}
+		}
+		sum := 0
+		for j := 0; j < e.TTPCount(); j++ {
+			for _, got := range dstG[:e.GroupsForTTP(gr4ph.TTP(j), dstG)] {
+				if got == grp {
+					sum++
+					break
+				}
+			}
+		}
+		if sum != used {
+			t.Fatalf("group %s: %d rows carry it, the reverse row holds %d", e.GroupID(grp), sum, used)
+		}
+	}
+	// dstSw is separate from dstG: the inner reverse lookup overwrites its
+	// buffer, and the outer loop is iterating the other one.
+	dstSw := make([]gr4ph.Group, e.GroupCount())
+	for i := 0; i < e.GroupCount(); i++ {
+		grp := gr4ph.Group(i)
+		n := e.SoftwareForGroup(grp, dstG)
+		for _, sw := range dstG[:n] {
+			found := false
+			for _, got := range dstSw[:e.GroupsForSoftware(sw, dstSw)] {
+				if got == grp {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("SoftwareForGroup(%s) lists %s whose row lacks it", e.GroupID(grp), e.GroupID(sw))
+			}
+		}
+		sum := 0
+		for j := 0; j < e.GroupCount(); j++ {
+			for _, got := range dstSw[:e.GroupsForSoftware(gr4ph.Group(j), dstSw)] {
+				if got == grp {
+					sum++
+					break
+				}
+			}
+		}
+		if sum != n {
+			t.Fatalf("group %s: %d software rows carry it, the reverse row holds %d", e.GroupID(grp), sum, n)
+		}
+	}
+
+	// The committed GroupKinds array is index-parallel to GroupIDs: the kind of
+	// every node must agree with its id prefix, and the histogram is the pinned
+	// 195/957/60. (No offline check saw this before: the generator's histogram
+	// gate only runs under `make gen`.)
+	kindOf := map[byte]gr4ph.GroupKind{
+		'C': gr4ph.GroupCampaign,
+		'G': gr4ph.GroupActor,
+		'S': gr4ph.GroupSoftware,
+	}
+	kindHist := map[gr4ph.GroupKind]int{}
+	for i := range NGroup {
+		id := GroupIDs[i]
+		want, ok := kindOf[id[0]]
+		if !ok {
+			t.Fatalf("group id %s has no kind prefix", id)
+		}
+		got := e.GroupKind(gr4ph.Group(i))
+		if got != want {
+			t.Fatalf("GroupKind(%s) = %v, want %v", id, got, want)
+		}
+		kindHist[got]++
+	}
+	if a, s, c := kindHist[gr4ph.GroupActor], kindHist[gr4ph.GroupSoftware], kindHist[gr4ph.GroupCampaign]; a != 195 || s != 957 || c != 60 {
+		t.Fatalf("group kind histogram = %d/%d/%d (actors/software/campaigns), want 195/957/60", a, s, c)
+	}
+
+	// The detects fold, by membership: the 9 techniques of DC0084 as a literal,
+	// ascending. A count-only pin would keep a same-length mis-pairing.
+	dc84 := dc(t, e, "DC0084")
+	ndc := e.TTPsForDataComponent(dc84, dstT)
+	names := make([]string, 0, ndc)
+	for _, tt := range dstT[:ndc] {
+		names = append(names, e.TTPName(tt))
+	}
+	wantTTPs := "T1207,T1550.002,T1550.003,T1558,T1558.001,T1558.002,T1558.003,T1558.004,T1649"
+	if strings.Join(names, ",") != wantTTPs {
+		t.Fatalf("TTPsForDataComponent(DC0084) = %v, want %s", names, wantTTPs)
 	}
 }

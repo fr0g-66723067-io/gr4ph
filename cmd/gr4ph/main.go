@@ -24,8 +24,9 @@ import (
 
 const usage = `usage: gr4ph <command> [flags] <query> [<query>...]
 
-  ttp <query>        resolve a technique id, label or alias; list its artifacts and
-                     the countermeasures that defend it, exact and rolled up
+  ttp <query>        resolve a technique id, label or alias; list its artifacts, the
+                     countermeasures that defend it, the data components that detect it
+                     and the grouping nodes that use it, exact and rolled up
   artifact <query>   resolve an artifact name or label; list the techniques that touch
                      it and the countermeasures linked to it, exact and rolled up
   cm <query>         resolve a countermeasure id, label or alias; list the artifacts and

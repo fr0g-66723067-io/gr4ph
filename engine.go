@@ -4,8 +4,8 @@ package gr4ph
 
 import "strconv"
 
-// Engine is the frozen graph: six many-predicate bitmatrix blocks, ten
-// single-predicate blocks, the per-technique attribute columns and the
+// Engine is the frozen graph: four multi-plane bitmatrix blocks, twelve
+// single-plane blocks, the per-technique attribute columns and the
 // cold-path tables. It is immutable after Build, so any number of goroutines
 // may query it concurrently as long as each supplies its own dst and scratch
 // slices.

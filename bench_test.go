@@ -186,9 +186,14 @@ func BenchmarkCountermeasuresForTTPRollup(b *testing.B) {
 	}
 }
 
-// attributedEngine is generatedEngine plus the attribute vocabularies and the
-// grouping partition, registered in their own helper so generatedEngine's
-// stride contract (and therefore every existing benchmark) stays untouched.
+// attributedEngine is a standalone attributed fixture, kept separate from
+// generatedEngine so that fixture's stride contract (and therefore every
+// existing benchmark) stays untouched. It registers 1200 techniques with the
+// same i%10 parent rule, 41 tactics, 15 platforms, 212 tactic edges, 212
+// platform edges, 1212 grouping nodes and 18885 group-uses edges — and no
+// artifacts, countermeasures, relations, offensive/defensive/defends edges or
+// data components, so DataComponentCount() is 0 here: a benchmark for a
+// data-component traversal needs a fixture that registers some.
 // The tactic row holds 212 techniques, the widest row of the pinned release.
 func attributedEngine(tb testing.TB) *Engine {
 	tb.Helper()

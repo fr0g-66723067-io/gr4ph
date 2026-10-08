@@ -4,6 +4,7 @@ package gr4ph
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"testing"
 )
@@ -608,6 +609,179 @@ func TestBuilderBoundsHierarchy(t *testing.T) {
 	b.AddTTP("T1005", "unrelated", DomainEnterprise, NoParent, false)
 	if _, err := b.AddTTP("T1003.003", "late child", DomainEnterprise, TTP(0), false); !errors.Is(err, ErrNonContiguousChild) {
 		t.Fatalf("non-contiguous child: %v", err)
+	}
+}
+
+// TestBuilderVocabularyCap pins the attribute vocabulary bound: a technique's
+// tactic and platform masks are one uint64 each, so the 65th registration must be
+// refused rather than accepted into a stride TTPTactics/TTPPlatforms cannot read
+// (they return word 0 of the row, so bit 64 would be silently lost).
+func TestBuilderVocabularyCap(t *testing.T) {
+	b := NewBuilder()
+	var tactics []Tactic
+	for i := range 64 {
+		ta, err := b.AddTactic(fmt.Sprintf("TA%04d", i), fmt.Sprintf("Tactic %d", i))
+		if err != nil {
+			t.Fatalf("AddTactic #%d: %v", i, err)
+		}
+		tactics = append(tactics, ta)
+	}
+	if b.TacticCount() != 64 {
+		t.Fatalf("TacticCount = %d, want 64", b.TacticCount())
+	}
+	if _, err := b.AddTactic("TA-overflow", "overflow"); !errors.Is(err, ErrTooManyTactics) {
+		t.Fatalf("65th AddTactic = %v, want ErrTooManyTactics", err)
+	}
+	var platforms []Platform
+	for i := range 64 {
+		p, err := b.AddPlatform(fmt.Sprintf("Platform %d", i))
+		if err != nil {
+			t.Fatalf("AddPlatform #%d: %v", i, err)
+		}
+		platforms = append(platforms, p)
+	}
+	if b.PlatformCount() != 64 {
+		t.Fatalf("PlatformCount = %d, want 64", b.PlatformCount())
+	}
+	if _, err := b.AddPlatform("Platform overflow"); !errors.Is(err, ErrTooManyPlatforms) {
+		t.Fatalf("65th AddPlatform = %v, want ErrTooManyPlatforms", err)
+	}
+
+	// The last index of the space must still be readable as a bit: this is the
+	// read the 256-entry cap silently truncated.
+	ttp, err := b.AddTTP("T1003", "OS Credential Dumping", DomainEnterprise, NoParent, false)
+	if err != nil {
+		t.Fatalf("AddTTP: %v", err)
+	}
+	if err := b.AddTacticEdge(ttp, tactics[63]); err != nil {
+		t.Fatalf("AddTacticEdge: %v", err)
+	}
+	if err := b.AddPlatformEdge(ttp, platforms[63]); err != nil {
+		t.Fatalf("AddPlatformEdge: %v", err)
+	}
+	e, err := b.Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if got := e.TTPTactics(ttp); got != 1<<63 {
+		t.Errorf("TTPTactics = %#b, want 1<<63", got)
+	}
+	if got := e.TTPPlatforms(ttp); got != 1<<63 {
+		t.Errorf("TTPPlatforms = %#b, want 1<<63", got)
+	}
+}
+
+// TestLayoutMatchesReadme pins the memory table the README publishes: with the
+// pinned node, predicate and vocabulary counts, every one of the seventeen frozen
+// arrays must be exactly as many words as the table says. It cannot import
+// ontology (which imports this package), so the pinned counts are reproduced
+// here. Bytes are not asserted: they are words * 8.
+func TestLayoutMatchesReadme(t *testing.T) {
+	b := NewBuilder()
+	for i := range 1186 {
+		// The generatedEngine parent rule: every tenth node is a parent, so the
+		// contiguous-child invariant holds and the counts match the tables.
+		parent := NoParent
+		if k := i % 10; k != 0 {
+			parent = TTP(i - k)
+		}
+		if _, err := b.AddTTP("T"+strconv.Itoa(i), "t"+strconv.Itoa(i), DomainEnterprise, parent, false); err != nil {
+			t.Fatalf("AddTTP #%d: %v", i, err)
+		}
+	}
+	for i := range 247 {
+		if _, err := b.AddArtifact("A"+strconv.Itoa(i), "a"+strconv.Itoa(i)); err != nil {
+			t.Fatalf("AddArtifact #%d: %v", i, err)
+		}
+	}
+	for i := range 157 {
+		if _, err := b.AddCountermeasure("CM"+strconv.Itoa(i), "cm"+strconv.Itoa(i)); err != nil {
+			t.Fatalf("AddCountermeasure #%d: %v", i, err)
+		}
+	}
+	for i := range 41 {
+		if _, err := b.AddRel("rel" + strconv.Itoa(i)); err != nil {
+			t.Fatalf("AddRel #%d: %v", i, err)
+		}
+	}
+	for i := range 38 {
+		if _, err := b.AddDefRel("defrel" + strconv.Itoa(i)); err != nil {
+			t.Fatalf("AddDefRel #%d: %v", i, err)
+		}
+	}
+	for i := range 41 {
+		if _, err := b.AddTactic("TA"+strconv.Itoa(i), "tactic "+strconv.Itoa(i)); err != nil {
+			t.Fatalf("AddTactic #%d: %v", i, err)
+		}
+	}
+	for i := range 15 {
+		if _, err := b.AddPlatform("platform " + strconv.Itoa(i)); err != nil {
+			t.Fatalf("AddPlatform #%d: %v", i, err)
+		}
+	}
+	for i := range 123 {
+		if _, err := b.AddDataComponent("DC"+strconv.Itoa(i), "dc"+strconv.Itoa(i)); err != nil {
+			t.Fatalf("AddDataComponent #%d: %v", i, err)
+		}
+	}
+	for i := range 1212 {
+		if _, err := b.AddGroup("G"+strconv.Itoa(i), "g"+strconv.Itoa(i), GroupActor); err != nil {
+			t.Fatalf("AddGroup #%d: %v", i, err)
+		}
+	}
+	if err := b.AddEdge(TTP(0), Artifact(0), Rel(1)); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+	e, err := b.Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	blocks := []struct {
+		name  string
+		words int
+	}{
+		{"ttpArt", len(e.ttpArt)},
+		{"artTTP", len(e.artTTP)},
+		{"cmArt", len(e.cmArt)},
+		{"artCM", len(e.artCM)},
+		{"cmTTP", len(e.cmTTP)},
+		{"ttpCM", len(e.ttpCM)},
+		{"tacticTTP", len(e.tacticTTP)},
+		{"ttpTactic", len(e.ttpTactic)},
+		{"platformTTP", len(e.platformTTP)},
+		{"ttpPlatform", len(e.ttpPlatform)},
+		{"ttpFlags", len(e.ttpFlags)},
+		{"dcTTP", len(e.dcTTP)},
+		{"ttpDC", len(e.ttpDC)},
+		{"grpTTP", len(e.grpTTP)},
+		{"ttpGrp", len(e.ttpGrp)},
+		{"grpSoftware", len(e.grpSoftware)},
+		{"softwareGrp", len(e.softwareGrp)},
+	}
+	want := []int{
+		199248, 197106, 24492, 28899, 2983, 3558,
+		779, 1186, 285, 1186, 1186, 2337, 2372, 23028, 22534, 23028, 23028,
+	}
+	subtotal, newArrays := 0, 0
+	for i, bl := range blocks {
+		if bl.words != want[i] {
+			t.Errorf("%s = %d words, want %d (README block table)", bl.name, bl.words, want[i])
+		}
+		if i < 6 {
+			subtotal += bl.words
+		} else {
+			newArrays += bl.words
+		}
+	}
+	if subtotal != 456286 {
+		t.Errorf("six-block subtotal = %d words, want 456286", subtotal)
+	}
+	if newArrays != 100949 {
+		t.Errorf("new arrays = %d words, want 100949", newArrays)
+	}
+	if subtotal+newArrays != 557235 {
+		t.Errorf("total = %d words, want 557235", subtotal+newArrays)
 	}
 }
 

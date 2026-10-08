@@ -79,9 +79,12 @@ runs both flows against the real tables.
 
 ## Command line
 
-`cmd/gr4ph` answers lookup questions over the frozen tables from a shell: a cold key — technique id,
-label or alias; artifact name or label; countermeasure id, label or alias; relation name — resolves to
-its dense id, and every relation of that node is printed in both directions.
+`cmd/gr4ph` answers lookup questions over the frozen tables from a shell: a cold key — technique
+id, label or alias; artifact name or label; countermeasure id, label or alias; data component id or
+label; grouping-node id or label; ATT&CK tactic id; platform name; relation name — resolves to its
+dense id, and every relation of that node is printed in both directions. A grouping label shared by
+two nodes (12 in 19.2, always across kinds: `Frankenstein` is the campaign `C0001` and the actor
+`G0101`) resolves to the byte-smallest id, and the printed header names the node that resolved.
 
 ```sh
 GOEXPERIMENT=simd go run ./cmd/gr4ph <command> [flags] <query> [<query>...]
@@ -110,12 +113,17 @@ it, directly and via those techniques. `cm` prints the artifacts and techniques 
 `dc`, `group`, `tactic` and `platform` answer the two new partitions and the attribute vocabularies in
 the reverse direction: the techniques a data component detects, the techniques and software a grouping
 node uses plus who uses it, and the techniques of one tactic or platform. `rel` walks a plane instead of
-a node. `-rel` (default `any`, the union plane)
-picks the offensive plane of the `ttp` and `artifact` sets, `-defrel` the defensive one; the sets that
-take no relation are the roll-ups of `cm` and `in countermeasures viaTTPs`, which is the direct links
-unioned with the links of the techniques touching the artifact. Relations exist in the two families
-independently — 11 names, `blocks` among them, are registered in both — so `rel` prints one line per
-family and `-family` narrows it. A technique ATT&CK has revoked or deprecated prints ` revoked=true` in
+a node. `-rel` (default `any`, the union plane) picks the offensive plane of `ttp`'s `out
+artifacts` and `artifact`'s `in techniques`; `-defrel` picks the defensive plane of `artifact`'s
+`in countermeasures` and `cm`'s `out artifacts`. Every set whose label carries no `(rel
+…)`/`(defrel …)` suffix is unfiltered — on `ttp`: `in countermeasures`, `in countermeasures
+rollup`, `in data components`, `in data components rollup` and `in groups`; on `artifact`: `in
+countermeasures viaTTPs` (the direct links unioned with the links of the techniques touching the
+artifact); on `cm`: `out techniques` and `out techniques rollup`. The four new commands take no
+relation flag, so every set they print is unfiltered. Relations exist in the two families
+independently — 11 names, `blocks` among them, are registered in both — so `rel` prints one line
+per family and `-family` narrows it. A technique ATT&CK has revoked or deprecated prints `
+revoked=true` in
 its `ttp` header (`"revoked":true` under `-json`); its D3FEND links live on the successor id. The same
 header carries the ATT&CK attributes: ` subtechnique=true` for a sub-technique, ` tactics=` with the
 `TA` ids of its tactic mask and ` platforms=` with the names of its platform mask, both in vocabulary
@@ -249,10 +257,10 @@ resolved query instead of text.
 
 ## Data model
 
-Five partitions, seventeen frozen arrays: six many-predicate bitmatrix blocks, ten single-predicate
-blocks and one per-technique flag column. Plane 0 of each many-predicate family is the union of all its
-predicates (`RelAny` / `DefRelAny`); every other family is one inferred predicate and needs no plane
-index. The attribute columns are one `uint64` per technique (a 41-tactic and a 15-platform mask, so bits
+Five partitions, seventeen frozen arrays: four multi-plane bitmatrix blocks (`ttpArt`/`artTTP` over
+`nRel` planes, `cmArt`/`artCM` over `nDefRel`), twelve single-plane blocks and one per-technique flag
+column. Plane 0 of each multi-plane family is the union of all its predicates (`RelAny` / `DefRelAny`);
+every other family is one inferred predicate and needs no plane index. The attribute columns are one `uint64` per technique (a 41-tactic and a 15-platform mask, so bits
 above the vocabulary are always zero) plus the derived sub-technique flag.
 
 | block | shape | meaning |
@@ -368,7 +376,7 @@ Builder (cold path; the builder is single-use and then frozen by `Build`):
 | `AddTTP(id, label, dom, parent, revoked, aliases…)` | `ErrDepthExceeded` / `ErrNonContiguousChild` / `ErrUnknownParent` |
 | `AddArtifact(name, label)` `AddCountermeasure(id, label, aliases…)` | |
 | `AddDataComponent(id, label)` `AddGroup(id, label, kind)` | `ErrUnknownGroupKind` on a kind outside the three constants |
-| `AddTactic(id, label)` `AddPlatform(name)` | dense ids in registration order (≤ 256: `ErrTooManyTactics` / `ErrTooManyPlatforms`) |
+| `AddTactic(id, label)` `AddPlatform(name)` | dense ids in registration order (≤ 64: `ErrTooManyTactics` / `ErrTooManyPlatforms`, the width of the `uint64` mask each technique carries) |
 | `AddEdge(t, a, r)` `AddDefEdge(cm, a, dr)` `AddDefendsEdge(cm, t)` `AddTacticEdge(t, ta)` `AddPlatformEdge(t, p)` `AddDetectsEdge(dc, t)` `AddGroupUsesEdge(g, t)` `AddGroupSoftwareEdge(from, to)` | edges are ORed into the planes; an unregistered endpoint is `ErrUnknownTTP` / `ErrUnknownArtifact` / `ErrUnknownCountermeasure` / `ErrUnknownTactic` / `ErrUnknownPlatform` / `ErrUnknownDataComponent` / `ErrUnknownGroup` |
 | `Built()` `Build()` | `Build` is single-use: `ErrBuilderUsed` afterwards |
 
@@ -496,26 +504,32 @@ cannot be mutated through its builder.
 
 ## Measured performance
 
-`GOEXPERIMENT=simd go test -bench . -benchmem -count=5 ./...` on the development host (i5-10310U, 128-bit
-vectors); ns/op below is the median of 5 runs, and every benchmark reports 0 B/op and 0 allocs/op. The
-real-table rows run against `ontology.Register`'s 1186-node engine, the synthetic rows against the root
-package's generated fixture (1200 techniques, 250 artifacts, 160 countermeasures):
+`GOEXPERIMENT=simd go test -bench . -benchmem -benchtime=1s -count=10 ./...` on the development
+host (i5-10310U, 128-bit vectors); ns/op below is the median of 10 runs, and every benchmark
+reports 0 B/op and 0 allocs/op. The real-table rows run against `ontology.Register`'s 1186-node
+engine; the synthetic rows run against two root-package fixtures — `benchEngine`'s generated graph
+(1200 techniques, 250 artifacts, 160 countermeasures) and `attributedEngine` (1200 techniques with
+41 tactics, 15 platforms and 1212 grouping nodes, and no artifacts, countermeasures or data
+components):
 
 | benchmark | fixture | ns/op |
 |---|---|---|
-| `TTPsRel(Process, accesses)` | real tables | 16 |
+| `TTPsRel(Process, accesses)` | real tables | 25 |
 | `TTPsAny(Process, File)` | real tables | 103 |
-| `CountermeasuresForArtifactViaTTPs(Process)` | real tables | 117 |
-| `CountermeasuresForTTPRollup(T1546)` | real tables | 214 |
+| `CountermeasuresForArtifactViaTTPs(Process)` | real tables | 119 |
+| `CountermeasuresForTTPRollup(T1546)` | real tables | 216 |
 | `AdjacentRel` | synthetic | 7 |
 | `TTPTactics` | synthetic | 2 |
-| `TTPsForTactic` (212-technique row) | synthetic | 219 |
-| `TTPsForGroupRollup` | synthetic | 282 |
+| `TTPsForTactic` (212-technique row) | synthetic | 226 |
+| `TTPsForGroupRollup` | synthetic | 290 |
 
-The ten new arrays sit after the six existing blocks, so those keep their address range: every benchmark
-of the previous commit is still present, with identical `B/op` and `allocs/op` (0), and its best `ns/op`
-within 1.05× of the pre-change engine (measured on the same host, `-count=5`, against a worktree of that
-commit). The `TTPTactics` row is a single load; a group row is a 1212-bit scan plus the parent
+The eleven new arrays (ten blocks plus the `ttpFlags` column) sit after the six existing blocks, so
+those keep their address range: all twelve benchmarks of the previous commit are still present, all
+of them still report 0 `B/op` and 0 `allocs/op`, and none is slower than 1.03× (the worst ratios
+against a worktree of that commit, same host, 10 samples: 1.0251× on
+`CountermeasuresForArtifactViaTTPs`, 82.02 → 84.08 ns, and 1.0145× on medians — `Artifacts`, 12.39
+→ 12.57 ns; the sub-30 ns rows carry about ±1 ns of run-to-run spread, and eight of the twelve are
+faster here). The `TTPTactics` row is a single load; a group row is a 1212-bit scan plus the parent
 substitution of every sub-technique, which is what `TTPsForGroupRollup` costs.
 
 The zero-allocation contract is enforced by tests, not by convention: `AllocsPerRun` must be 0 for

@@ -836,9 +836,9 @@ func TestEmitProducesValidGo(t *testing.T) {
 		dcLabels:          []string{"Process Creation"},
 		detectsDC:         []int{0},
 		detectsTTP:        []int{1},
-		groupIDs:          []string{"G0001", "S0001"},
-		groupLabels:       []string{"Actor One", "Software One"},
-		groupKinds:        []groupKind{kindActor, kindSoftware},
+		groupIDs:          []string{"G0001", "S0001", "C0001"},
+		groupLabels:       []string{"Actor One", "Software One", "Campaign One"},
+		groupKinds:        []groupKind{kindActor, kindSoftware, kindCampaign},
 		usesGroup:         []int{0},
 		usesTTP:           []int{1},
 		softwareUseGroup:  []int{0},
@@ -884,6 +884,8 @@ func TestEmitProducesValidGo(t *testing.T) {
 		"{\"A\", \"B\"}",
 		"var TTPRevoked = [...]bool{",
 		"\ttrue,",
+		"gr4ph.GroupCampaign,",
+		"{1, 3},",
 	} {
 		if !strings.Contains(string(src), want) {
 			t.Errorf("generated source is missing %q", want)
@@ -1278,6 +1280,34 @@ func TestAssembleGroupUses(t *testing.T) {
 	}
 }
 
+// TestAssembleDetectsEmptyAnalytic pins the one "resolves to nothing" case that
+// is not an error: an analytic with no log-source reference detects nothing
+// through a data component, so the strategy contributes no pair — which is what
+// 62 of the 920 pinned strategies do. Erroring here would reject real data.
+func TestAssembleDetectsEmptyAnalytic(t *testing.T) {
+	bundle := `{"objects":[
+	  {"type":"attack-pattern","id":"p--1","name":"One",
+	   "external_references":[{"source_name":"mitre-attack","external_id":"T1"}]},
+	  {"type":"x-mitre-data-component","id":"dc--1","name":"Process Creation",
+	   "external_references":[{"source_name":"mitre-attack","external_id":"DC0001"}]},
+	  {"type":"x-mitre-detection-strategy","id":"s--1","x_mitre_analytic_refs":["a--1"]},
+	  {"type":"x-mitre-analytic","id":"a--1"},
+	  {"type":"relationship","id":"r--1","relationship_type":"detects",
+	   "source_ref":"s--1","target_ref":"p--1"}]}`
+	m, err := assembleBundle(t, bundle)
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if len(m.detectsDC) != 0 {
+		t.Fatalf("detects pairs = %v, want none for an analytic with no log source", m.detectsDC)
+	}
+	// The component is still a node: it is a data component whether or not
+	// anything detects through it.
+	if len(m.dcIDs) != 1 || m.dcIDs[0] != "DC0001" {
+		t.Fatalf("dcIDs = %v, want [DC0001]", m.dcIDs)
+	}
+}
+
 // TestAssembleAttributeErrors pins every loud failure of the two new passes:
 // an unmapped reference must never be dropped silently.
 func TestAssembleAttributeErrors(t *testing.T) {
@@ -1334,6 +1364,39 @@ func TestAssembleAttributeErrors(t *testing.T) {
 			`{"objects":[{"type":"intrusion-set","id":"g--1","name":"Wrong",
 			  "external_references":[{"source_name":"mitre-attack","external_id":"S0009"}]}]}`,
 			"group S0009: id does not match the intrusion-set object",
+		},
+		{
+			"data component with no label",
+			`{"objects":[{"type":"x-mitre-data-component","id":"dc--1","name":"",
+			  "external_references":[{"source_name":"mitre-attack","external_id":"DC0001"}]}]}`,
+			"data component DC0001 has no label",
+		},
+		{
+			"group node with no label",
+			`{"objects":[{"type":"intrusion-set","id":"g--1","name":"",
+			  "external_references":[{"source_name":"mitre-attack","external_id":"G0001"}]}]}`,
+			"group G0001 has no label",
+		},
+		{
+			"uses on a grouping object with no external id",
+			`{"objects":[
+			  {"type":"attack-pattern","id":"p--1","name":"One",
+			   "external_references":[{"source_name":"mitre-attack","external_id":"T1"}]},
+			  {"type":"malware","id":"s--nosid","name":"No Id Software"},
+			  {"type":"relationship","id":"r--1","relationship_type":"uses",
+			   "source_ref":"s--nosid","target_ref":"p--1"}]}`,
+			"uses references s--nosid with no external id",
+		},
+		{
+			"uses on a target that is not software",
+			`{"objects":[
+			  {"type":"intrusion-set","id":"g--1","name":"Actor One",
+			   "external_references":[{"source_name":"mitre-attack","external_id":"G0001"}]},
+			  {"type":"campaign","id":"c--1","name":"Campaign One",
+			   "external_references":[{"source_name":"mitre-attack","external_id":"C0001"}]},
+			  {"type":"relationship","id":"r--1","relationship_type":"uses",
+			   "source_ref":"g--1","target_ref":"c--1"}]}`,
+			"uses references unknown target c--1",
 		},
 	}
 	for _, c := range cases {

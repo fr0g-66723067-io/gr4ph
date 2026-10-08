@@ -325,6 +325,10 @@ func parseAttack(data []byte, dom domain, out map[string]*ttpInfo) error {
 		}
 		id := attackID(obj)
 		if id == "" {
+			// Not a node: an attack-pattern with no mitre-attack external id
+			// has no key to be looked up by, so the whole object is invisible
+			// here. A relationship that names it fails loudly in
+			// parseAttackGraph instead.
 			continue
 		}
 		bad := obj.Revoked || obj.Deprecated
@@ -502,6 +506,11 @@ func parseAttackGraph(data []byte, g *attackGraph) error {
 			g.anRefs[obj.UUID] = obj.AnalyticRefs
 		case "x-mitre-tactic":
 			if id != "" {
+				// Last registration wins, which is safe on the pinned data: no
+				// TA id is defined by two bundles (measured: 41 ids, 0
+				// redefinitions, and no x_mitre_shortname repeats within a
+				// bundle). A future release that redefines one takes the
+				// last-parsed bundle's label.
 				g.tactics[id] = obj.Name
 			}
 		case "x-mitre-analytic":
@@ -513,6 +522,9 @@ func parseAttackGraph(data []byte, g *attackGraph) error {
 		default:
 			kind, isGroup := groupKindOf(obj.Type)
 			if !isGroup || id == "" {
+				// Not a node: a grouping object with no mitre-attack external
+				// id has no key (7 malware objects in 19.2). A uses
+				// relationship that names one fails loudly below instead.
 				continue
 			}
 			if !strings.HasPrefix(id, kind.idPrefix()) {
@@ -564,6 +576,14 @@ func parseAttackGraph(data []byte, g *attackGraph) error {
 
 // detectedComponents resolves the data components of one detection strategy:
 // strategy -> analytics -> log source references -> data components.
+//
+// A strategy that names no analytic is an error. An analytic that names no data
+// component is not: it detects nothing through one, so it contributes no pair.
+// That is the common case in 19.2, where 69 of the 2066 analytics carry no
+// x_mitre_log_source_references entry, and all of the 62 strategies whose
+// analytics lack one resolve to no data component. The other direction is an
+// error: a log source reference whose component has no x-mitre-data-component
+// object would silently drop a pair.
 func (g *attackGraph) detectedComponents(det string) ([]string, error) {
 	analytics := g.anRefs[det]
 	if len(analytics) == 0 {
@@ -1085,7 +1105,7 @@ func assemble(stix map[string]*ttpInfo, g *attackGraph, d3 *d3fendData) (*model,
 	m.tacticIDs = sortedKeys(tacticOf)
 	for _, ta := range m.tacticIDs {
 		label, ok := g.tactics[ta]
-		if !ok {
+		if !ok || label == "" {
 			return nil, fmt.Errorf("tactic %s has no label", ta)
 		}
 		m.tacticLabels = append(m.tacticLabels, label)
@@ -1213,7 +1233,13 @@ func assemble(stix map[string]*ttpInfo, g *attackGraph, d3 *d3fendData) (*model,
 	// anything.
 	m.dcIDs = sortedKeys(g.dcNodes)
 	for _, dc := range m.dcIDs {
-		m.dcLabels = append(m.dcLabels, g.dcNodes[dc].label)
+		label := g.dcNodes[dc].label
+		if label == "" {
+			// An empty label is a dead key: the builder's index map skips it
+			// (claim), so DataComponent(label) could never resolve the node.
+			return nil, fmt.Errorf("data component %s has no label", dc)
+		}
+		m.dcLabels = append(m.dcLabels, label)
 	}
 	dcIndex := make(map[string]int, len(m.dcIDs))
 	for i, dc := range m.dcIDs {
@@ -1236,7 +1262,12 @@ func assemble(stix map[string]*ttpInfo, g *attackGraph, d3 *d3fendData) (*model,
 	// their uses edges split into the technique family and the software family.
 	m.groupIDs = sortedKeys(g.nodes)
 	for _, id := range m.groupIDs {
-		m.groupLabels = append(m.groupLabels, g.nodes[id].label)
+		label := g.nodes[id].label
+		if label == "" {
+			// Same dead-key rule as the data components above.
+			return nil, fmt.Errorf("group %s has no label", id)
+		}
+		m.groupLabels = append(m.groupLabels, label)
 		m.groupKinds = append(m.groupKinds, g.nodes[id].kind)
 	}
 	groupIndex := make(map[string]int, len(m.groupIDs))

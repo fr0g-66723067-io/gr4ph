@@ -138,10 +138,12 @@ var (
 	ErrBuilderUsed = errors.New("gr4ph: builder already built")
 	// ErrReservedName: the key is the reserved union-plane name "any".
 	ErrReservedName = errors.New(`gr4ph: reserved name "any"`)
-	// ErrTooManyTactics: more than 256 registered tactics.
-	ErrTooManyTactics = errors.New("gr4ph: tactic space exhausted (256)")
-	// ErrTooManyPlatforms: more than 256 registered platforms.
-	ErrTooManyPlatforms = errors.New("gr4ph: platform space exhausted (256)")
+	// ErrTooManyTactics: more than 64 registered tactics, which is the width of
+	// the uint64 mask TTPTactics returns.
+	ErrTooManyTactics = errors.New("gr4ph: tactic space exhausted (64)")
+	// ErrTooManyPlatforms: more than 64 registered platforms, which is the width
+	// of the uint64 mask TTPPlatforms returns.
+	ErrTooManyPlatforms = errors.New("gr4ph: platform space exhausted (64)")
 	// ErrUnknownTactic: the tactic id was never registered.
 	ErrUnknownTactic = errors.New("gr4ph: unknown tactic id")
 	// ErrUnknownPlatform: the platform id was never registered.
@@ -353,10 +355,14 @@ func (b *Builder) AddDefRel(name string) (DefRel, error) {
 	return dr, nil
 }
 
-// AddTactic registers an ATT&CK tactic and returns its dense id (0..255). It is
+// AddTactic registers an ATT&CK tactic and returns its dense id (0..63). It is
 // idempotent on the normalised TA id. The TA id is the only lookup key: tactic
 // labels repeat across domains ("Impact" is TA0040, TA0105 and TA0034), so a
 // label key would be ambiguous.
+//
+// The space is 64 because a technique's tactic mask is one uint64 (bit i is
+// TacticID(i)): 64 entries keep every stride at one word, so no bit a tactic edge
+// writes can fall outside the word TTPTactics reads.
 func (b *Builder) AddTactic(id, label string) (Tactic, error) {
 	if b.Built() {
 		return 0, ErrBuilderUsed
@@ -369,7 +375,7 @@ func (b *Builder) AddTactic(id, label string) (Tactic, error) {
 	if ta, ok := b.tacticIndex[key]; ok {
 		return Tactic(ta), nil
 	}
-	if len(b.tacticIDs) >= 256 {
+	if len(b.tacticIDs) >= 64 {
 		return 0, ErrTooManyTactics
 	}
 	ta := Tactic(len(b.tacticIDs))
@@ -379,8 +385,9 @@ func (b *Builder) AddTactic(id, label string) (Tactic, error) {
 	return ta, nil
 }
 
-// AddPlatform registers a platform and returns its dense id (0..255). It is
-// idempotent on the normalised name.
+// AddPlatform registers a platform and returns its dense id (0..63). It is
+// idempotent on the normalised name. The space is 64 for the same reason
+// AddTactic's is: a technique's platform mask is one uint64.
 func (b *Builder) AddPlatform(name string) (Platform, error) {
 	if b.Built() {
 		return 0, ErrBuilderUsed
@@ -393,7 +400,7 @@ func (b *Builder) AddPlatform(name string) (Platform, error) {
 	if p, ok := b.platformIndex[key]; ok {
 		return Platform(p), nil
 	}
-	if len(b.platformNames) >= 256 {
+	if len(b.platformNames) >= 64 {
 		return 0, ErrTooManyPlatforms
 	}
 	p := Platform(len(b.platformNames))
@@ -757,11 +764,11 @@ func (b *Builder) GroupCount() int { return len(b.groupIDs) }
 // wordsFor returns the number of 64-bit words needed for n bits.
 func wordsFor(n int) int { return (n + 63) / 64 }
 
-// Build freezes the graph into an immutable Engine: it materialises all six
-// matrix blocks, folds each union plane 0 from the predicate planes, and
-// transposes the countermeasure -> technique block. The builder must not be
-// used afterwards: every Add* then returns ErrBuilderUsed, and a second Build
-// returns ErrBuilderUsed too.
+// Build freezes the graph into an immutable Engine: it materialises every
+// matrix block and its transpose, folds each union plane 0 from the predicate
+// planes, and copies the per-technique attribute masks and the group-kind
+// column. The builder must not be used afterwards: every Add* then returns
+// ErrBuilderUsed, and a second Build returns ErrBuilderUsed too.
 func (b *Builder) Build() (*Engine, error) {
 	if b.Built() {
 		return nil, ErrBuilderUsed
