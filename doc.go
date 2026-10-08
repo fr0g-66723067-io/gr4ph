@@ -3,11 +3,14 @@
 // Package gr4ph is a SIMD bitmatrix engine over MITRE ATT&CK (enterprise, ICS,
 // mobile) and D3FEND.
 //
-// It flattens three node partitions — techniques (TTPs, including every
-// sub-technique), artifacts and countermeasures — into a frozen set of
-// structure-of-arrays bitmatrix planes. Every directed relation is materialised
-// in both directions, so a traversal is a row fetch plus vector bitwise ops:
-// no pointer chasing, no per-edge allocation, no strings on the hot path.
+// It flattens five node partitions — techniques (TTPs, including every
+// sub-technique), artifacts, countermeasures, data components (DC) and grouping
+// nodes (actors G, software S, campaigns C) — into a frozen set of
+// structure-of-arrays bitmatrix planes, plus the per-technique ATT&CK attribute
+// masks (tactics, platforms, sub-technique flag). Every directed relation is
+// materialised in both directions, so a traversal is a row fetch plus vector
+// bitwise ops: no pointer chasing, no per-edge allocation, no strings on the
+// hot path.
 //
 // # Build requirement
 //
@@ -26,10 +29,11 @@
 // # Hot path vs cold path
 //
 // Hot-path methods take and return only uint16-derived ids (TTP, Artifact,
-// Countermeasure) and never allocate: callers supply dst slices for results and
-// a scratch row for set/roll-up operations. Strings appear only in the cold
-// path — building the graph, and formatting ids back into log lines
-// (Incident, TTPName, TTPLabel, Response, ...).
+// Countermeasure, DataComponent, Group) or one-word attribute masks, and never
+// allocate: callers supply dst slices for results and a scratch row for
+// set/roll-up operations. Strings appear only in the cold path — building the
+// graph, and formatting ids back into log lines (Incident, TTPName, TTPLabel,
+// Response, ...).
 //
 // # Relations
 //
@@ -39,18 +43,26 @@
 //	ttpArt / artTTP   technique -> artifact        (offensive, Rel)
 //	cmArt  / artCM    countermeasure -> artifact   (defensive, DefRel)
 //
-// The countermeasure -> technique link is a single inferred predicate
-// (defends-against), so it needs no plane index:
+// The remaining families are single inferred predicates, so they need no plane
+// index:
 //
-//	cmTTP  / ttpCM     countermeasure -> technique
+//	cmTTP  / ttpCM         countermeasure -> technique   (defends-against)
+//	tacticTTP / ttpTactic  tactic -> technique           (assignment; mask per technique)
+//	platformTTP / ttpPlatform  platform -> technique      (assignment; mask per technique)
+//	dcTTP  / ttpDC         data component -> technique   (detects)
+//	grpTTP / ttpGrp        grouping node -> technique    (uses)
+//	grpSoftware / softwareGrp  grouping node -> software (uses)
+//
+// ttpFlags is the per-technique attribute column; Build derives the
+// sub-technique bit from the hierarchy, so it cannot disagree with it.
 //
 // # Roll-up
 //
 // The ATT&CK hierarchy is carried as data (parent index + child count), never
 // baked into the matrices, so callers choose precision explicitly: the exact
-// methods (Artifacts, TTPs, CountermeasuresForTTP, ...) follow edges only,
-// while the *Rollup variants expand a parent onto its direct children or
-// collapse sub-techniques onto their parent.
+// methods (Artifacts, TTPs, CountermeasuresForTTP, DataComponentsForTTP, ...)
+// follow edges only, while the *Rollup variants expand a parent onto its direct
+// children or collapse sub-techniques onto their parent.
 //
 // See README.md for the full API, the memory layout and the two end-to-end
 // flows (defensive triage and authorized offensive planning).

@@ -114,6 +114,35 @@ echo '--- ./gr4ph ttp T0821'
 
 echo
 echo '==============================================================================='
+echo 'Defence 7 — the ATT&CK attributes and the two new partitions'
+echo '==============================================================================='
+
+echo
+echo '--- ./gr4ph ttp T1003.001'
+./gr4ph ttp T1003.001                 # the header carries the attribute masks and the data components / groups
+
+echo
+echo '--- ./gr4ph dc DC0084'
+./gr4ph dc DC0084                     # a data component: the techniques its log sources detect
+
+echo
+echo '--- ./gr4ph group G0007'
+./gr4ph group G0007                   # an actor: what it uses, and who uses it
+
+echo
+echo '--- ./gr4ph group S0002'
+./gr4ph group S0002                   # a software node: the other direction of the same family
+
+echo
+echo '--- ./gr4ph tactic TA0005'
+./gr4ph tactic TA0005                 # an ATT&CK tactic by TA id (labels repeat across domains)
+
+echo
+echo '--- ./gr4ph platform Windows'
+./gr4ph platform Windows              # one platform: which techniques run on it
+
+echo
+echo '==============================================================================='
 echo 'Attack 2 — how much surface there is'
 echo '==============================================================================='
 

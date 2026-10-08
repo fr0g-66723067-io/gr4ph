@@ -4,9 +4,11 @@ package gr4ph
 
 import "strconv"
 
-// Engine is the frozen graph: six bitmatrix blocks plus the cold-path tables.
-// It is immutable after Build, so any number of goroutines may query it
-// concurrently as long as each supplies its own dst and scratch slices.
+// Engine is the frozen graph: six many-predicate bitmatrix blocks, ten
+// single-predicate blocks, the per-technique attribute columns and the
+// cold-path tables. It is immutable after Build, so any number of goroutines
+// may query it concurrently as long as each supplies its own dst and scratch
+// slices.
 //
 // # Result contract
 //
@@ -22,8 +24,8 @@ import "strconv"
 // set can never crash a traversal. Misuse of the *engine*'s own dimensions
 // still panics, because it is a programming error with no sensible fallback:
 // a relation id >= RelCount()+1 (or a defensive relation id >=
-// DefRelCount()+1), a Kind that is not one of the three partitions
-// (WordsPerRow panics "gr4ph: unknown kind"), or a scratch row shorter than
+// DefRelCount()+1), a Kind that is not one of the four partitions with a row
+// stride (WordsPerRow panics "gr4ph: unknown kind"), or a scratch row shorter than
 // WordsPerRow(returned partition). The scratch check runs before the id bounds
 // check, so an undersized scratch panics even when the id is out of range.
 //

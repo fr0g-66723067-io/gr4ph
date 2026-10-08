@@ -1,18 +1,21 @@
 # gr4ph
 
 A SIMD bitmatrix engine over **MITRE ATT&CK** (enterprise, ICS, mobile) crossed with **D3FEND**:
-three node partitions — techniques (TTPs, sub-techniques included), artifacts and countermeasures —
-flattened into a frozen set of structure-of-arrays bitmatrix planes.
+five node partitions — techniques (TTPs, sub-techniques included), artifacts, countermeasures, data
+components (DC) and grouping nodes (actors G, software S, campaigns C) — flattened into a frozen set of
+structure-of-arrays bitmatrix planes, plus the per-technique ATT&CK attribute masks (tactics, platforms,
+sub-technique flag).
 
 Every directed relation is materialised in **both** directions, so a traversal is one row fetch plus
 vector bitwise ops: no pointer chasing, no per-edge allocation, no strings on the hot path.
 Sub-technique roll-up is explicit (`ArtifactsRollup`, `TTPsRollup`, `CountermeasuresForTTPRollup`,
-`TTPsForCountermeasureRollup`), and the countermeasure chain answers "which countermeasures apply to
-this artifact, directly or through the techniques that touch it".
+`TTPsForCountermeasureRollup`, `TTPsForGroupRollup`, `DataComponentsForTTPRollup`), and the
+countermeasure chain answers "which countermeasures apply to this artifact, directly or through the
+techniques that touch it".
 
 * Go 1.27, **standard library only** (no third-party dependencies).
-* Hot path takes and returns `uint16`-derived ids (`TTP`, `Artifact`, `Countermeasure`) and allocates
-  **nothing** — callers own `dst` and `scratch`.
+* Hot path takes and returns `uint16`-derived ids (`TTP`, `Artifact`, `Countermeasure`, `DataComponent`,
+  `Group`) or one-word attribute masks, and allocates **nothing** — callers own `dst` and `scratch`.
 * Strings live only in the cold path: building the graph and formatting ids back into log lines.
 
 ## Build requirement
@@ -91,29 +94,46 @@ for the library. Flags may precede or follow the queries (`-json` may also prece
 
 | command | query | flags | prints |
 |---|---|---|---|
-| `ttp` | technique id, label or alias | `-rel <name>`, `-json` | `out artifacts`, `out artifacts rollup`, `in countermeasures`, `in countermeasures rollup` |
+| `ttp` | technique id, label or alias | `-rel <name>`, `-json` | `out artifacts`, `out artifacts rollup`, `in countermeasures`, `in countermeasures rollup`, `in data components`, `in data components rollup`, `in groups` |
 | `artifact` | artifact name or label | `-rel <name>`, `-defrel <name>`, `-json` | `in techniques`, `in techniques rollup`, `in countermeasures`, `in countermeasures viaTTPs` |
 | `cm` | countermeasure id, label or alias | `-defrel <name>`, `-json` | `out artifacts`, `out techniques`, `out techniques rollup` |
+| `dc` | data component id (`DC0084`) or label | `-json` | `out techniques` |
+| `group` | grouping-node id (`G0007`, `S0002`, `C0001`) or label | `-json` | `out techniques`, `out software`, `in groups` |
+| `tactic` | ATT&CK tactic id (`TA0005`) | `-json` | `out techniques` |
+| `platform` | platform name (`Windows`) | `-json` | `out techniques` |
 | `rel` | relation name | `-family <off\|def>`, `-json` | one line per family the name is registered in: plane id, distinct edges, sources |
 
-`ttp` prints the artifacts a technique touches and the countermeasures that defend it, exact and rolled
-up (the roll-up adds its direct sub-techniques). `artifact` prints the techniques that touch it and the
-countermeasures linked to it, directly and via those techniques. `cm` prints the artifacts and techniques
-a countermeasure covers. `rel` walks a plane instead of a node. `-rel` (default `any`, the union plane)
+`ttp` prints the artifacts a technique touches, the countermeasures that defend it, the data components
+that detect it and the grouping nodes recorded as using it, exact and rolled up (the roll-up adds its
+direct sub-techniques). `artifact` prints the techniques that touch it and the countermeasures linked to
+it, directly and via those techniques. `cm` prints the artifacts and techniques a countermeasure covers.
+`dc`, `group`, `tactic` and `platform` answer the two new partitions and the attribute vocabularies in
+the reverse direction: the techniques a data component detects, the techniques and software a grouping
+node uses plus who uses it, and the techniques of one tactic or platform. `rel` walks a plane instead of
+a node. `-rel` (default `any`, the union plane)
 picks the offensive plane of the `ttp` and `artifact` sets, `-defrel` the defensive one; the sets that
 take no relation are the roll-ups of `cm` and `in countermeasures viaTTPs`, which is the direct links
 unioned with the links of the techniques touching the artifact. Relations exist in the two families
 independently — 11 names, `blocks` among them, are registered in both — so `rel` prints one line per
 family and `-family` narrows it. A technique ATT&CK has revoked or deprecated prints ` revoked=true` in
-its `ttp` header (`"revoked":true` under `-json`); its D3FEND links live on the successor id.
+its `ttp` header (`"revoked":true` under `-json`); its D3FEND links live on the successor id. The same
+header carries the ATT&CK attributes: ` subtechnique=true` for a sub-technique, ` tactics=` with the
+`TA` ids of its tactic mask and ` platforms=` with the names of its platform mask, both in vocabulary
+order and both absent when the technique has no ATT&CK object (the D3FEND-named nodes) — under `-json`
+they are `"subtechnique"`, `"tactics"` and `"platforms"`, and `tactic` queries only by `TA` id because
+11 tactic labels name two or three tactics across the three domains. A grouping node's header names its
+kind (`kind=actor|software|campaign`, `"group_kind"` under `-json`).
 
 ```sh
-GOEXPERIMENT=simd go run ./cmd/gr4ph ttp T1003.001
-ttp T1003.001 "LSASS Memory" domain=enterprise parent=T1003 children=0
+$ ./gr4ph ttp T1003.001
+ttp T1003.001 "LSASS Memory" domain=enterprise parent=T1003 children=0 subtechnique=true tactics=TA0006 platforms=Windows
   out artifacts (2): AuthenticationService "Authentication Service", Process
   out artifacts rollup (2): AuthenticationService "Authentication Service", Process
   in  countermeasures (12): Application-basedProcessIsolation "Application-based Process Isolation", Hardware-basedProcessIsolation "Hardware-based Process Isolation", HostReboot "Host Reboot", HostShutdown "Host Shutdown", Kernel-basedProcessIsolation "Kernel-based Process Isolation", ProcessLineageAnalysis "Process Lineage Analysis", ProcessSelf-ModificationDetection "Process Self-Modification Detection", ProcessSpawnAnalysis "Process Spawn Analysis", ProcessSuspension "Process Suspension", ProcessTermination "Process Termination", SystemCallFiltering "System Call Filtering", WebSessionAccessMediation "Web Session Access Mediation"
   in  countermeasures rollup (12): Application-basedProcessIsolation "Application-based Process Isolation", Hardware-basedProcessIsolation "Hardware-based Process Isolation", HostReboot "Host Reboot", HostShutdown "Host Shutdown", Kernel-basedProcessIsolation "Kernel-based Process Isolation", ProcessLineageAnalysis "Process Lineage Analysis", ProcessSelf-ModificationDetection "Process Self-Modification Detection", ProcessSpawnAnalysis "Process Spawn Analysis", ProcessSuspension "Process Suspension", ProcessTermination "Process Termination", SystemCallFiltering "System Call Filtering", WebSessionAccessMediation "Web Session Access Mediation"
+  in  data components (5): DC0013 "User Account Metadata", DC0032 "Process Creation", DC0035 "Process Access", DC0039 "File Creation", DC0063 "Windows Registry Key Modification"
+  in  data components rollup (5): DC0013 "User Account Metadata", DC0032 "Process Creation", DC0035 "Process Access", DC0039 "File Creation", DC0063 "Windows Registry Key Modification"
+  in  groups (79): C0014 "Operation Wocao", C0025 "2016 Ukraine Electric Power Attack", C0029 "Cutting Edge", C0030 "Triton Safety Instrumented System Attack", C0032, C0038 "HomeLand Justice", C0058 "SharePoint ToolShell Exploitation", C0061 "Operation Digital Eye", C0063 "2025 Poland Wiper Attacks", G0003 "Cleaver", G0004 "Ke3chang", G0006 "APT1", G0007 "APT28", G0022 "APT3", G0027 "Threat Group-3390", G0034 "Sandworm Team", G0037 "FIN6", G0049 "OilRig", G0050 "APT32", G0059 "Magic Hound", G0060 "BRONZE BUTLER", G0061 "FIN8", G0064 "APT33", G0065 "Leviathan", G0068 "PLATINUM", G0069 "MuddyWater", G0077 "Leafminer", G0087 "APT39", G0091 "Silence", G0093 "GALLIUM", G0094 "Kimsuky", G0096 "APT41", G0102 "Wizard Spider", G0107 "Whitefly", G0108 "Blue Mockingbird", G0117 "Fox Kitten", G0119 "Indrik Spider", G0125 "HAFNIUM", G0129 "Mustang Panda", G0143 "Aquatic Panda", G1003 "Ember Bear", G1006 "Earth Lusca", G1016 "FIN13", G1017 "Volt Typhoon", G1023 "APT5", G1030 "Agrius", G1036 "Moonstone Sleet", G1039 "RedCurl", G1040 "Play", G1048 "UNC3886", G1051 "Medusa Group", G1054 "MirrorFace", G1055 "VOID MANTICORE", S0002 "Mimikatz", S0005 "Windows Credential Editor", S0046 "CozyCar", S0056 "Net Crawler", S0121 "Lslsass", S0154 "Cobalt Strike", S0187 "Daserf", S0192 "Pupy", S0194 "PowerSploit", S0342 "GreyEnergy", S0349 "LaZagne", S0357 "Impacket", S0363 "Empire", S0365 "Olympic Destroyer", S0367 "Emotet", S0368 "NotPetya", S0378 "PoshC2", S0428 "PoetRAT", S0439 "Okrum", S0583 "Pysa", S0606 "Bad Rabbit", S0633 "Sliver", S0681 "Lizar", S0692 "SILENTTRINITY", S1060 "Mafalda", S1242 "Qilin"
 ```
 
 ### Common queries
@@ -126,11 +146,14 @@ never a guess.
 
 ```sh
 $ ./gr4ph ttp "create account"
-ttp T1136 "Create Account" domain=enterprise children=3
+ttp T1136 "Create Account" domain=enterprise children=3 tactics=TA0003 platforms=Containers,ESXi,IaaS,Identity Provider,Linux,Network Devices,Office Suite,SaaS,Windows,macOS
   out artifacts (1): UserAccount "User Account"
   out artifacts rollup (4): CloudUserAccount "Cloud User Account", DomainUserAccount "Domain User Account", LocalUserAccount "Local User Account", UserAccount "User Account"
   in  countermeasures (7): AccessModeling "Access Modeling", AccountLocking "Account Locking", AgentAuthentication "Agent Authentication", ChangeDefaultPassword "Change Default Password", RestoreUserAccountAccess "Restore User Account Access", UnlockAccount "Unlock Account", UserAccountPermissions "User Account Permissions"
   in  countermeasures rollup (9): AccessModeling "Access Modeling", AccountLocking "Account Locking", AgentAuthentication "Agent Authentication", ChangeDefaultPassword "Change Default Password", DomainAccountMonitoring "Domain Account Monitoring", LocalAccountMonitoring "Local Account Monitoring", RestoreUserAccountAccess "Restore User Account Access", UnlockAccount "Unlock Account", UserAccountPermissions "User Account Permissions"
+  in  data components (5): DC0010 "User Account Modification", DC0014 "User Account Creation", DC0032 "Process Creation", DC0061 "File Modification", DC0064 "Command Execution"
+  in  data components rollup (8): DC0002 "User Account Authentication", DC0010 "User Account Modification", DC0014 "User Account Creation", DC0032 "Process Creation", DC0061 "File Modification", DC0064 "Command Execution", DC0067 "Logon Session Creation", DC0094 "Group Modification"
+  in  groups (5): C0025 "2016 Ukraine Electric Power Attack", G0119 "Indrik Spider", G1015 "Scattered Spider", G1045 "Salt Typhoon", S1199 "LockBit 2.0"
 $ ./gr4ph artifact "authentication service"
 artifact AuthenticationService "Authentication Service"
   in  techniques (5): T1003.001 "LSASS Memory", T1003.002 "Security Account Manager", T1212 "Exploitation for Credential Access", T1550 "Use Alternate Authentication Material", T1556 "Modify Authentication Process"
@@ -145,6 +168,22 @@ cm CredentialHardening "Credential Hardening"
 $ ./gr4ph ttp "lsass memroy"; echo $?          # typos do not resolve
 gr4ph: no such technique: lsass memroy
 1
+```
+
+The two new partitions answer their own direction. `dc` is the data-component side of `detects`
+(the technique rows are usually on the sub-technique, so `ttp` prints the roll-up too), and `group`
+walks the one partition that holds actors, software and campaigns, printing the kind in the header
+because the id prefix is the only thing that tells them apart.
+
+```sh
+$ ./gr4ph dc DC0084
+dc DC0084 "Active Directory Credential Request"
+  out techniques (9): T1207 "Rogue Domain Controller", T1550.002 "Pass the Hash", T1550.003 "Pass the Ticket", T1558 "Steal or Forge Kerberos Tickets", T1558.001 "Golden Ticket", T1558.002 "Silver Ticket", T1558.003 "Kerberoasting", T1558.004 "AS-REP Roasting", T1649 "Steal or Forge Authentication Certificates"
+$ ./gr4ph group S0002
+group S0002 "Mimikatz" kind=software
+  out techniques (17): T1003.001 "LSASS Memory", T1003.002 "Security Account Manager", T1003.004 "LSA Secrets", T1003.006 "DCSync", T1098 "Account Manipulation", T1134.005 "SID-History Injection", T1207 "Rogue Domain Controller", T1547.005 "Security Support Provider", T1550.002 "Pass the Hash", T1550.003 "Pass the Ticket", T1552.004 "Private Keys", T1555 "Credentials from Password Stores", T1555.003 "Credentials from Web Browsers", T1555.004 "Windows Credential Manager", T1558.001 "Golden Ticket", T1558.002 "Silver Ticket", T1649 "Steal or Forge Authentication Certificates"
+  out software (0): -
+  in  groups (60): C0014 "Operation Wocao", C0017, C0018, C0024 "SolarWinds Compromise", C0030 "Triton Safety Instrumented System Attack", C0032, C0038 "HomeLand Justice", C0058 "SharePoint ToolShell Exploitation", C0061 "Operation Digital Eye", G0003 "Cleaver", G0004 "Ke3chang", G0006 "APT1", G0007 "APT28", G0008 "Carbanak", G0010 "Turla", G0011 "PittyTiger", G0016 "APT29", G0027 "Threat Group-3390", G0034 "Sandworm Team", G0035 "Dragonfly", G0037 "FIN6", G0045 "menuPass", G0046 "FIN7", G0049 "OilRig", G0050 "APT32", G0059 "Magic Hound", G0060 "BRONZE BUTLER", G0064 "APT33", G0069 "MuddyWater", G0076 "Thrip", G0077 "Leafminer", G0079 "DarkHydrus", G0080 "Cobalt Group", G0082 "APT38", G0087 "APT39", G0088 "TEMP.Veles", G0092 "TA505", G0093 "GALLIUM", G0094 "Kimsuky", G0096 "APT41", G0102 "Wizard Spider", G0107 "Whitefly", G0108 "Blue Mockingbird", G0114 "Chimera", G0119 "Indrik Spider", G0129 "Mustang Panda", G0131 "Tonto Team", G0135 "BackdoorDiplomacy", G1001 "HEXANE", G1004 "LAPSUS$", G1006 "Earth Lusca", G1015 "Scattered Spider", G1016 "FIN13", G1017 "Volt Typhoon", G1023 "APT5", G1024 "Akira", G1030 "Agrius", G1040 "Play", G1043 "BlackByte", G1051 "Medusa Group"
 ```
 
 Defensive triage from the artifact an alert names: 5 techniques touch `Process`, they collapse to 3
@@ -198,7 +237,7 @@ $ ./gr4ph -json rel blocks
 {"query":"blocks","kind":"rel","name":"blocks","planes":[{"family":"offensive","id":4,"count":41,"edges":2,"sources":2},{"family":"defensive","id":3,"count":38,"edges":6,"sources":6}]}
 ```
 
-`examples/scenarios.sh` is a plain list of `gr4ph` commands — the four commands, the relation and family
+`examples/scenarios.sh` is a plain list of `gr4ph` commands — all eight commands, the relation and family
 filters, several queries per call, `-json`, the failures and `help` — grouped into defence and attack
 scenarios, each scenario under a banner heading and each command labelled with the invocation that
 produced the block below it. Nothing is checked and nothing is trimmed: it prints each answer in full, so
@@ -210,9 +249,11 @@ resolved query instead of text.
 
 ## Data model
 
-Three partitions, six matrix blocks, two many-predicate relation families plus one single-predicate
-family. Plane 0 of each many-predicate family is the union of all its predicates (`RelAny` /
-`DefRelAny`); the countermeasure → technique link is one inferred predicate and needs no plane index.
+Five partitions, seventeen frozen arrays: six many-predicate bitmatrix blocks, ten single-predicate
+blocks and one per-technique flag column. Plane 0 of each many-predicate family is the union of all its
+predicates (`RelAny` / `DefRelAny`); every other family is one inferred predicate and needs no plane
+index. The attribute columns are one `uint64` per technique (a 41-tactic and a 15-platform mask, so bits
+above the vocabulary are always zero) plus the derived sub-technique flag.
 
 | block | shape | meaning |
 |---|---|---|
@@ -222,9 +263,21 @@ family. Plane 0 of each many-predicate family is the union of all its predicates
 | `artCM` | `[nDefRel][nArt][wCM]` | artifact → countermeasure (transpose) |
 | `cmTTP` | `[nCM][wTTP]` | countermeasure → technique (defends-against) |
 | `ttpCM` | `[nTTP][wCM]` | technique → countermeasure (transpose) |
+| `tacticTTP` | `[nTactic][wTTP]` | tactic → technique (assignment) |
+| `ttpTactic` | `[nTTP][wTactic]` | technique → tactic mask |
+| `platformTTP` | `[nPlatform][wTTP]` | platform → technique (assignment) |
+| `ttpPlatform` | `[nTTP][wPlatform]` | technique → platform mask |
+| `ttpFlags` | `[nTTP]` | technique attribute flags (sub-technique) |
+| `dcTTP` | `[nDC][wTTP]` | data component → technique (detects) |
+| `ttpDC` | `[nTTP][wDC]` | technique → data component (transpose) |
+| `grpTTP` | `[nGrp][wTTP]` | group → technique (uses) |
+| `ttpGrp` | `[nTTP][wGrp]` | technique → group (transpose) |
+| `grpSoftware` | `[nGrp][wGrp]` | group → software (uses) |
+| `softwareGrp` | `[nGrp][wGrp]` | software → group (transpose) |
 
 Rows are exact-length (no padding), LSB-first within each `uint64`. For the pinned dataset
-(1186 techniques, 247 artifacts, 157 countermeasures, 41 + 38 predicates):
+(1186 techniques, 247 artifacts, 157 countermeasures, 123 data components, 1212 groups, 41 tactics,
+15 platforms, 41 + 38 predicates):
 
 | block | planes | words | bytes |
 |---|---|---|---|
@@ -234,12 +287,30 @@ Rows are exact-length (no padding), LSB-first within each `uint64`. For the pinn
 | `artCM` | 39 | 28,899 | 231,192 |
 | `cmTTP` | 1 | 2,983 | 23,864 |
 | `ttpCM` | 1 | 3,558 | 28,464 |
-| **total** | | **456,286** | **3,650,288 (3.48 MiB)** |
+| **six-block subtotal** | | **456,286** | **3,650,288 (3.48 MiB)** |
+| `tacticTTP` | 1 | 779 | 6,232 |
+| `ttpTactic` | 1 | 1,186 | 9,488 |
+| `platformTTP` | 1 | 285 | 2,280 |
+| `ttpPlatform` | 1 | 1,186 | 9,488 |
+| `ttpFlags` | 1 | 1,186 | 9,488 |
+| `dcTTP` | 1 | 2,337 | 18,696 |
+| `ttpDC` | 1 | 2,372 | 18,976 |
+| `grpTTP` | 1 | 23,028 | 184,224 |
+| `ttpGrp` | 1 | 22,534 | 180,272 |
+| `grpSoftware` | 1 | 23,028 | 184,224 |
+| `softwareGrp` | 1 | 23,028 | 184,224 |
+| **total** | | **557,235** | **4,457,880 (4.25 MiB)** |
 | hierarchy (`ttpParents` + `ttpChildCount`) | | | 4,744 |
 | revoked flag (`ttpRevoked`) | | | 1,186 |
+| tactic vocabulary (`tacticIDs` + `tacticLabels` + `tacticIndex`) | | | cold |
+| platform vocabulary (`platformNames` + `platformIndex`) | | | cold |
+| data components (`dcIDs` + `dcLabels` + `dcIndex`) | | | cold |
+| grouping nodes (`groupIDs` + `groupLabels` + `groupKinds` + `groupIndex`) | | | cold |
 
-Strides: `WordsPerRow(KindTTP)` = 19, `KindArtifact` = 4, `KindCountermeasure` = 3. A single plane is
-37 KiB (technique) / 37 KiB (artifact) — L1/L2 resident; the whole graph sits in L3.
+Strides: `WordsPerRow(KindTTP)` = 19, `KindArtifact` = 4, `KindCountermeasure` = 3,
+`KindDataComponent` = 2; the attribute masks are one word per technique (`wTactic` = `wPlatform` = 1).
+A single plane is 37 KiB (technique) / 37 KiB (artifact) — L1/L2 resident; the six existing blocks keep
+their address range, and the new arrays follow them, so the hot six are unchanged.
 
 ## API
 
@@ -247,11 +318,13 @@ Sizes and cold path:
 
 | method | work | alloc |
 |---|---|---|
-| `TTPCount` `ArtifactCount` `CountermeasureCount` `RelCount` `DefRelCount` `WordsPerRow` | O(1) | 0 |
-| `Incident(alert) (TTP, bool)`, `Artifact(s)`, `Countermeasure(s)` | map lookup (trim + lower); a shared technique label resolves to its live carrier, or to the lowest-index match when every carrier is revoked | cold |
-| `TTPName` `TTPLabel` `ArtifactName` `ArtifactLabel` `CountermeasureName` `CountermeasureLabel` `TTPDomain` `TTPRevoked` | O(1) | 0 |
+| `TTPCount` `ArtifactCount` `CountermeasureCount` `DataComponentCount` `GroupCount` `TacticCount` `PlatformCount` `RelCount` `DefRelCount` `WordsPerRow` | O(1) | 0 |
+| `Incident(alert) (TTP, bool)`, `Artifact(s)`, `Countermeasure(s)`, `DataComponent(s)`, `Group(s)` | map lookup (trim + lower); a shared technique label resolves to its live carrier, or to the lowest-index match when every carrier is revoked; a shared grouping label resolves to the earliest registration | cold |
+| `Tactic(id) (Tactic, bool)`, `Platform(name) (Platform, bool)` | map lookup (trim + lower); only the `TA` id keys a tactic — 11 tactic labels name two or three tactics across the three domains | cold |
+| `TTPName` `TTPLabel` `ArtifactName` `ArtifactLabel` `CountermeasureName` `CountermeasureLabel` `DataComponentID` `DataComponentLabel` `GroupID` `GroupLabel` `GroupKind` `TacticID` `TacticLabel` `PlatformName` `TTPDomain` `TTPRevoked` | O(1) | 0 |
 | `Rel` `DefRel` | map lookup (trim + lower), `"any"` is the union plane and cannot be registered (`ErrReservedName`) | cold |
 | `RelName` `DefRelName` | O(1) | 0 |
+| `TTPTactics` `TTPPlatforms` `TTPFlags` `TTPSubTechnique` | one attribute load / one shift+compare | 0 |
 | `Response(dst, ids)` `CountermeasureResponse(dst, ids)` | formats `<id> <label>` | cold |
 | `TTPParent` `TTPChildCount` `TTPChildren` | O(1) / O(children) | 0 |
 
@@ -278,6 +351,12 @@ Traversals (all take/return ids, all allocate nothing):
 | `TTPsRollup` `TTPsRollupRel` `TTPsForCountermeasureRollup` | 19-word row scan + parent map + 19-word bitset |
 | `CountermeasuresForTTPRollup` | (1 + children) × 3 words, vector OR |
 | `CountermeasuresForArtifactViaTTPs` | 19-word row scan + ≤ 29 × 3-word ORs + 3-word direct row |
+| `TTPsForTactic` `TTPsForPlatform` `TTPsForDataComponent` `GroupsForTTP` | 1 row (19 words) |
+| `DataComponentsForTTP` | 1 row (2 words) |
+| `TTPsForGroup` `SoftwareForGroup` `GroupsForSoftware` | 1 row (19 words) |
+| `DataComponentDegree` `SoftwareDegree` | popcount of one row |
+| `DataComponentsForTTPRollup` | (1 + children) × 2 words, vector OR |
+| `TTPsForGroupRollup` | 19-word row scan + parent map + 19-word bitset |
 | `TTPsAny` `TTPsAll` `ArtifactsAny` `ArtifactsAll` | k × row words, vector OR/AND |
 
 Builder (cold path; the builder is single-use and then frozen by `Build`):
@@ -288,7 +367,9 @@ Builder (cold path; the builder is single-use and then frozen by `Build`):
 | `AddRel(name)` `AddDefRel(name)` | plane ids in registration order; `"any"` is reserved |
 | `AddTTP(id, label, dom, parent, revoked, aliases…)` | `ErrDepthExceeded` / `ErrNonContiguousChild` / `ErrUnknownParent` |
 | `AddArtifact(name, label)` `AddCountermeasure(id, label, aliases…)` | |
-| `AddEdge(t, a, r)` `AddDefEdge(cm, a, dr)` `AddDefendsEdge(cm, t)` | edges are ORed into the planes |
+| `AddDataComponent(id, label)` `AddGroup(id, label, kind)` | `ErrUnknownGroupKind` on a kind outside the three constants |
+| `AddTactic(id, label)` `AddPlatform(name)` | dense ids in registration order (≤ 256: `ErrTooManyTactics` / `ErrTooManyPlatforms`) |
+| `AddEdge(t, a, r)` `AddDefEdge(cm, a, dr)` `AddDefendsEdge(cm, t)` `AddTacticEdge(t, ta)` `AddPlatformEdge(t, p)` `AddDetectsEdge(dc, t)` `AddGroupUsesEdge(g, t)` `AddGroupSoftwareEdge(from, to)` | edges are ORed into the planes; an unregistered endpoint is `ErrUnknownTTP` / `ErrUnknownArtifact` / `ErrUnknownCountermeasure` / `ErrUnknownTactic` / `ErrUnknownPlatform` / `ErrUnknownDataComponent` / `ErrUnknownGroup` |
 | `Built()` `Build()` | `Build` is single-use: `ErrBuilderUsed` afterwards |
 
 ### Exact vs roll-up
@@ -310,7 +391,8 @@ in countermeasure sets of parents the artifact does not touch. Compose
 Set and roll-up operations write their intermediate bitset into a caller-owned `scratch` row:
 
 > `len(scratch) >= e.WordsPerRow(kind)` where `kind` is the partition of the **returned** ids —
-> 19 words for TTP-returning methods, 4 for artifact-returning, 3 for countermeasure-returning.
+> 19 words for TTP-returning methods, 4 for artifact-returning, 3 for countermeasure-returning,
+> 2 for `KindDataComponent` (the `DataComponentsForTTPRollup` scratch).
 
 Shorter `scratch` panics (`gr4ph: scratch too small`).
 
@@ -324,8 +406,8 @@ Shorter `scratch` panics (`gr4ph: scratch too small`).
   (`0`/`false`). A stale or foreign id set can never crash a traversal, and an empty engine answers
   every query with 0/false.
 * Engine-dimension misuse panics, because there is no sensible fallback: an offensive relation id
-  `>= RelCount()+1`, a defensive relation id `>= DefRelCount()+1`, a `Kind` outside the three
-  partitions (`WordsPerRow`), or an undersized `scratch`. The scratch check runs before the id bounds
+  `>= RelCount()+1`, a defensive relation id `>= DefRelCount()+1`, a `Kind` outside the four
+  partitions with a row stride (`WordsPerRow`), or an undersized `scratch`. The scratch check runs before the id bounds
   check, so an undersized `scratch` panics even when the id is out of range.
 * The cold string accessors (`TTPName`, `TTPLabel`, `TTPDomain`, `ArtifactName`, …) panic on an
   out-of-range id. `Response` / `CountermeasureResponse` are the total boundary formatters: they
@@ -389,14 +471,20 @@ d3fendgen: wrote ontology/attack_gen.go
   edges          670 offensive, 182 defensive, 4133 defends-against
   hierarchy      605 top-level, 581 sub-techniques, 148 parents, max 18 children
   revoked        222
+  tactics        41, platforms 15, assignments 1431/2527
+  data components 123, detects edges 3263
+  groups         1212 (195 actors, 957 software, 60 campaigns), uses edges 18885 technique, 1339 software
 ```
 
 If a future upstream release changes any of those, the generator fails with the actual counts instead
 of emitting tables whose indices no longer match — re-pin the sources and re-derive the expectations.
 
 Registration order is load-bearing (`ontology.Register`): relations first (so `RelNames[i]` becomes
-plane `i+1`, matching the generated constants), then techniques depth-first with their parents, then
-artifacts, countermeasures, and finally the three edge families.
+plane `i+1`, matching the generated constants) and then the tactic and platform vocabularies (so
+`TacticIDs[i]` becomes attribute bit `i`, matching the emitted `TacticTTP`/`PlatformTTP` rows), then
+techniques depth-first with their parents, then artifacts, countermeasures, data components and grouping
+nodes, and finally the edge families (offensive, defensive, defends-against, tactic and platform
+assignments, `detects`, `uses` and software-use).
 
 ## Concurrency
 
@@ -409,15 +497,26 @@ cannot be mutated through its builder.
 ## Measured performance
 
 `GOEXPERIMENT=simd go test -bench . -benchmem -count=5 ./...` on the development host (i5-10310U, 128-bit
-vectors), real tables; ns/op below is the median of 5 runs, and every benchmark reports 0 B/op and 0 allocs/op:
+vectors); ns/op below is the median of 5 runs, and every benchmark reports 0 B/op and 0 allocs/op. The
+real-table rows run against `ontology.Register`'s 1186-node engine, the synthetic rows against the root
+package's generated fixture (1200 techniques, 250 artifacts, 160 countermeasures):
 
-| benchmark | ns/op |
-|---|---|
-| `TTPsRel(Process, accesses)` | 16 |
-| `TTPsAny(Process, File)` | 97 |
-| `CountermeasuresForArtifactViaTTPs(Process)` | 114 |
-| `CountermeasuresForTTPRollup(T1546)` | 221 |
-| `AdjacentRel` (root package) | 6 |
+| benchmark | fixture | ns/op |
+|---|---|---|
+| `TTPsRel(Process, accesses)` | real tables | 16 |
+| `TTPsAny(Process, File)` | real tables | 103 |
+| `CountermeasuresForArtifactViaTTPs(Process)` | real tables | 117 |
+| `CountermeasuresForTTPRollup(T1546)` | real tables | 214 |
+| `AdjacentRel` | synthetic | 7 |
+| `TTPTactics` | synthetic | 2 |
+| `TTPsForTactic` (212-technique row) | synthetic | 219 |
+| `TTPsForGroupRollup` | synthetic | 282 |
+
+The ten new arrays sit after the six existing blocks, so those keep their address range: every benchmark
+of the previous commit is still present, with identical `B/op` and `allocs/op` (0), and its best `ns/op`
+within 1.05× of the pre-change engine (measured on the same host, `-count=5`, against a worktree of that
+commit). The `TTPTactics` row is a single load; a group row is a 1212-bit scan plus the parent
+substitution of every sub-technique, which is what `TTPsForGroupRollup` costs.
 
 The zero-allocation contract is enforced by tests, not by convention: `AllocsPerRun` must be 0 for
 every method in the pinned list (`internal/hotmethods`), on both a synthetic graph and the 1186-node

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/fr0g-66723067-io/gr4ph"
@@ -42,11 +43,12 @@ func run(w io.Writer) error {
 		return err
 	}
 
-	fmt.Fprintf(w, "ontology: %d ttps (%s), %d artifacts, %d countermeasures; rels %d/%d; edges %d/%d/%d; wordsPerRow %d/%d/%d\n",
+	fmt.Fprintf(w, "ontology: %d ttps (%s), %d artifacts, %d countermeasures; rels %d/%d; edges %d/%d/%d; wordsPerRow %d/%d/%d/%d\n",
 		e.TTPCount(), histogram(e), e.ArtifactCount(), e.CountermeasureCount(),
 		e.RelCount(), e.DefRelCount(),
 		ontology.NOffEdges, ontology.NDefEdges, ontology.NDefends,
-		e.WordsPerRow(gr4ph.KindTTP), e.WordsPerRow(gr4ph.KindArtifact), e.WordsPerRow(gr4ph.KindCountermeasure))
+		e.WordsPerRow(gr4ph.KindTTP), e.WordsPerRow(gr4ph.KindArtifact),
+		e.WordsPerRow(gr4ph.KindCountermeasure), e.WordsPerRow(gr4ph.KindDataComponent))
 
 	// Hierarchy shape.
 	topLevel, subs, parents, maxChildren := 0, 0, 0, 0
@@ -164,6 +166,55 @@ func run(w io.Writer) error {
 		fmt.Fprintf(w, "incident %q -> %s (%s%s), %d artifacts\n",
 			alert, e.TTPName(id), domainName(e.TTPDomain(id)), detail, e.Degree(id, gr4ph.RelAny))
 	}
+
+	// --- ATT&CK attributes and the data-component and grouping partitions ---
+
+	fmt.Fprintf(w, "attributes: %d tactics, %d platforms, %d data components, %d groups\n",
+		e.TacticCount(), e.PlatformCount(), e.DataComponentCount(), e.GroupCount())
+
+	sub := lookupTTP(e, "T1003.001")
+	mask := e.TTPTactics(sub)
+	fmt.Fprintf(w, "masks(T1003.001): tactics=%s platforms=%s subtechnique=%v flags=%#x\n",
+		join(tacticIDs(e, mask), 64), join(platformNames(e, e.TTPPlatforms(sub)), 64),
+		e.TTPSubTechnique(sub), e.TTPFlags(sub))
+	fmt.Fprintf(w, "masks(DE-0006): tactics=%v platforms=%v (a D3FEND-named node has no ATT&CK object)\n",
+		len(tacticIDs(e, e.TTPTactics(lookupTTP(e, "DE-0006")))) != 0,
+		len(platformNames(e, e.TTPPlatforms(lookupTTP(e, "DE-0006")))) != 0)
+
+	dcProcess := lookupDC(e, "DC0084")
+	n = e.TTPsForDataComponent(dcProcess, ttps)
+	fmt.Fprintf(w, "ttpsForDataComponent(%s) = %d\n", e.DataComponentLabel(dcProcess), n)
+
+	// The parent has its own detections and eight children, so the roll-up is
+	// strictly larger than the exact answer.
+	scratchD := make([]uint64, e.WordsPerRow(gr4ph.KindDataComponent))
+	dcs := make([]gr4ph.DataComponent, e.DataComponentCount())
+	exactDC := e.DataComponentsForTTP(t1003, dcs)
+	rolledDC := e.DataComponentsForTTPRollup(t1003, scratchD, dcs)
+	fmt.Fprintf(w, "dataComponentsForTTP(T1003) = %d; rollup = %d\n", exactDC, rolledDC)
+
+	groups := make([]gr4ph.Group, e.GroupCount())
+	actor := lookupGroup(e, "G0007")
+	n = e.TTPsForGroup(actor, ttps)
+	software := e.SoftwareForGroup(actor, groups)
+	fmt.Fprintf(w, "group(%s) = %s, %d techniques, %d software\n",
+		e.GroupID(actor), groupKindName(e.GroupKind(actor)), n, software)
+
+	// A software node answers the other direction: who uses it.
+	mimikatz := lookupGroup(e, "S0002")
+	fmt.Fprintf(w, "groupsForSoftware(%s) = %d used-by groups, %d techniques\n",
+		e.GroupID(mimikatz), e.GroupsForSoftware(mimikatz, groups), e.TTPsForGroup(mimikatz, ttps))
+
+	tactic, ok := e.Tactic("TA0005")
+	if !ok {
+		return fmt.Errorf("unknown tactic TA0005")
+	}
+	fmt.Fprintf(w, "ttpsForTactic(TA0005) = %d (%s)\n", e.TTPsForTactic(tactic, ttps), e.TacticLabel(tactic))
+	platform, ok := e.Platform("Windows")
+	if !ok {
+		return fmt.Errorf("unknown platform Windows")
+	}
+	fmt.Fprintf(w, "ttpsForPlatform(Windows) = %d\n", e.TTPsForPlatform(platform, ttps))
 	return nil
 }
 
@@ -189,6 +240,57 @@ func lookupCM(e *gr4ph.Engine, name string) gr4ph.Countermeasure {
 		panic("unknown countermeasure " + name)
 	}
 	return id
+}
+
+func lookupDC(e *gr4ph.Engine, id string) gr4ph.DataComponent {
+	dc, ok := e.DataComponent(id)
+	if !ok {
+		panic("unknown data component " + id)
+	}
+	return dc
+}
+
+func lookupGroup(e *gr4ph.Engine, id string) gr4ph.Group {
+	g, ok := e.Group(id)
+	if !ok {
+		panic("unknown group " + id)
+	}
+	return g
+}
+
+// tacticIDs renders a tactic mask as its TA ids in index order.
+func tacticIDs(e *gr4ph.Engine, mask uint64) []string {
+	var out []string
+	for i := range e.TacticCount() {
+		if mask&(1<<uint(i)) != 0 {
+			out = append(out, e.TacticID(gr4ph.Tactic(i)))
+		}
+	}
+	return out
+}
+
+// platformNames renders a platform mask as its names in index order.
+func platformNames(e *gr4ph.Engine, mask uint64) []string {
+	var out []string
+	for i := range e.PlatformCount() {
+		if mask&(1<<uint(i)) != 0 {
+			out = append(out, e.PlatformName(gr4ph.Platform(i)))
+		}
+	}
+	return out
+}
+
+// groupKindName renders a grouping kind the way the CLI does.
+func groupKindName(k gr4ph.GroupKind) string {
+	switch k {
+	case gr4ph.GroupActor:
+		return "actor"
+	case gr4ph.GroupSoftware:
+		return "software"
+	case gr4ph.GroupCampaign:
+		return "campaign"
+	}
+	return "kind(" + strconv.Itoa(int(k)) + ")"
 }
 
 func lookupRel(e *gr4ph.Engine, name string) gr4ph.Rel {
