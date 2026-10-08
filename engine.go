@@ -859,18 +859,20 @@ func (e *Engine) CountermeasureDegree(cm Countermeasure) int {
 // --- hot path: attributes, data components and groups ---
 
 // TTPTactics returns the tactic mask of t: bit i is TacticID(i). It is 0 for a
-// technique with no ATT&CK tactic (the D3FEND-named nodes) and for an
-// out-of-range id. One word per technique, so the read is a single load.
+// technique with no ATT&CK tactic (the D3FEND-named nodes), for an
+// out-of-range id, and on an engine that registered no tactics (the row would
+// have no words). One word per technique, so the read is a single load.
 func (e *Engine) TTPTactics(t TTP) uint64 {
-	if !e.okTTP(t) {
+	if !e.okTTP(t) || e.nTactic == 0 {
 		return 0
 	}
 	return e.ttpTactic[e.ttpTacticOff(t)]
 }
 
-// TTPPlatforms returns the platform mask of t: bit i is PlatformName(i).
+// TTPPlatforms returns the platform mask of t: bit i is PlatformName(i). It is 0
+// for an out-of-range id and on an engine that registered no platforms.
 func (e *Engine) TTPPlatforms(t TTP) uint64 {
-	if !e.okTTP(t) {
+	if !e.okTTP(t) || e.nPlatform == 0 {
 		return 0
 	}
 	return e.ttpPlatform[e.ttpPlatformOff(t)]

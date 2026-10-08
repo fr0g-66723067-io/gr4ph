@@ -185,3 +185,106 @@ func BenchmarkCountermeasuresForTTPRollup(b *testing.B) {
 		sink += e.CountermeasuresForTTPRollup(TTP(i%1200), scratch, dst)
 	}
 }
+
+// attributedEngine is generatedEngine plus the attribute vocabularies and the
+// grouping partition, registered in their own helper so generatedEngine's
+// stride contract (and therefore every existing benchmark) stays untouched.
+// The tactic row holds 212 techniques, the widest row of the pinned release.
+func attributedEngine(tb testing.TB) *Engine {
+	tb.Helper()
+	b := NewBuilder()
+	rng := rand.New(rand.NewPCG(0x1234_5678, 0x9abc_def0))
+
+	for i := range 1200 {
+		parent := NoParent
+		if k := i % 10; k != 0 {
+			parent = TTP(i - k)
+		}
+		id := "T" + strconv.Itoa(i)
+		if _, err := b.AddTTP(id, "Technique "+id, DomainEnterprise, parent, false); err != nil {
+			tb.Fatalf("AddTTP: %v", err)
+		}
+	}
+	var tactics []Tactic
+	for i := range 41 {
+		ta, err := b.AddTactic("TA"+strconv.Itoa(1000+i), "Tactic "+strconv.Itoa(i))
+		if err != nil {
+			tb.Fatalf("AddTactic: %v", err)
+		}
+		tactics = append(tactics, ta)
+	}
+	for i := range 15 {
+		if _, err := b.AddPlatform("P" + strconv.Itoa(i)); err != nil {
+			tb.Fatalf("AddPlatform: %v", err)
+		}
+	}
+	var groups []Group
+	for i := range 1212 {
+		kind := GroupActor
+		id := "G" + strconv.Itoa(i)
+		if i%3 == 1 {
+			kind, id = GroupSoftware, "S"+strconv.Itoa(i)
+		} else if i%3 == 2 {
+			kind, id = GroupCampaign, "C"+strconv.Itoa(i)
+		}
+		g, err := b.AddGroup(id, "Group "+id, kind)
+		if err != nil {
+			tb.Fatalf("AddGroup: %v", err)
+		}
+		groups = append(groups, g)
+	}
+	for i := range 212 {
+		if err := b.AddTacticEdge(TTP(i), tactics[0]); err != nil {
+			tb.Fatalf("AddTacticEdge: %v", err)
+		}
+		if err := b.AddPlatformEdge(TTP(i), Platform(0)); err != nil {
+			tb.Fatalf("AddPlatformEdge: %v", err)
+		}
+	}
+	for range 18885 {
+		if err := b.AddGroupUsesEdge(groups[rng.IntN(len(groups))], TTP(rng.IntN(1200))); err != nil {
+			tb.Fatalf("AddGroupUsesEdge: %v", err)
+		}
+	}
+
+	e, err := b.Build()
+	if err != nil {
+		tb.Fatalf("Build: %v", err)
+	}
+	return e
+}
+
+// BenchmarkTTPTactics is the attribute-mask read: one load, no traversal.
+func BenchmarkTTPTactics(b *testing.B) {
+	e := attributedEngine(b)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := range b.N {
+		sink += int(e.TTPTactics(TTP(i % 212)))
+	}
+}
+
+// BenchmarkTTPsForTactic is the widest attribute row of the pinned release: the
+// 212-technique row of Tactic 0.
+func BenchmarkTTPsForTactic(b *testing.B) {
+	e := attributedEngine(b)
+	dst := make([]TTP, e.TTPCount())
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		sink += e.TTPsForTactic(Tactic(0), dst)
+	}
+}
+
+// BenchmarkTTPsForGroupRollup is the grouping roll-up: a group row scan with the
+// parent substitution of every sub-technique.
+func BenchmarkTTPsForGroupRollup(b *testing.B) {
+	e := attributedEngine(b)
+	scratch := make([]uint64, e.WordsPerRow(KindTTP))
+	dst := make([]TTP, e.TTPCount())
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := range b.N {
+		sink += e.TTPsForGroupRollup(Group(i%1212), scratch, dst)
+	}
+}

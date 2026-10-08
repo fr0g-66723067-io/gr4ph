@@ -26,6 +26,9 @@ func TestConcurrentQueries(t *testing.T) {
 		scratchT := make([]uint64, e.WordsPerRow(KindTTP))
 		scratchA := make([]uint64, e.WordsPerRow(KindArtifact))
 		scratchC := make([]uint64, e.WordsPerRow(KindCountermeasure))
+		scratchD := make([]uint64, e.WordsPerRow(KindDataComponent))
+		dcs := make([]DataComponent, e.DataComponentCount())
+		groups := make([]Group, e.GroupCount())
 		strs := make([]string, e.TTPCount())
 
 		var r results
@@ -46,6 +49,16 @@ func TestConcurrentQueries(t *testing.T) {
 		r.cmForTTP = append(r.cmForTTP, cms[:e.CountermeasuresForTTP(TTP(1), cms)]...)
 		r.ttpForCM = append(r.ttpForCM, rolled[:e.TTPsForCountermeasureRollup(Countermeasure(0), scratchT, rolled)]...)
 		r.children = append(r.children, ttps[:e.TTPChildren(TTP(0), ttps)]...)
+		r.tacticMask = e.TTPTactics(TTP(0))
+		r.platformMask = e.TTPPlatforms(TTP(0))
+		r.subTechnique = e.TTPSubTechnique(TTP(1))
+		r.ttpForTactic = append(r.ttpForTactic, ttps[:e.TTPsForTactic(Tactic(0), ttps)]...)
+		r.dcsExact = append(r.dcsExact, dcs[:e.DataComponentsForTTP(TTP(1), dcs)]...)
+		r.dcsRollup = append(r.dcsRollup, dcs[:e.DataComponentsForTTPRollup(TTP(0), scratchD, dcs)]...)
+		r.grpRollup = append(r.grpRollup, ttps[:e.TTPsForGroupRollup(Group(0), scratchT, ttps)]...)
+		r.groupsForTTP = append(r.groupsForTTP, groups[:e.GroupsForTTP(TTP(0), groups)]...)
+		r.softwareForGroup = append(r.softwareForGroup, groups[:e.SoftwareForGroup(Group(0), groups)]...)
+		r.groupsForSoftware = append(r.groupsForSoftware, groups[:e.GroupsForSoftware(Group(1), groups)]...)
 		r.response = append(r.response, strs[:e.Response(strs, []TTP{0, 1, 5})]...)
 		return r
 	}
@@ -55,7 +68,9 @@ func TestConcurrentQueries(t *testing.T) {
 	// matrices; these fields are non-empty on the synthetic engine. (ttpsAll is
 	// legitimately empty: artifacts 0 and 1 share no technique.)
 	if len(want.artifactsRel) == 0 || len(want.children) == 0 || len(want.ttpsAny) == 0 ||
-		len(want.cmViaTTPs) == 0 || len(want.response) == 0 || len(want.cmTTPRollup) == 0 {
+		len(want.cmViaTTPs) == 0 || len(want.response) == 0 || len(want.cmTTPRollup) == 0 ||
+		len(want.dcsExact) == 0 || len(want.dcsRollup) == 0 || len(want.ttpForTactic) == 0 ||
+		len(want.groupsForTTP) == 0 || len(want.softwareForGroup) == 0 {
 		t.Fatalf("query set produced empty results, so the comparison is vacuous: %+v", want)
 	}
 	const goroutines, iterations = 8, 200
@@ -79,13 +94,18 @@ func TestConcurrentQueries(t *testing.T) {
 
 // results is one full pass of the query set above.
 type results struct {
-	adjacent, defends                bool
+	adjacent, defends, subTechnique  bool
 	degree, artifactDegree, cmDegree int
+	tacticMask, platformMask         uint64
 	artifactsRel                     []Artifact
 	ttpsRel, ttpsAny, ttpsAll        []TTP
 	artRollup                        []Artifact
 	ttpRollup, ttpForCM, children    []TTP
+	ttpForTactic, grpRollup          []TTP
 	cmTTPRollup, cmViaTTPs, cmForTTP []Countermeasure
+	dcsExact, dcsRollup              []DataComponent
+	groupsForTTP, softwareForGroup   []Group
+	groupsForSoftware                []Group
 	response                         []string
 }
 
@@ -107,6 +127,16 @@ func (r results) equal(o results) bool {
 		equalIDs(r.cmTTPRollup, o.cmTTPRollup) &&
 		equalIDs(r.cmViaTTPs, o.cmViaTTPs) &&
 		equalIDs(r.cmForTTP, o.cmForTTP) &&
+		equalIDs(r.ttpForTactic, o.ttpForTactic) &&
+		equalIDs(r.grpRollup, o.grpRollup) &&
+		equalIDs(r.dcsExact, o.dcsExact) &&
+		equalIDs(r.dcsRollup, o.dcsRollup) &&
+		equalIDs(r.groupsForTTP, o.groupsForTTP) &&
+		equalIDs(r.softwareForGroup, o.softwareForGroup) &&
+		equalIDs(r.groupsForSoftware, o.groupsForSoftware) &&
+		r.tacticMask == o.tacticMask &&
+		r.platformMask == o.platformMask &&
+		r.subTechnique == o.subTechnique &&
 		slices.Equal(r.response, o.response)
 }
 

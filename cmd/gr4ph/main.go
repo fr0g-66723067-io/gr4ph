@@ -30,6 +30,11 @@ const usage = `usage: gr4ph <command> [flags] <query> [<query>...]
                      it and the countermeasures linked to it, exact and rolled up
   cm <query>         resolve a countermeasure id, label or alias; list the artifacts and
                      techniques it covers
+  dc <query>         resolve a data component id or label; list the techniques it detects
+  group <query>      resolve a grouping node (actor G, software S, campaign C); list the
+                     techniques and software it uses, and who uses it
+  tactic <ta-id>     resolve an ATT&CK tactic id; list its techniques
+  platform <name>    resolve a platform name; list the techniques that run on it
   rel <name>         resolve a relation name; report its plane, edge count and source
                      count in each family it belongs to
   help               print this message
@@ -51,6 +56,10 @@ examples:
   gr4ph artifact -defrel suspends Process  one defensive relation, not the union
   gr4ph cm ContentQuarantine               what a countermeasure covers
   gr4ph cm -defrel hardens CredentialHardening  one defensive relation, artifact side
+  gr4ph dc DC0084                          what a data component detects
+  gr4ph group G0007                        what an actor uses, and who uses it
+  gr4ph tactic TA0005                      the techniques of one ATT&CK tactic
+  gr4ph platform Windows                   the techniques of one platform
   gr4ph rel blocks                         one line per family it is in
   gr4ph rel -family def blocks             one family only
   gr4ph -json ttp T0821                    one JSON object per query
@@ -89,17 +98,23 @@ type plane struct {
 
 // result is one resolved query: the JSON object, and the source of the text block.
 type result struct {
-	Query    string  `json:"query"`
-	Kind     string  `json:"kind"` // "ttp", "artifact", "cm", "rel"
-	ID       *int    `json:"id,omitempty"`
-	Name     string  `json:"name"`
-	Label    string  `json:"label,omitempty"`
-	Domain   string  `json:"domain,omitempty"`   // ttp only
-	Parent   string  `json:"parent,omitempty"`   // ttp only, absent at top level
-	Children *int    `json:"children,omitempty"` // ttp only, 0 is emitted
-	Revoked  bool    `json:"revoked,omitempty"`  // ttp only, absent when live
-	Sets     []set   `json:"sets,omitempty"`     // node kinds
-	Planes   []plane `json:"planes,omitempty"`   // rel
+	Query    string `json:"query"`
+	Kind     string `json:"kind"` // "ttp", "artifact", "cm", "rel"
+	ID       *int   `json:"id,omitempty"`
+	Name     string `json:"name"`
+	Label    string `json:"label,omitempty"`
+	Domain   string `json:"domain,omitempty"`   // ttp only
+	Parent   string `json:"parent,omitempty"`   // ttp only, absent at top level
+	Children *int   `json:"children,omitempty"` // ttp only, 0 is emitted
+	Revoked  bool   `json:"revoked,omitempty"`  // ttp only, absent when live
+	// Tactics and Platforms are the ttp attribute masks, rendered as ids/names in
+	// index order, so bit i of TTPTactics is Tactics[i].
+	Tactics      []string `json:"tactics,omitempty"`      // ttp only
+	Platforms    []string `json:"platforms,omitempty"`    // ttp only
+	SubTechnique bool     `json:"subtechnique,omitempty"` // ttp only, absent on a top-level technique
+	GroupKind    string   `json:"group_kind,omitempty"`   // group only: actor|software|campaign
+	Sets         []set    `json:"sets,omitempty"`         // node kinds
+	Planes       []plane  `json:"planes,omitempty"`       // rel
 }
 
 func main() {
@@ -145,6 +160,14 @@ func run(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
 		return runArtifact(e, rest, stdout, stderr)
 	case "cm":
 		return runCM(e, rest, stdout, stderr)
+	case "dc":
+		return runDC(e, rest, stdout, stderr)
+	case "group":
+		return runGroup(e, rest, stdout, stderr)
+	case "tactic":
+		return runTactic(e, rest, stdout, stderr)
+	case "platform":
+		return runPlatform(e, rest, stdout, stderr)
 	case "rel":
 		return runRel(e, rest, stdout, stderr)
 	}
@@ -229,9 +252,12 @@ type buffers struct {
 	arts []gr4ph.Artifact
 	ttps []gr4ph.TTP
 	cms  []gr4ph.Countermeasure
+	dcs  []gr4ph.DataComponent
+	gs   []gr4ph.Group
 	scrA []uint64 // artifact partition: ArtifactsRollupRel
 	scrT []uint64 // technique partition: TTPsRollupRel, TTPsForCountermeasureRollup
 	scrC []uint64 // countermeasure partition: CountermeasuresForTTPRollup, ...ViaTTPs
+	scrD []uint64 // data-component partition: DataComponentsForTTPRollup
 }
 
 func newBuffers(e *gr4ph.Engine) *buffers {
@@ -239,9 +265,12 @@ func newBuffers(e *gr4ph.Engine) *buffers {
 		arts: make([]gr4ph.Artifact, e.ArtifactCount()),
 		ttps: make([]gr4ph.TTP, e.TTPCount()),
 		cms:  make([]gr4ph.Countermeasure, e.CountermeasureCount()),
+		dcs:  make([]gr4ph.DataComponent, e.DataComponentCount()),
+		gs:   make([]gr4ph.Group, e.GroupCount()),
 		scrA: make([]uint64, e.WordsPerRow(gr4ph.KindArtifact)),
 		scrT: make([]uint64, e.WordsPerRow(gr4ph.KindTTP)),
 		scrC: make([]uint64, e.WordsPerRow(gr4ph.KindCountermeasure)),
+		scrD: make([]uint64, e.WordsPerRow(gr4ph.KindDataComponent)),
 	}
 }
 
@@ -284,6 +313,10 @@ func runTTP(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
 			Domain:   domainName(e.TTPDomain(t)),
 			Children: new(e.TTPChildCount(t)),
 			Revoked:  e.TTPRevoked(t),
+
+			Tactics:      tacticIDs(e, e.TTPTactics(t)),
+			Platforms:    platformNames(e, e.TTPPlatforms(t)),
+			SubTechnique: e.TTPSubTechnique(t),
 		}
 		if p, ok := e.TTPParent(t); ok {
 			res.Parent = e.TTPName(p)
@@ -296,7 +329,13 @@ func runTTP(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
 		cms := set{Dir: "in", Name: "countermeasures", Count: n, Nodes: cmNodes(e, buf.cms, n)}
 		n = e.CountermeasuresForTTPRollup(t, buf.scrC, buf.cms)
 		rollupCMs := set{Dir: "in", Name: "countermeasures rollup", Count: n, Nodes: cmNodes(e, buf.cms, n)}
-		res.Sets = []set{arts, rollupArts, cms, rollupCMs}
+		n = e.DataComponentsForTTP(t, buf.dcs)
+		dcs := set{Dir: "in", Name: "data components", Count: n, Nodes: dcNodes(e, buf.dcs, n)}
+		n = e.DataComponentsForTTPRollup(t, buf.scrD, buf.dcs)
+		rollupDCs := set{Dir: "in", Name: "data components rollup", Count: n, Nodes: dcNodes(e, buf.dcs, n)}
+		n = e.GroupsForTTP(t, buf.gs)
+		groups := set{Dir: "in", Name: "groups", Count: n, Nodes: groupNodes(e, buf.gs, n)}
+		res.Sets = []set{arts, rollupArts, cms, rollupCMs, dcs, rollupDCs, groups}
 		results = append(results, res)
 	}
 	return finish(stdout, stderr, results, failures, *jsonOut)
@@ -406,6 +445,161 @@ func runCM(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
 		n = e.TTPsForCountermeasureRollup(cm, buf.scrT, buf.ttps)
 		rollupTTPs := set{Dir: "out", Name: "techniques rollup", Count: n, Nodes: ttpNodes(e, buf.ttps, n)}
 		res.Sets = []set{arts, ttps, rollupTTPs}
+		results = append(results, res)
+	}
+	return finish(stdout, stderr, results, failures, *jsonOut)
+}
+
+// runDC answers `dc <query>...`.
+func runDC(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("dc", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", false, "")
+	flags, queries := splitArgs(fs, args)
+	if status, ok := parse(fs, flags, stdout, stderr); !ok {
+		return status
+	}
+	if len(queries) == 0 {
+		fmt.Fprintln(stderr, "gr4ph: missing query")
+		return 2
+	}
+
+	buf := newBuffers(e)
+	results := make([]result, 0, len(queries))
+	failures := make([]string, 0)
+	for _, q := range queries {
+		dc, ok := e.DataComponent(q)
+		if !ok {
+			failures = append(failures, "gr4ph: no such data component: "+q)
+			continue
+		}
+		name, label := e.DataComponentID(dc), e.DataComponentLabel(dc)
+		res := result{
+			Query: q, Kind: "dc",
+			ID:    new(int(dc)),
+			Name:  name,
+			Label: collapseLabel(name, label),
+		}
+		n := e.TTPsForDataComponent(dc, buf.ttps)
+		res.Sets = []set{{Dir: "out", Name: "techniques", Count: n, Nodes: ttpNodes(e, buf.ttps, n)}}
+		results = append(results, res)
+	}
+	return finish(stdout, stderr, results, failures, *jsonOut)
+}
+
+// runGroup answers `group <query>...`: one partition holds actors, software and
+// campaigns, so the kind is part of the header.
+func runGroup(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("group", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", false, "")
+	flags, queries := splitArgs(fs, args)
+	if status, ok := parse(fs, flags, stdout, stderr); !ok {
+		return status
+	}
+	if len(queries) == 0 {
+		fmt.Fprintln(stderr, "gr4ph: missing query")
+		return 2
+	}
+
+	buf := newBuffers(e)
+	results := make([]result, 0, len(queries))
+	failures := make([]string, 0)
+	for _, q := range queries {
+		g, ok := e.Group(q)
+		if !ok {
+			failures = append(failures, "gr4ph: no such group: "+q)
+			continue
+		}
+		name, label := e.GroupID(g), e.GroupLabel(g)
+		res := result{
+			Query: q, Kind: "group",
+			ID:        new(int(g)),
+			Name:      name,
+			Label:     collapseLabel(name, label),
+			GroupKind: groupKindName(e.GroupKind(g)),
+		}
+		n := e.TTPsForGroup(g, buf.ttps)
+		ttps := set{Dir: "out", Name: "techniques", Count: n, Nodes: ttpNodes(e, buf.ttps, n)}
+		n = e.SoftwareForGroup(g, buf.gs)
+		software := set{Dir: "out", Name: "software", Count: n, Nodes: groupNodes(e, buf.gs, n)}
+		n = e.GroupsForSoftware(g, buf.gs)
+		groups := set{Dir: "in", Name: "groups", Count: n, Nodes: groupNodes(e, buf.gs, n)}
+		res.Sets = []set{ttps, software, groups}
+		results = append(results, res)
+	}
+	return finish(stdout, stderr, results, failures, *jsonOut)
+}
+
+// runTactic answers `tactic <ta-id>...`. The query is a TA id, not a label:
+// tactic labels repeat across the three ATT&CK domains.
+func runTactic(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("tactic", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", false, "")
+	flags, queries := splitArgs(fs, args)
+	if status, ok := parse(fs, flags, stdout, stderr); !ok {
+		return status
+	}
+	if len(queries) == 0 {
+		fmt.Fprintln(stderr, "gr4ph: missing query")
+		return 2
+	}
+
+	buf := newBuffers(e)
+	results := make([]result, 0, len(queries))
+	failures := make([]string, 0)
+	for _, q := range queries {
+		ta, ok := e.Tactic(q)
+		if !ok {
+			failures = append(failures, "gr4ph: no such tactic: "+q)
+			continue
+		}
+		name, label := e.TacticID(ta), e.TacticLabel(ta)
+		res := result{
+			Query: q, Kind: "tactic",
+			ID:    new(int(ta)),
+			Name:  name,
+			Label: collapseLabel(name, label),
+		}
+		n := e.TTPsForTactic(ta, buf.ttps)
+		res.Sets = []set{{Dir: "out", Name: "techniques", Count: n, Nodes: ttpNodes(e, buf.ttps, n)}}
+		results = append(results, res)
+	}
+	return finish(stdout, stderr, results, failures, *jsonOut)
+}
+
+// runPlatform answers `platform <name>...`.
+func runPlatform(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("platform", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", false, "")
+	flags, queries := splitArgs(fs, args)
+	if status, ok := parse(fs, flags, stdout, stderr); !ok {
+		return status
+	}
+	if len(queries) == 0 {
+		fmt.Fprintln(stderr, "gr4ph: missing query")
+		return 2
+	}
+
+	buf := newBuffers(e)
+	results := make([]result, 0, len(queries))
+	failures := make([]string, 0)
+	for _, q := range queries {
+		p, ok := e.Platform(q)
+		if !ok {
+			failures = append(failures, "gr4ph: no such platform: "+q)
+			continue
+		}
+		name := e.PlatformName(p)
+		res := result{
+			Query: q, Kind: "platform",
+			ID:   new(int(p)),
+			Name: name,
+		}
+		n := e.TTPsForPlatform(p, buf.ttps)
+		res.Sets = []set{{Dir: "out", Name: "techniques", Count: n, Nodes: ttpNodes(e, buf.ttps, n)}}
 		results = append(results, res)
 	}
 	return finish(stdout, stderr, results, failures, *jsonOut)
@@ -527,8 +721,12 @@ func finish(stdout, stderr io.Writer, results []result, failures []string, asJSO
 func writeText(w io.Writer, res result) {
 	switch res.Kind {
 	case "ttp":
-		fmt.Fprintf(w, "ttp %s%s domain=%s%s children=%d%s\n",
-			res.Name, quoted(res.Label), res.Domain, parentPart(res.Parent), *res.Children, revokedPart(res.Revoked))
+		fmt.Fprintf(w, "ttp %s%s domain=%s%s children=%d%s%s%s%s\n",
+			res.Name, quoted(res.Label), res.Domain, parentPart(res.Parent), *res.Children,
+			revokedPart(res.Revoked), subTechniquePart(res.SubTechnique),
+			tacticsPart(res.Tactics), platformsPart(res.Platforms))
+	case "group":
+		fmt.Fprintf(w, "group %s%s kind=%s\n", res.Name, quoted(res.Label), res.GroupKind)
 	case "rel":
 		for _, p := range res.Planes {
 			from, to := "technique", "artifact"
@@ -582,6 +780,28 @@ func cmNodes(e *gr4ph.Engine, ids []gr4ph.Countermeasure, n int) []node {
 	return nodes
 }
 
+// dcNodes materialises the first n data-component ids of ids as cold-key nodes.
+func dcNodes(e *gr4ph.Engine, ids []gr4ph.DataComponent, n int) []node {
+	nodes := make([]node, 0, n)
+	for _, dc := range ids[:n] {
+		name := e.DataComponentID(dc)
+		nodes = append(nodes, node{ID: int(dc), Name: name, Label: collapseLabel(name, e.DataComponentLabel(dc))})
+	}
+	return nodes
+}
+
+// groupNodes materialises the first n grouping-node ids of ids as cold-key
+// nodes: actors, software and campaigns share one partition, so the kind is
+// answered per node by `group`, not by this list.
+func groupNodes(e *gr4ph.Engine, ids []gr4ph.Group, n int) []node {
+	nodes := make([]node, 0, n)
+	for _, g := range ids[:n] {
+		name := e.GroupID(g)
+		nodes = append(nodes, node{ID: int(g), Name: name, Label: collapseLabel(name, e.GroupLabel(g))})
+	}
+	return nodes
+}
+
 // collapseLabel drops a label that repeats the node's name, so both encoders
 // can read "" as "print the name bare".
 func collapseLabel(name, label string) string {
@@ -615,6 +835,69 @@ func revokedPart(revoked bool) string {
 		return ""
 	}
 	return " revoked=true"
+}
+
+// subTechniquePart renders the sub-technique marker, absent for a top-level
+// technique. The parent= field says the same thing; the marker reports the
+// generated attribute flag the API exposes.
+func subTechniquePart(sub bool) string {
+	if !sub {
+		return ""
+	}
+	return " subtechnique=true"
+}
+
+// tacticsPart renders the tactic ids of a ttp header in mask order, absent when
+// the technique has no ATT&CK tactic (the D3FEND-named nodes).
+func tacticsPart(ids []string) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	return " tactics=" + strings.Join(ids, ",")
+}
+
+// platformsPart renders the platform names of a ttp header in mask order.
+func platformsPart(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	return " platforms=" + strings.Join(names, ",")
+}
+
+// groupKindName renders a grouping kind for the group header.
+func groupKindName(k gr4ph.GroupKind) string {
+	switch k {
+	case gr4ph.GroupActor:
+		return "actor"
+	case gr4ph.GroupSoftware:
+		return "software"
+	case gr4ph.GroupCampaign:
+		return "campaign"
+	}
+	return fmt.Sprintf("kind(%d)", int(k))
+}
+
+// tacticIDs renders a tactic mask as its ids in index order, so Tactics[i] is
+// the id of bit i.
+func tacticIDs(e *gr4ph.Engine, mask uint64) []string {
+	var out []string
+	for i := 0; i < e.TacticCount(); i++ {
+		if mask&(1<<uint(i)) != 0 {
+			out = append(out, e.TacticID(gr4ph.Tactic(i)))
+		}
+	}
+	return out
+}
+
+// platformNames renders a platform mask as its names in index order.
+func platformNames(e *gr4ph.Engine, mask uint64) []string {
+	var out []string
+	for i := 0; i < e.PlatformCount(); i++ {
+		if mask&(1<<uint(i)) != 0 {
+			out = append(out, e.PlatformName(gr4ph.Platform(i)))
+		}
+	}
+	return out
 }
 
 // unionPart labels the union plane in a rel line.

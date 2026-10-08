@@ -44,6 +44,26 @@ func fixtureEngine(t *testing.T) *gr4ph.Engine {
 	must(t, b.AddDefEdge(quarantine, auth, defBlocks))
 	must(t, b.AddDefendsEdge(hardening, sub))
 	must(t, b.AddDefendsEdge(quarantine, sub))
+
+	// Vocabularies (registration order fixes the mask bit positions), the
+	// data-component and grouping partitions, and the attribute edges.
+	taInitial := mustTactic(t, b, "TA0001", "Initial Access")
+	taExecution := mustTactic(t, b, "TA0002", "Execution")
+	windows := mustPlatform(t, b, "Windows")
+	linux := mustPlatform(t, b, "Linux")
+	dcProcess := mustDC(t, b, "DC0001", "Process Creation")
+	mustDC(t, b, "DC0002", "File Creation") // registered, deliberately edge-less
+	actor := mustGroup(t, b, "G0001", "Actor One", gr4ph.GroupActor)
+	software := mustGroup(t, b, "S0001", "Software One", gr4ph.GroupSoftware)
+	mustGroup(t, b, "C0001", "Campaign One", gr4ph.GroupCampaign)
+	must(t, b.AddTacticEdge(t1003, taInitial))
+	must(t, b.AddTacticEdge(sub, taExecution))
+	must(t, b.AddPlatformEdge(t1003, windows))
+	must(t, b.AddPlatformEdge(t1003, linux))
+	must(t, b.AddPlatformEdge(sub, windows))
+	must(t, b.AddDetectsEdge(dcProcess, sub))
+	must(t, b.AddGroupUsesEdge(actor, t1003))
+	must(t, b.AddGroupSoftwareEdge(actor, software))
 	e, err := b.Build()
 	if err != nil {
 		t.Fatalf("build fixture: %v", err)
@@ -86,6 +106,34 @@ func mustArtifact(t *testing.T, b *gr4ph.Builder, name, label string) gr4ph.Arti
 	return a
 }
 
+func mustTactic(t *testing.T, b *gr4ph.Builder, id, label string) gr4ph.Tactic {
+	t.Helper()
+	v, err := b.AddTactic(id, label)
+	must(t, err)
+	return v
+}
+
+func mustPlatform(t *testing.T, b *gr4ph.Builder, name string) gr4ph.Platform {
+	t.Helper()
+	v, err := b.AddPlatform(name)
+	must(t, err)
+	return v
+}
+
+func mustDC(t *testing.T, b *gr4ph.Builder, id, label string) gr4ph.DataComponent {
+	t.Helper()
+	v, err := b.AddDataComponent(id, label)
+	must(t, err)
+	return v
+}
+
+func mustGroup(t *testing.T, b *gr4ph.Builder, id, label string, kind gr4ph.GroupKind) gr4ph.Group {
+	t.Helper()
+	v, err := b.AddGroup(id, label, kind)
+	must(t, err)
+	return v
+}
+
 func mustCountermeasure(t *testing.T, b *gr4ph.Builder, id, label string) gr4ph.Countermeasure {
 	t.Helper()
 	cm, err := b.AddCountermeasure(id, label)
@@ -104,18 +152,24 @@ func runCase(t *testing.T, e *gr4ph.Engine, args ...string) (string, string, int
 
 // The fixture blocks, quoted by more than one case.
 const (
-	fixtureTTPSub = `ttp T1003.001 "LSASS Memory" domain=enterprise parent=T1003 children=0
+	fixtureTTPSub = `ttp T1003.001 "LSASS Memory" domain=enterprise parent=T1003 children=0 subtechnique=true tactics=TA0002 platforms=Windows
   out artifacts (2): Process, AuthenticationService "Authentication Service"
   out artifacts rollup (2): Process, AuthenticationService "Authentication Service"
   in  countermeasures (2): CredentialHardening "Credential Hardening", ContentQuarantine "Content Quarantine"
   in  countermeasures rollup (2): CredentialHardening "Credential Hardening", ContentQuarantine "Content Quarantine"
+  in  data components (1): DC0001 "Process Creation"
+  in  data components rollup (1): DC0001 "Process Creation"
+  in  groups (0): -
 `
 
-	fixtureTTPParent = `ttp T1003 "OS Credential Dumping" domain=enterprise children=1
+	fixtureTTPParent = `ttp T1003 "OS Credential Dumping" domain=enterprise children=1 tactics=TA0001 platforms=Windows,Linux
   out artifacts (0): -
   out artifacts rollup (2): Process, AuthenticationService "Authentication Service"
   in  countermeasures (0): -
   in  countermeasures rollup (2): CredentialHardening "Credential Hardening", ContentQuarantine "Content Quarantine"
+  in  data components (0): -
+  in  data components rollup (1): DC0001 "Process Creation"
+  in  groups (1): G0001 "Actor One"
 `
 
 	fixtureTTPIsolated = `ttp T1059 "Command and Scripting Interpreter" domain=enterprise children=0
@@ -123,13 +177,19 @@ const (
   out artifacts rollup (0): -
   in  countermeasures (0): -
   in  countermeasures rollup (0): -
+  in  data components (0): -
+  in  data components rollup (0): -
+  in  groups (0): -
 `
 
-	fixtureTTPSubBlocks = `ttp T1003.001 "LSASS Memory" domain=enterprise parent=T1003 children=0
+	fixtureTTPSubBlocks = `ttp T1003.001 "LSASS Memory" domain=enterprise parent=T1003 children=0 subtechnique=true tactics=TA0002 platforms=Windows
   out artifacts (rel blocks) (1): AuthenticationService "Authentication Service"
   out artifacts rollup (rel blocks) (1): AuthenticationService "Authentication Service"
   in  countermeasures (2): CredentialHardening "Credential Hardening", ContentQuarantine "Content Quarantine"
   in  countermeasures rollup (2): CredentialHardening "Credential Hardening", ContentQuarantine "Content Quarantine"
+  in  data components (1): DC0001 "Process Creation"
+  in  data components rollup (1): DC0001 "Process Creation"
+  in  groups (0): -
 `
 
 	fixtureArtifactProcess = `artifact Process
@@ -159,6 +219,9 @@ rel blocks defensive plane 3/3 (countermeasure -> artifact): edges=1 sources=1
   out artifacts rollup (0): -
   in  countermeasures (0): -
   in  countermeasures rollup (0): -
+  in  data components (0): -
+  in  data components rollup (0): -
+  in  groups (0): -
 `
 
 	// The live carrier of that label, reached by the label.
@@ -167,6 +230,43 @@ rel blocks defensive plane 3/3 (countermeasure -> artifact): edges=1 sources=1
   out artifacts rollup (0): -
   in  countermeasures (0): -
   in  countermeasures rollup (0): -
+  in  data components (0): -
+  in  data components rollup (0): -
+  in  groups (0): -
+`
+	fixtureDCProcess = `dc DC0001 "Process Creation"
+  out techniques (1): T1003.001 "LSASS Memory"
+`
+
+	// A registered data component with no detects edge: a node, an empty set.
+	fixtureDCFile = `dc DC0002 "File Creation"
+  out techniques (0): -
+`
+
+	fixtureGroupActor = `group G0001 "Actor One" kind=actor
+  out techniques (1): T1003 "OS Credential Dumping"
+  out software (1): S0001 "Software One"
+  in  groups (0): -
+`
+
+	fixtureGroupSoftware = `group S0001 "Software One" kind=software
+  out techniques (0): -
+  out software (0): -
+  in  groups (1): G0001 "Actor One"
+`
+
+	fixtureGroupCampaign = `group C0001 "Campaign One" kind=campaign
+  out techniques (0): -
+  out software (0): -
+  in  groups (0): -
+`
+
+	fixtureTacticInitial = `tactic TA0001 "Initial Access"
+  out techniques (1): T1003 "OS Credential Dumping"
+`
+
+	fixturePlatformWindows = `platform Windows
+  out techniques (2): T1003 "OS Credential Dumping", T1003.001 "LSASS Memory"
 `
 )
 
@@ -268,6 +368,13 @@ func TestTextFixture(t *testing.T) {
 			[]string{"ttp", "Accessibility Features"},
 			fixtureTTPLive,
 		},
+		{"data component, detecting one technique", []string{"dc", "DC0001"}, fixtureDCProcess},
+		{"data component with no detects edge", []string{"dc", "DC0002"}, fixtureDCFile},
+		{"group actor: techniques and software", []string{"group", "G0001"}, fixtureGroupActor},
+		{"group software: who uses it", []string{"group", "S0001"}, fixtureGroupSoftware},
+		{"group campaign with no edges", []string{"group", "C0001"}, fixtureGroupCampaign},
+		{"tactic by TA id", []string{"tactic", "TA0001"}, fixtureTacticInitial},
+		{"platform by name", []string{"platform", "Windows"}, fixturePlatformWindows},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -326,8 +433,15 @@ func TestJSONFixture(t *testing.T) {
 	if got.Children == nil || *got.Children != 0 {
 		t.Fatalf("children = %v, want 0", got.Children)
 	}
-	if len(got.Sets) != 4 {
-		t.Fatalf("sets = %d, want 4", len(got.Sets))
+	if len(got.Sets) != 7 {
+		t.Fatalf("sets = %d, want 7", len(got.Sets))
+	}
+	if strings.Join(got.Tactics, ",") != "TA0002" || strings.Join(got.Platforms, ",") != "Windows" || !got.SubTechnique {
+		t.Fatalf("tactics/platforms/subtechnique = %v/%v/%v, want [TA0002]/[Windows]/true",
+			got.Tactics, got.Platforms, got.SubTechnique)
+	}
+	if dcs := got.Sets[4]; dcs.Dir != "in" || dcs.Name != "data components" || dcs.Count != 1 {
+		t.Fatalf("sets[4] = %+v, want in data components 1", dcs)
 	}
 	arts := got.Sets[0]
 	if arts.Dir != "out" || arts.Name != "artifacts" || arts.Count != 2 {
@@ -375,6 +489,34 @@ func TestJSONFixture(t *testing.T) {
 	}
 	if strings.Contains(out, "revoked") {
 		t.Fatalf("a live technique must not carry the field: %s", out)
+	}
+
+	// A live top-level technique has no subtechnique key (omitempty), and the
+	// group header carries the kind as a field.
+	out, _, status = runCase(t, e, "-json", "ttp", "T1003")
+	if status != 0 {
+		t.Fatalf("status = %d, want 0", status)
+	}
+	if strings.Contains(out, "subtechnique") {
+		t.Fatalf("a top-level technique must not carry the field: %s", out)
+	}
+	var topLevel result
+	if err := json.Unmarshal([]byte(out), &topLevel); err != nil {
+		t.Fatalf("decode %q: %v", out, err)
+	}
+	if strings.Join(topLevel.Tactics, ",") != "TA0001" || strings.Join(topLevel.Platforms, ",") != "Windows,Linux" {
+		t.Fatalf("tactics/platforms = %v/%v, want [TA0001]/[Windows Linux]", topLevel.Tactics, topLevel.Platforms)
+	}
+	out, _, status = runCase(t, e, "-json", "group", "S0001")
+	if status != 0 {
+		t.Fatalf("status = %d, want 0", status)
+	}
+	var grp result
+	if err := json.Unmarshal([]byte(out), &grp); err != nil {
+		t.Fatalf("decode %q: %v", out, err)
+	}
+	if grp.Kind != "group" || grp.GroupKind != "software" || grp.Name != "S0001" || grp.Label != "Software One" {
+		t.Fatalf("group result = %+v, want S0001 software Software One", grp)
 	}
 
 	// rel has planes and no node id; the union plane is plane 0 of a family
@@ -433,8 +575,36 @@ func TestOntologyValues(t *testing.T) {
 		t.Fatalf("status = %d, stderr = %q, want 0 and empty", status, stderr)
 	}
 	header := strings.SplitN(out, "\n", 2)[0]
-	if want := `ttp T1003.001 "LSASS Memory" domain=enterprise parent=T1003 children=0`; header != want {
+	if want := `ttp T1003.001 "LSASS Memory" domain=enterprise parent=T1003 children=0 subtechnique=true tactics=TA0006 platforms=Windows`; header != want {
 		t.Errorf("header = %q, want %q", header, want)
+	}
+	// The parent's header has no subtechnique marker and two platform names;
+	// T1059 is the widest platform row of the release.
+	outTop, _, status := runCase(t, e, "ttp", "T1003")
+	if status != 0 {
+		t.Fatalf("ttp T1003: status = %d", status)
+	}
+	if got := strings.SplitN(outTop, "\n", 2)[0]; got != `ttp T1003 "OS Credential Dumping" domain=enterprise children=8 tactics=TA0006 platforms=Linux,Windows,macOS` {
+		t.Errorf("T1003 header = %q", got)
+	}
+	outWide, _, status := runCase(t, e, "ttp", "T1059")
+	if status != 0 {
+		t.Fatalf("ttp T1059: status = %d", status)
+	}
+	if got := strings.SplitN(outWide, "\n", 2)[0]; !strings.HasSuffix(got,
+		" tactics=TA0002 platforms=Containers,ESXi,IaaS,Identity Provider,Linux,Network Devices,Office Suite,SaaS,Windows,macOS") {
+		t.Errorf("T1059 header = %q", got)
+	}
+	// A D3FEND-named node has no ATT&CK object: no attribute fields at all.
+	outDE, _, status := runCase(t, e, "ttp", "DE-0006")
+	if status != 0 {
+		t.Fatalf("ttp DE-0006: status = %d", status)
+	}
+	if got := strings.SplitN(outDE, "\n", 2)[0]; strings.Contains(got, "tactics=") || strings.Contains(got, "platforms=") || strings.Contains(got, "subtechnique=") {
+		t.Errorf("DE-0006 header = %q, want no attribute fields", got)
+	}
+	if count, nodes := setLine(t, outDE, "in data components"); count != 0 || nodes != nil {
+		t.Errorf("DE-0006 data components = %d %v, want 0", count, nodes)
 	}
 
 	tests := []struct {
@@ -493,6 +663,66 @@ func TestOntologyValues(t *testing.T) {
 			[]string{"cm", "CredentialHardening"},
 			"out techniques rollup", 16,
 			`DE-0011 "Credentialed Evasion"`, `T1606 "Forge Web Credentials"`,
+		},
+		{
+			"techniques a data component detects",
+			[]string{"dc", "DC0084"},
+			"out techniques", 9,
+			"", "",
+		},
+		{
+			"techniques of a tactic",
+			[]string{"tactic", "TA0005"},
+			"out techniques", 212,
+			"", "",
+		},
+		{
+			"techniques of a platform",
+			[]string{"platform", "Windows"},
+			"out techniques", 591,
+			"", "",
+		},
+		{
+			"techniques an actor uses",
+			[]string{"group", "G0007"},
+			"out techniques", 93,
+			"", "",
+		},
+		{
+			"software an actor uses",
+			[]string{"group", "G0007"},
+			"out software", 30,
+			"", "",
+		},
+		{
+			"techniques a software node uses",
+			[]string{"group", "S0002"},
+			"out techniques", 17,
+			"", "",
+		},
+		{
+			"who uses a software node",
+			[]string{"group", "S0002"},
+			"in groups", 60,
+			"", "",
+		},
+		{
+			"data components detecting a sub-technique",
+			[]string{"ttp", "T1003.001"},
+			"in data components", 5,
+			"", "",
+		},
+		{
+			"the same set rolled up to the parent",
+			[]string{"ttp", "T1003"},
+			"in data components rollup", 13,
+			"", "",
+		},
+		{
+			"groups using a technique",
+			[]string{"ttp", "T1546.008"},
+			"in groups", 7,
+			"", "",
 		},
 	}
 	for _, tt := range tests {
@@ -567,6 +797,39 @@ func TestOntologyValues(t *testing.T) {
 			}
 			if out != tt.want {
 				t.Fatalf("stdout mismatch\n--- got ---\n%s--- want ---\n%s", out, tt.want)
+			}
+		})
+	}
+
+	// The four new commands: the header is pinned and the set count comes from
+	// setLine, because a full node list of a 93-technique row is not a useful
+	// literal.
+	newCommands := []struct {
+		name   string
+		args   []string
+		header string
+		set    string
+		count  int
+	}{
+		{"tactic of a technique with two tactics", []string{"tactic", "TA0004"}, `tactic TA0004 "Privilege Escalation"`, "out techniques", 126},
+		{"platform row", []string{"platform", "macOS"}, "platform macOS", "out techniques", 441},
+		{"data component row", []string{"dc", "DC0084"}, `dc DC0084 "Active Directory Credential Request"`, "out techniques", 9},
+		{"actor group row", []string{"group", "G0007"}, `group G0007 "APT28" kind=actor`, "out techniques", 93},
+		{"actor software row", []string{"group", "G0007"}, `group G0007 "APT28" kind=actor`, "out software", 30},
+		{"software group row", []string{"group", "S0002"}, `group S0002 "Mimikatz" kind=software`, "in groups", 60},
+	}
+	for _, tt := range newCommands {
+		t.Run(tt.name, func(t *testing.T) {
+			out, stderr, status := runCase(t, e, tt.args...)
+			if status != 0 || stderr != "" {
+				t.Fatalf("status = %d, stderr = %q, want 0 and empty", status, stderr)
+			}
+			if got := strings.SplitN(out, "\n", 2)[0]; got != tt.header {
+				t.Errorf("header = %q, want %q", got, tt.header)
+			}
+			count, nodes := setLine(t, out, tt.set)
+			if count != tt.count || len(nodes) != tt.count {
+				t.Errorf("%s = %d nodes/%d count, want %d", tt.set, len(nodes), count, tt.count)
 			}
 		})
 	}
@@ -773,6 +1036,10 @@ func TestErrors(t *testing.T) {
 		{"artifact without a query", []string{"artifact"}, "gr4ph: missing query\n", 2, false},
 		{"cm without a query", []string{"cm"}, "gr4ph: missing query\n", 2, false},
 		{"rel without a name", []string{"rel"}, "gr4ph: missing relation name\n", 2, false},
+		{"dc without a query", []string{"dc"}, "gr4ph: missing query\n", 2, false},
+		{"group without a query", []string{"group"}, "gr4ph: missing query\n", 2, false},
+		{"tactic without a query", []string{"tactic"}, "gr4ph: missing query\n", 2, false},
+		{"platform without a query", []string{"platform"}, "gr4ph: missing query\n", 2, false},
 		{"undefined flag", []string{"ttp", "-nope", "X"}, "gr4ph: flag provided but not defined: -nope\n", 2, true},
 		{"undefined flag in artifact", []string{"artifact", "-nope", "X"}, "gr4ph: flag provided but not defined: -nope\n", 2, true},
 		{"undefined flag in cm", []string{"cm", "-nope", "X"}, "gr4ph: flag provided but not defined: -nope\n", 2, true},
@@ -786,6 +1053,10 @@ func TestErrors(t *testing.T) {
 		{"unresolved artifact", []string{"artifact", "no-such"}, "gr4ph: no such artifact: no-such\n", 1, false},
 		{"unresolved countermeasure", []string{"cm", "no-such"}, "gr4ph: no such countermeasure: no-such\n", 1, false},
 		{"unresolved relation", []string{"rel", "no-such"}, "gr4ph: no such relation: no-such\n", 1, false},
+		{"unresolved data component", []string{"dc", "no-such"}, "gr4ph: no such data component: no-such\n", 1, false},
+		{"unresolved group", []string{"group", "no-such"}, "gr4ph: no such group: no-such\n", 1, false},
+		{"unresolved tactic", []string{"tactic", "no-such"}, "gr4ph: no such tactic: no-such\n", 1, false},
+		{"unresolved platform", []string{"platform", "no-such"}, "gr4ph: no such platform: no-such\n", 1, false},
 		{
 			"relation of the other family",
 			[]string{"rel", "-family", "off", "analyzes"},
@@ -848,7 +1119,8 @@ func TestHelp(t *testing.T) {
 			if out != usage {
 				t.Fatalf("stdout = %q, want the usage text", out)
 			}
-			for _, want := range []string{"usage: gr4ph", "ttp <query>", "artifact <query>", "cm <query>", "rel <name>", "exit status: 0"} {
+			for _, want := range []string{"usage: gr4ph", "ttp <query>", "artifact <query>", "cm <query>",
+				"dc <query>", "group <query>", "tactic <ta-id>", "platform <name>", "rel <name>", "exit status: 0"} {
 				if !strings.Contains(out, want) {
 					t.Errorf("usage does not mention %q", want)
 				}
