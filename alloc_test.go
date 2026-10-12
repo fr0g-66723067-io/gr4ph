@@ -34,6 +34,14 @@ func TestZeroAllocSynthetic(t *testing.T) {
 	setBit(selC, 0)
 	selT := make([]uint64, e.WordsPerRow(KindTTP))
 	setBit(selT, 1)
+	dstK := make([]KEV, e.KEVCount())
+	dstCWE := make([]CWE, e.CWECount())
+	dstP := make([]Product, e.ProductCount())
+	scrK := make([]uint64, e.WordsPerRow(KindKEV))
+	selP := make([]uint64, e.WordsPerRow(KindProduct))
+	setBit(selP, 0)
+	selCWE := make([]uint64, e.WordsPerRow(KindCWE))
+	setBit(selCWE, 1)
 
 	cases := []struct {
 		name string
@@ -87,6 +95,12 @@ func TestZeroAllocSynthetic(t *testing.T) {
 		{"TTPsBlind", func() { sink += e.TTPsBlind(selT, selC, scratchT, dstT) }},
 		{"CoverageGain", func() { sink += e.CoverageGain(0, selC, scratchT) }},
 		{"CountermeasuresForObserved", func() { sink += e.CountermeasuresForObserved(selT, scratchC, dstC) }},
+		{"KEVCWEDegree", func() { sink += e.KEVCWEDegree(0) }},
+		{"CWEsForKEV", func() { sink += e.CWEsForKEV(0, dstCWE) }},
+		{"KEVsForCWE", func() { sink += e.KEVsForCWE(0, dstK) }},
+		{"ProductsForKEV", func() { sink += e.ProductsForKEV(0, dstP) }},
+		{"KEVsForProducts", func() { sink += e.KEVsForProducts(selP, scrK, dstK) }},
+		{"KEVsForCWEs", func() { sink += e.KEVsForCWEs(selCWE, scrK, dstK) }},
 		{"TTPTactics", func() { sink += int(e.TTPTactics(1)) }},
 		{"TTPPlatforms", func() { sink += int(e.TTPPlatforms(1)) }},
 		{"TTPFlags", func() { sink += int(e.TTPFlags(1)) }},

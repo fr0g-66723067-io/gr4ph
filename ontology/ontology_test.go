@@ -112,6 +112,33 @@ func defRel(tb testing.TB, e *gr4ph.Engine, name string) gr4ph.DefRel {
 	return r
 }
 
+func kev(tb testing.TB, e *gr4ph.Engine, id string) gr4ph.KEV {
+	tb.Helper()
+	v, ok := e.KEV(id)
+	if !ok {
+		tb.Fatalf("unknown KEV entry %q", id)
+	}
+	return v
+}
+
+func cwe(tb testing.TB, e *gr4ph.Engine, id string) gr4ph.CWE {
+	tb.Helper()
+	v, ok := e.CWE(id)
+	if !ok {
+		tb.Fatalf("unknown CWE %q", id)
+	}
+	return v
+}
+
+func prod(tb testing.TB, e *gr4ph.Engine, vendor, name string) gr4ph.Product {
+	tb.Helper()
+	v, ok := e.Product(vendor, name)
+	if !ok {
+		tb.Fatalf("unknown product %q/%q", vendor, name)
+	}
+	return v
+}
+
 // eqTTPs compares ids against expected technique names, in order.
 func eqTTPs(tb testing.TB, label string, e *gr4ph.Engine, got []gr4ph.TTP, want ...string) {
 	tb.Helper()
@@ -268,6 +295,15 @@ func TestOntologySizes(t *testing.T) {
 		{"NDetects", NDetects, 3263},
 		{"NUses", NUses, 18885},
 		{"NSoftwareUses", NSoftwareUses, 1339},
+		{"engine KEV entries / NKEV", e.KEVCount(), NKEV},
+		{"engine weaknesses / NCWE", e.CWECount(), NCWE},
+		{"engine products / NProduct", e.ProductCount(), NProduct},
+		{"NKEV", NKEV, 1739},
+		{"NKEVCWE", NKEVCWE, 1679},
+		{"NKEVWithCWE", NKEVWithCWE, 1564},
+		{"NCWE", NCWE, 189},
+		{"NProduct", NProduct, 722},
+		{"NKEVRansomware", NKEVRansomware, 361},
 	}
 	for _, s := range sizes {
 		if s.got != s.want {
@@ -288,6 +324,16 @@ func TestOntologySizes(t *testing.T) {
 	// 123/64 = 2.
 	if got := e.WordsPerRow(gr4ph.KindDataComponent); got != 2 {
 		t.Fatalf("WordsPerRow(DataComponent) = %d, want 2", got)
+	}
+	// 1739/64 = 28, 189/64 = 3, 722/64 = 12.
+	if got := e.WordsPerRow(gr4ph.KindKEV); got != 28 {
+		t.Fatalf("WordsPerRow(KEV) = %d, want 28", got)
+	}
+	if got := e.WordsPerRow(gr4ph.KindCWE); got != 3 {
+		t.Fatalf("WordsPerRow(CWE) = %d, want 3", got)
+	}
+	if got := e.WordsPerRow(gr4ph.KindProduct); got != 12 {
+		t.Fatalf("WordsPerRow(Product) = %d, want 12", got)
 	}
 
 	// Every table name resolves to the plane the generated constant claims.
@@ -1126,6 +1172,17 @@ func TestZeroAllocOntology(t *testing.T) {
 	setSel(selC, int(cm0))
 	selT := make([]uint64, e.WordsPerRow(gr4ph.KindTTP))
 	setSel(selT, int(t1003a))
+	bufK := make([]gr4ph.KEV, e.KEVCount())
+	bufCWE := make([]gr4ph.CWE, e.CWECount())
+	bufP := make([]gr4ph.Product, e.ProductCount())
+	scrK := make([]uint64, e.WordsPerRow(gr4ph.KindKEV))
+	kevEntry := kev(t, e, "CVE-2021-44228")
+	weak := cwe(t, e, "CWE-78")
+	vendored := prod(t, e, "Apache", "Log4j2")
+	selP := make([]uint64, e.WordsPerRow(gr4ph.KindProduct))
+	setSel(selP, int(vendored))
+	selCWE := make([]uint64, e.WordsPerRow(gr4ph.KindCWE))
+	setSel(selCWE, int(weak))
 
 	cases := []struct {
 		name string
@@ -1189,6 +1246,12 @@ func TestZeroAllocOntology(t *testing.T) {
 		{"CountermeasuresForObserved", func() {
 			ontologySink += e.CountermeasuresForObserved(selT, scratchC, bufC)
 		}},
+		{"KEVCWEDegree", func() { ontologySink += e.KEVCWEDegree(kevEntry) }},
+		{"CWEsForKEV", func() { ontologySink += e.CWEsForKEV(kevEntry, bufCWE) }},
+		{"KEVsForCWE", func() { ontologySink += e.KEVsForCWE(weak, bufK) }},
+		{"ProductsForKEV", func() { ontologySink += e.ProductsForKEV(kevEntry, bufP) }},
+		{"KEVsForProducts", func() { ontologySink += e.KEVsForProducts(selP, scrK, bufK) }},
+		{"KEVsForCWEs", func() { ontologySink += e.KEVsForCWEs(selCWE, scrK, bufK) }},
 		{"TTPTactics", func() { ontologySink += int(e.TTPTactics(t1003a)) }},
 		{"TTPPlatforms", func() { ontologySink += int(e.TTPPlatforms(t1003a)) }},
 		{"TTPFlags", func() { ontologySink += int(e.TTPFlags(t1003a)) }},
@@ -1606,6 +1669,196 @@ func TestOntologyAttributes(t *testing.T) {
 	wantTTPs := "T1207,T1550.002,T1550.003,T1558,T1558.001,T1558.002,T1558.003,T1558.004,T1649"
 	if strings.Join(names, ",") != wantTTPs {
 		t.Fatalf("TTPsForDataComponent(DC0084) = %v, want %s", names, wantTTPs)
+	}
+}
+
+// TestOntologyKEV pins the weakness and product families on the real tables:
+// the row and column sums of both matrices, the per-class counts of the
+// best-populated weaknesses, the Log4j golden and the reverse resolvers. Every
+// literal is re-measured from the committed ontology, not copied from a plan.
+func TestOntologyKEV(t *testing.T) {
+	e := build(t)
+	if len(KEVWeaknessKEV) != NKEVCWE || len(KEVWeaknessCWE) != NKEVCWE {
+		t.Fatalf("weakness edge arrays = %d/%d, want %d", len(KEVWeaknessKEV), len(KEVWeaknessCWE), NKEVCWE)
+	}
+	if len(KEVProductIndex) != NKEV {
+		t.Fatalf("KEVProductIndex = %d, want %d", len(KEVProductIndex), NKEV)
+	}
+
+	// The weakness matrix: 1679 edges over 1564 of the 1739 entries, at most 4
+	// per entry, and no entry names a weakness twice.
+	dstCWE := make([]gr4ph.CWE, e.CWECount())
+	degSum, withCWE, maxDeg, ransom := 0, 0, 0, 0
+	for i := range e.KEVCount() {
+		k := gr4ph.KEV(i)
+		d := e.KEVCWEDegree(k)
+		degSum += d
+		if d > 0 {
+			withCWE++
+		}
+		if d > maxDeg {
+			maxDeg = d
+		}
+		if e.KEVRansomware(k) {
+			ransom++
+		}
+	}
+	if degSum != NKEVCWE {
+		t.Errorf("weakness edges = %d, want %d", degSum, NKEVCWE)
+	}
+	if withCWE != NKEVWithCWE {
+		t.Errorf("entries naming a weakness = %d, want %d", withCWE, NKEVWithCWE)
+	}
+	if maxDeg != 4 {
+		t.Errorf("max weakness degree = %d, want 4", maxDeg)
+	}
+	if ransom != NKEVRansomware {
+		t.Errorf("ransomware entries = %d, want %d", ransom, NKEVRansomware)
+	}
+	if n := e.CWEsForKEV(gr4ph.KEV(0), nil); n != e.KEVCWEDegree(gr4ph.KEV(0)) {
+		t.Errorf("CWEsForKEV(0) = %d but KEVCWEDegree(0) = %d", n, e.KEVCWEDegree(gr4ph.KEV(0)))
+	}
+
+	// The transpose: the column sums are the row sums, every class is
+	// referenced at least once, and every id is in range.
+	dstK := make([]gr4ph.KEV, e.KEVCount())
+	colSum := 0
+	minCol := 1 << 30
+	for i := range e.CWECount() {
+		n := e.KEVsForCWE(gr4ph.CWE(i), dstK)
+		colSum += n
+		minCol = min(minCol, n)
+		for _, k := range dstK[:n] {
+			if int(k) >= e.KEVCount() {
+				t.Fatalf("KEVsForCWE(%s) returned out-of-range entry %d", e.CWEID(gr4ph.CWE(i)), k)
+			}
+		}
+	}
+	if colSum != degSum {
+		t.Errorf("weakness column sum = %d, want %d", colSum, degSum)
+	}
+	if minCol < 1 {
+		t.Errorf("some weakness class has no entries")
+	}
+
+	// One product edge per entry, and the per-class counts of the largest
+	// weaknesses.
+	prodEdges := 0
+	for i := range e.KEVCount() {
+		prodEdges += e.ProductsForKEV(gr4ph.KEV(i), nil)
+	}
+	if prodEdges != NKEV {
+		t.Errorf("product edges = %d, want %d", prodEdges, NKEV)
+	}
+	for _, c := range []struct {
+		id   string
+		want int
+	}{
+		{"CWE-20", 119},
+		{"CWE-78", 110},
+		{"CWE-787", 105},
+		{"CWE-416", 93},
+		{"CWE-119", 88},
+		{"CWE-22", 81},
+		{"CWE-502", 71},
+		{"CWE-94", 71},
+		{"CWE-79", 33},
+		{"CWE-89", 32},
+		{"CWE-400", 5},
+	} {
+		if got := e.KEVsForCWE(cwe(t, e, c.id), nil); got != c.want {
+			t.Errorf("KEVsForCWE(%s) = %d, want %d", c.id, got, c.want)
+		}
+	}
+
+	// The union over a weakness selection: the classes of the Log4j entry
+	// overlap, so the union is smaller than the 195 ids their columns sum to;
+	// the three best-populated classes happen to be disjoint, so there the
+	// union equals the sum.
+	sel := make([]uint64, e.WordsPerRow(gr4ph.KindCWE))
+	scratch := make([]uint64, e.WordsPerRow(gr4ph.KindKEV))
+	union := func(ids ...string) (int, int) {
+		for i := range sel {
+			sel[i] = 0
+		}
+		sum := 0
+		for _, id := range ids {
+			c := cwe(t, e, id)
+			setSel(sel, int(c))
+			sum += e.KEVsForCWE(c, nil)
+		}
+		n := e.KEVsForCWEs(sel, scratch, dstK)
+		for i := 1; i < n; i++ {
+			if dstK[i-1] >= dstK[i] {
+				t.Fatalf("union of %v is not ascending or has duplicates: %v", ids, dstK[:n])
+			}
+		}
+		return n, sum
+	}
+	if n, sum := union("CWE-79", "CWE-89", "CWE-78"); n != 175 || sum != 175 {
+		t.Errorf("union of the top three classes = %d of %d ids, want 175 (disjoint)", n, sum)
+	}
+	if n, sum := union("CWE-20", "CWE-400", "CWE-502"); n != 191 || sum != 195 {
+		t.Errorf("union of the Log4j classes = %d of %d ids, want 191 of 195", n, sum)
+	}
+
+	// The Log4j golden: its CVE record, the three weaknesses it names and the
+	// product it is filed under, seen from both directions.
+	log4j := kev(t, e, "CVE-2021-44228")
+	if got := e.KEVName(log4j); got != "Apache Log4j2 Remote Code Execution Vulnerability" {
+		t.Errorf("Log4j name = %q", got)
+	}
+	ndc := e.CWEsForKEV(log4j, dstCWE)
+	names := make([]string, 0, ndc)
+	for _, c := range dstCWE[:ndc] {
+		names = append(names, e.CWEID(c))
+	}
+	if want := "CWE-20,CWE-400,CWE-502"; strings.Join(names, ",") != want {
+		t.Errorf("Log4j weaknesses = %v, want %s", names, want)
+	}
+	log4jProduct := prod(t, e, "Apache", "Log4j2")
+	if n := e.ProductsForKEV(log4j, make([]gr4ph.Product, 1)); n != 1 {
+		t.Errorf("Log4j products = %d, want 1", n)
+	}
+	dstP := make([]gr4ph.Product, 4)
+	np := e.ProductsForKEV(log4j, dstP)
+	if np != 1 || dstP[0] != log4jProduct {
+		t.Errorf("ProductsForKEV(Log4j) = %d %v, want 1 [%d]", np, dstP[:np], log4jProduct)
+	}
+	selP := make([]uint64, e.WordsPerRow(gr4ph.KindProduct))
+	setSel(selP, int(log4jProduct))
+	nk := e.KEVsForProducts(selP, scratch, dstK)
+	if nk != 2 {
+		t.Fatalf("KEVsForProducts(Apache/Log4j2) = %d, want 2", nk)
+	}
+	if !slices.Contains(dstK[:nk], log4j) {
+		t.Errorf("KEVsForProducts(Apache/Log4j2) = %v, want it to contain %d", dstK[:nk], log4j)
+	}
+
+	// The reverse resolvers round-trip over the whole vocabulary.
+	for i := range e.KEVCount() {
+		k := gr4ph.KEV(i)
+		if id := e.KEVID(k); id == "" {
+			t.Fatalf("entry %d has no id", i)
+		} else if got, ok := e.KEV(id); !ok || got != k {
+			t.Fatalf("KEV(%q) = %d,%v, want %d,true", id, got, ok, k)
+		}
+		if e.CWEsForKEV(k, dstCWE) != e.KEVCWEDegree(k) {
+			t.Fatalf("entry %s: degree disagrees with the row", e.KEVID(k))
+		}
+	}
+	for i := range e.CWECount() {
+		c := gr4ph.CWE(i)
+		if got, ok := e.CWE(e.CWEID(c)); !ok || got != c {
+			t.Fatalf("CWE(%q) = %d,%v, want %d,true", e.CWEID(c), got, ok, c)
+		}
+	}
+	for i := range e.ProductCount() {
+		p := gr4ph.Product(i)
+		key := e.KEVProductVendor(p) + "/" + e.KEVProductName(p)
+		if got, ok := e.Product(e.KEVProductVendor(p), e.KEVProductName(p)); !ok || got != p {
+			t.Fatalf("Product(%q) = %d,%v, want %d,true", key, got, ok, p)
+		}
 	}
 }
 

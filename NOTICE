@@ -18,3 +18,9 @@ carries, under SPARTA's terms of service:
 
 ATT&CK® is a registered trademark, and D3FEND™ a trademark, of The MITRE
 Corporation. SPARTA® is a registered trademark of The Aerospace Corporation.
+
+The CISA Known Exploited Vulnerabilities catalog, reproduced in
+ontology/kev_gen.go, is a work of the U.S. Cybersecurity and Infrastructure
+Security Agency (public domain):
+
+  https://www.cisa.gov/known-exploited-vulnerabilities-catalog

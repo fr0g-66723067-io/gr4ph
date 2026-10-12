@@ -1,9 +1,10 @@
 //go:build goexperiment.simd
 
-// Command gr4ph is a read-only lookup tool over the frozen ATT&CK x D3FEND tables:
-// it resolves a cold key (technique id, label or alias; artifact name or label;
-// countermeasure id, label or alias; relation name) to its dense id and prints
-// every relation in both directions.
+// Command gr4ph is a read-only lookup tool over the frozen ATT&CK x D3FEND x
+// KEV tables: it resolves a cold key (technique id, label or alias; artifact
+// name or label; countermeasure id, label or alias; data component id or label;
+// group id; tactic id; platform name; CVE id; weakness id; vendor/product pair;
+// relation name) to its dense id and prints every relation in both directions.
 //
 //	GOEXPERIMENT=simd go run ./cmd/gr4ph ttp T1003.001
 //	GOEXPERIMENT=simd go run ./cmd/gr4ph rel any
@@ -37,6 +38,10 @@ const usage = `usage: gr4ph <command> [flags] <query> [<query>...]
                      techniques and software it uses, and who uses it
   tactic <ta-id>     resolve an ATT&CK tactic id; list its techniques
   platform <name>    resolve a platform name; list the techniques that run on it
+  kev <query>        resolve a CVE id; list the weakness classes it is filed under and
+                     the vendor product it is about
+  cwe <query>        resolve a weakness id; list the entries in that class
+  product <v>/<name> resolve a vendor/product pair; list the entries filed under it
   rel <name>         resolve a relation name; report its plane, edge count and source
                      count in each family it belongs to
   coverage <cm>...   resolve countermeasures as the deployed set; classify every technique as
@@ -54,6 +59,9 @@ flags (before or after the queries; -json may also precede the command):
             -defrel <name>     defensive relation plane for the countermeasure set (default any)
   cm:       -defrel <name>     defensive relation plane for the artifact set (default any)
   rel:      -family <off|def>  restrict the family (default: both)
+  kev:      (no flags)
+  cwe:      (no flags)
+  product:  (no flags)
   coverage: (no flags)
   gain:     -top <n>           how many candidates to rank (default 10)
             -all               every candidate with a non-zero gain
@@ -73,6 +81,9 @@ examples:
   gr4ph group G0007                        what an actor uses, and who uses it
   gr4ph tactic TA0005                      the techniques of one ATT&CK tactic
   gr4ph platform Windows                   the techniques of one platform
+  gr4ph kev CVE-2021-44228                 an entry, its weaknesses and its product
+  gr4ph cwe CWE-78                         the entries in one weakness class
+  gr4ph product Apache/Log4j2              the entries for one vendor product
   gr4ph rel blocks                         one line per family it is in
   gr4ph rel -family def blocks             one family only
   gr4ph coverage ContentQuarantine         what that one countermeasure defends
@@ -81,7 +92,7 @@ examples:
   gr4ph -json ttp T0821                    one JSON object per query
   gr4ph help                               this message
 
-exit status: 0 all queries resolved, 1 a query was not found, 2 usage error
+exit status: 0 all queries resolved, 1 a query was not found or could not be read, 2 usage error
 `
 
 // node is one resolved id with its cold keys. Label is omitted when it equals
@@ -124,7 +135,7 @@ type gain struct {
 // result is one resolved query: the JSON object, and the source of the text block.
 type result struct {
 	Query    string `json:"query"`
-	Kind     string `json:"kind"` // "ttp", "artifact", "cm", "dc", "group", "tactic", "platform", "rel", "coverage", "gain", "contain"
+	Kind     string `json:"kind"` // "ttp", "artifact", "cm", "dc", "group", "tactic", "platform", "kev", "cwe", "product", "rel", "coverage", "gain", "contain"
 	ID       *int   `json:"id,omitempty"`
 	Name     string `json:"name"`
 	Label    string `json:"label,omitempty"`
@@ -138,6 +149,12 @@ type result struct {
 	Platforms    []string `json:"platforms,omitempty"`    // ttp only
 	SubTechnique bool     `json:"subtechnique,omitempty"` // ttp only, absent on a top-level technique
 	GroupKind    string   `json:"group_kind,omitempty"`   // group only: actor|software|campaign
+	// The KEV verbs: Added and Ransomware are the catalog's own columns, and
+	// Vendor/Product are the pair the entry is filed under.
+	Added      string `json:"added,omitempty"`      // kev only
+	Ransomware bool   `json:"ransomware,omitempty"` // kev only
+	Vendor     string `json:"vendor,omitempty"`     // kev only
+	Product    string `json:"product,omitempty"`    // kev only
 	// The overlay verbs: coverage and gain take countermeasures, contain takes
 	// techniques, and every count is the number of distinct resolved queries.
 	Deployed   *int    `json:"deployed,omitempty"`   // coverage, gain
@@ -201,6 +218,12 @@ func run(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
 		return runTactic(e, rest, stdout, stderr)
 	case "platform":
 		return runPlatform(e, rest, stdout, stderr)
+	case "kev":
+		return runKEV(e, rest, stdout, stderr)
+	case "cwe":
+		return runCWE(e, rest, stdout, stderr)
+	case "product":
+		return runProduct(e, rest, stdout, stderr)
 	case "rel":
 		return runRel(e, rest, stdout, stderr)
 	case "coverage":
@@ -293,10 +316,13 @@ type buffers struct {
 	cms  []gr4ph.Countermeasure
 	dcs  []gr4ph.DataComponent
 	gs   []gr4ph.Group
+	kevs []gr4ph.KEV
+	cwes []gr4ph.CWE
 	scrA []uint64 // artifact partition: ArtifactsRollupRel
 	scrT []uint64 // technique partition: TTPsRollupRel, TTPsForCountermeasureRollup
 	scrC []uint64 // countermeasure partition: CountermeasuresForTTPRollup, ...ViaTTPs
 	scrD []uint64 // data-component partition: DataComponentsForTTPRollup
+	scrK []uint64 // KEV partition: KEVsForProducts, KEVsForCWEs
 }
 
 func newBuffers(e *gr4ph.Engine) *buffers {
@@ -306,10 +332,13 @@ func newBuffers(e *gr4ph.Engine) *buffers {
 		cms:  make([]gr4ph.Countermeasure, e.CountermeasureCount()),
 		dcs:  make([]gr4ph.DataComponent, e.DataComponentCount()),
 		gs:   make([]gr4ph.Group, e.GroupCount()),
+		kevs: make([]gr4ph.KEV, e.KEVCount()),
+		cwes: make([]gr4ph.CWE, e.CWECount()),
 		scrA: make([]uint64, e.WordsPerRow(gr4ph.KindArtifact)),
 		scrT: make([]uint64, e.WordsPerRow(gr4ph.KindTTP)),
 		scrC: make([]uint64, e.WordsPerRow(gr4ph.KindCountermeasure)),
 		scrD: make([]uint64, e.WordsPerRow(gr4ph.KindDataComponent)),
+		scrK: make([]uint64, e.WordsPerRow(gr4ph.KindKEV)),
 	}
 }
 
@@ -642,6 +671,141 @@ func runPlatform(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
 		results = append(results, res)
 	}
 	return finish(stdout, stderr, results, failures, *jsonOut)
+}
+
+// runKEV answers `kev <query>...`: each query resolves a CVE id and reports the
+// catalog's own columns for that entry plus the weakness classes it is filed
+// under.
+func runKEV(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("kev", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", false, "")
+	flags, queries := splitArgs(fs, args)
+	if status, ok := parse(fs, flags, stdout, stderr); !ok {
+		return status
+	}
+	if len(queries) == 0 {
+		fmt.Fprintln(stderr, "gr4ph: missing query")
+		return 2
+	}
+
+	buf := newBuffers(e)
+	results := make([]result, 0, len(queries))
+	failures := make([]string, 0)
+	for _, q := range queries {
+		k, ok := e.KEV(q)
+		if !ok {
+			failures = append(failures, "gr4ph: no such KEV entry: "+q)
+			continue
+		}
+		name := e.KEVID(k)
+		res := result{
+			Query: q, Kind: "kev",
+			ID:         new(int(k)),
+			Name:       name,
+			Label:      collapseLabel(name, e.KEVName(k)),
+			Added:      e.KEVAdded(k),
+			Ransomware: e.KEVRansomware(k),
+			Vendor:     e.KEVVendor(k),
+			Product:    e.KEVProduct(k),
+		}
+		n := e.CWEsForKEV(k, buf.cwes)
+		res.Sets = []set{{Dir: "out", Name: "weaknesses", Count: n, Nodes: cweNodes(e, buf.cwes, n)}}
+		results = append(results, res)
+	}
+	return finish(stdout, stderr, results, failures, *jsonOut)
+}
+
+// runCWE answers `cwe <query>...`: each query resolves a weakness id and lists
+// the KEV entries filed under that class.
+func runCWE(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("cwe", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", false, "")
+	flags, queries := splitArgs(fs, args)
+	if status, ok := parse(fs, flags, stdout, stderr); !ok {
+		return status
+	}
+	if len(queries) == 0 {
+		fmt.Fprintln(stderr, "gr4ph: missing query")
+		return 2
+	}
+
+	buf := newBuffers(e)
+	results := make([]result, 0, len(queries))
+	failures := make([]string, 0)
+	for _, q := range queries {
+		c, ok := e.CWE(q)
+		if !ok {
+			failures = append(failures, "gr4ph: no such cwe: "+q)
+			continue
+		}
+		res := result{
+			Query: q, Kind: "cwe",
+			ID:   new(int(c)),
+			Name: e.CWEID(c),
+		}
+		n := e.KEVsForCWE(c, buf.kevs)
+		res.Sets = []set{{Dir: "in", Name: "entries", Count: n, Nodes: kevNodes(e, buf.kevs, n)}}
+		results = append(results, res)
+	}
+	return finish(stdout, stderr, results, failures, *jsonOut)
+}
+
+// runProduct answers `product <vendor>/<name>...`. Unlike kev and cwe this is a
+// selection verb, like coverage and gain: every query contributes one product
+// to a single selection, and the answer is the union of the entries filed under
+// any of them — the asset-inventory question ("which exploited vulnerabilities
+// are in the software we run?"). A run in which no query resolved prints no
+// block at all, only the failures.
+func runProduct(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("product", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", false, "")
+	flags, queries := splitArgs(fs, args)
+	if status, ok := parse(fs, flags, stdout, stderr); !ok {
+		return status
+	}
+	if len(queries) == 0 {
+		fmt.Fprintln(stderr, "gr4ph: missing query")
+		return 2
+	}
+
+	buf := newBuffers(e)
+	failures := make([]string, 0)
+	sel := make([]uint64, e.WordsPerRow(gr4ph.KindProduct))
+	seen := make(map[gr4ph.Product]bool)
+	keys := make([]string, 0, len(queries))
+	for _, q := range queries {
+		vendor, name, ok := strings.Cut(q, "/")
+		if !ok {
+			failures = append(failures, "gr4ph: product query must be Vendor/Product: "+q)
+			continue
+		}
+		p, ok := e.Product(vendor, name)
+		if !ok {
+			failures = append(failures, "gr4ph: no such product: "+q)
+			continue
+		}
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		setBit(sel, int(p))
+		keys = append(keys, e.KEVProductVendor(p)+"/"+e.KEVProductName(p))
+	}
+	if len(keys) == 0 {
+		return finish(stdout, stderr, nil, failures, *jsonOut)
+	}
+
+	n := e.KEVsForProducts(sel, buf.scrK, buf.kevs)
+	res := result{
+		Query: strings.Join(queries, " "),
+		Kind:  "product",
+		Name:  strings.Join(keys, " "),
+		Sets:  []set{{Dir: "out", Name: "entries", Count: n, Nodes: kevNodes(e, buf.kevs, n)}},
+	}
+	return finish(stdout, stderr, []result{res}, failures, *jsonOut)
 }
 
 // runRel answers `rel <name>...`.
@@ -1017,6 +1181,9 @@ func writeText(w io.Writer, res result) {
 			tacticsPart(res.Tactics), platformsPart(res.Platforms))
 	case "group":
 		fmt.Fprintf(w, "group %s%s kind=%s\n", res.Name, quoted(res.Label), res.GroupKind)
+	case "kev":
+		fmt.Fprintf(w, "kev %s%s added=%s ransomware=%t vendor=%q product=%q\n",
+			res.Name, quoted(res.Label), res.Added, res.Ransomware, res.Vendor, res.Product)
 	case "coverage":
 		fmt.Fprintf(w, "coverage deployed=%d mapped=%d\n", *res.Deployed, *res.Mapped)
 	case "gain":
@@ -1102,6 +1269,28 @@ func groupNodes(e *gr4ph.Engine, ids []gr4ph.Group, n int) []node {
 	for _, g := range ids[:n] {
 		name := e.GroupID(g)
 		nodes = append(nodes, node{ID: int(g), Name: name, Label: collapseLabel(name, e.GroupLabel(g))})
+	}
+	return nodes
+}
+
+// cweNodes materialises the first n weakness ids of ids as cold-key nodes. A
+// weakness has no separate label, so every node prints its id alone.
+func cweNodes(e *gr4ph.Engine, ids []gr4ph.CWE, n int) []node {
+	nodes := make([]node, 0, n)
+	for _, c := range ids[:n] {
+		nodes = append(nodes, node{ID: int(c), Name: e.CWEID(c)})
+	}
+	return nodes
+}
+
+// kevNodes materialises the first n KEV entry ids of ids as cold-key nodes: the
+// CVE id is the name and the vulnerability title the label, as in the kev
+// header.
+func kevNodes(e *gr4ph.Engine, ids []gr4ph.KEV, n int) []node {
+	nodes := make([]node, 0, n)
+	for _, k := range ids[:n] {
+		name := e.KEVID(k)
+		nodes = append(nodes, node{ID: int(k), Name: name, Label: collapseLabel(name, e.KEVName(k))})
 	}
 	return nodes
 }

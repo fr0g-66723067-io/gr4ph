@@ -258,6 +258,106 @@ func BenchmarkCountermeasuresForObserved(b *testing.B) {
 	}
 }
 
+// kevEngine is a standalone KEV fixture, kept separate from the ATT&CK
+// fixtures so their stride contracts stay untouched. It registers the pinned
+// catalog's shape — 1739 entries, 189 weaknesses, 722 products (the 732 raw
+// spellings are 722 keys) — with 1679 weakness edges and one product edge per
+// entry, so the KEV strides are the real ones: 28 words over entries, 3 over
+// weaknesses, 12 over products.
+func kevEngine(tb testing.TB) *Engine {
+	tb.Helper()
+	b := NewBuilder()
+	rng := rand.New(rand.NewPCG(0xfeed_face, 0xdead_beef))
+
+	for i := range 189 {
+		id := "CWE-" + strconv.Itoa(i)
+		if _, err := b.AddCWE(id, id); err != nil {
+			tb.Fatalf("AddCWE: %v", err)
+		}
+	}
+	for i := range 722 {
+		if _, err := b.AddProduct("Vendor"+strconv.Itoa(i%97), "Product "+strconv.Itoa(i)); err != nil {
+			tb.Fatalf("AddProduct: %v", err)
+		}
+	}
+	for i := range 1739 {
+		id := "CVE-2000-" + strconv.Itoa(10000+i)
+		if _, err := b.AddKEV(id, "Entry "+strconv.Itoa(i), "2000-01-01", i%5 == 0); err != nil {
+			tb.Fatalf("AddKEV: %v", err)
+		}
+	}
+	for range 1679 {
+		if err := b.AddKEVWeaknessEdge(KEV(rng.IntN(1739)), CWE(rng.IntN(189))); err != nil {
+			tb.Fatalf("AddKEVWeaknessEdge: %v", err)
+		}
+	}
+	for i := range 1739 {
+		if err := b.AddKEVProductEdge(KEV(i), Product(rng.IntN(722))); err != nil {
+			tb.Fatalf("AddKEVProductEdge: %v", err)
+		}
+	}
+
+	e, err := b.Build()
+	if err != nil {
+		tb.Fatalf("Build: %v", err)
+	}
+	if got := e.WordsPerRow(KindKEV); got != 28 {
+		tb.Fatalf("WordsPerRow(KEV) = %d, want 28", got)
+	}
+	if got := e.WordsPerRow(KindCWE); got != 3 {
+		tb.Fatalf("WordsPerRow(CWE) = %d, want 3", got)
+	}
+	if got := e.WordsPerRow(KindProduct); got != 12 {
+		tb.Fatalf("WordsPerRow(Product) = %d, want 12", got)
+	}
+	return e
+}
+
+// BenchmarkKEVsForProducts is the asset-inventory query: the union of 50 of the
+// 722 productKEV rows, one kevCWE row per entry named.
+func BenchmarkKEVsForProducts(b *testing.B) {
+	e := kevEngine(b)
+	sel := make([]uint64, e.WordsPerRow(KindProduct))
+	for i := range 50 {
+		setBit(sel, i)
+	}
+	scratch := make([]uint64, e.WordsPerRow(KindKEV))
+	dst := make([]KEV, e.KEVCount())
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		sink += e.KEVsForProducts(sel, scratch, dst)
+	}
+}
+
+// BenchmarkKEVsForCWEs is the weakness-class query over the whole vocabulary:
+// the union of all 189 cweKEV rows.
+func BenchmarkKEVsForCWEs(b *testing.B) {
+	e := kevEngine(b)
+	sel := make([]uint64, e.WordsPerRow(KindCWE))
+	for i := range e.CWECount() {
+		setBit(sel, i)
+	}
+	scratch := make([]uint64, e.WordsPerRow(KindKEV))
+	dst := make([]KEV, e.KEVCount())
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		sink += e.KEVsForCWEs(sel, scratch, dst)
+	}
+}
+
+// BenchmarkCWEsForKEV is the single-entry read: one 3-word kevCWE row.
+func BenchmarkCWEsForKEV(b *testing.B) {
+	e := kevEngine(b)
+	dst := make([]CWE, e.CWECount())
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := range b.N {
+		sink += e.CWEsForKEV(KEV(i%1739), dst)
+	}
+}
+
 // attributedEngine is a standalone attributed fixture, kept separate from
 // generatedEngine so that fixture's stride contract (and therefore every
 // existing benchmark) stays untouched. It registers 1200 techniques with the

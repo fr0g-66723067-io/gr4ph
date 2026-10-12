@@ -32,7 +32,10 @@ var ErrBuilderNotEmpty = errors.New("ontology: Register requires a fresh builder
 //     the emitted TacticTTP/PlatformTTP rows;
 //   - TTPIDs[i] must become technique index i, which makes TTPParents[i] a
 //     valid direct index (parents sort before, and register before, their
-//     children) and keeps every child block contiguous.
+//     children) and keeps every child block contiguous;
+//   - the KEV partition registers last, because nothing else indexes into it
+//     and its own arrays fix the dense ids of its three partitions
+//     (KEVIDs/CWEIDs/KEVProductNames order).
 //
 // Register requires a fresh, unbuilt builder: pre-registered relations or nodes
 // would shift every dense id and silently misalign the tables, so an
@@ -43,7 +46,8 @@ var ErrBuilderNotEmpty = errors.New("ontology: Register requires a fresh builder
 func Register(b *gr4ph.Builder) error {
 	if b.Built() || b.TTPCount() != 0 || b.ArtifactCount() != 0 || b.CountermeasureCount() != 0 ||
 		b.RelCount() != 0 || b.DefRelCount() != 0 || b.TacticCount() != 0 || b.PlatformCount() != 0 ||
-		b.DataComponentCount() != 0 || b.GroupCount() != 0 {
+		b.DataComponentCount() != 0 || b.GroupCount() != 0 ||
+		b.KEVCount() != 0 || b.CWECount() != 0 || b.ProductCount() != 0 {
 		return ErrBuilderNotEmpty
 	}
 	for _, name := range RelNames {
@@ -138,6 +142,34 @@ func Register(b *gr4ph.Builder) error {
 	for i := range SoftwareUseGroup {
 		if err := b.AddGroupSoftwareEdge(gr4ph.Group(SoftwareUseGroup[i]), gr4ph.Group(SoftwareUseTarget[i])); err != nil {
 			return fmt.Errorf("software-use pair %d: %w", i, err)
+		}
+	}
+
+	// The KEV catalog registers last: nothing else indexes into it, and its own
+	// emitted arrays fix the dense ids of all three of its partitions.
+	for _, id := range CWEIDs {
+		if _, err := b.AddCWE(id, id); err != nil {
+			return fmt.Errorf("cwe %s: %w", id, err)
+		}
+	}
+	for i, name := range KEVProductNames {
+		if _, err := b.AddProduct(KEVProductVendors[i], name); err != nil {
+			return fmt.Errorf("product %s/%s: %w", KEVProductVendors[i], name, err)
+		}
+	}
+	for i, id := range KEVIDs {
+		if _, err := b.AddKEV(id, KEVNames[i], KEVAdded[i], KEVRansomware[i]); err != nil {
+			return fmt.Errorf("kev %s: %w", id, err)
+		}
+	}
+	for i := range KEVWeaknessKEV {
+		if err := b.AddKEVWeaknessEdge(gr4ph.KEV(KEVWeaknessKEV[i]), gr4ph.CWE(KEVWeaknessCWE[i])); err != nil {
+			return fmt.Errorf("kev weakness %d: %w", i, err)
+		}
+	}
+	for i, p := range KEVProductIndex {
+		if err := b.AddKEVProductEdge(gr4ph.KEV(i), gr4ph.Product(p)); err != nil {
+			return fmt.Errorf("kev product %d: %w", i, err)
 		}
 	}
 	return nil

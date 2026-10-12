@@ -729,6 +729,22 @@ func TestLayoutMatchesReadme(t *testing.T) {
 			t.Fatalf("AddGroup #%d: %v", i, err)
 		}
 	}
+	for i := range 189 {
+		id := "CWE-" + strconv.Itoa(i)
+		if _, err := b.AddCWE(id, id); err != nil {
+			t.Fatalf("AddCWE #%d: %v", i, err)
+		}
+	}
+	for i := range 722 {
+		if _, err := b.AddProduct("Vendor"+strconv.Itoa(i), "Product "+strconv.Itoa(i)); err != nil {
+			t.Fatalf("AddProduct #%d: %v", i, err)
+		}
+	}
+	for i := range 1739 {
+		if _, err := b.AddKEV("CVE-2000-"+strconv.Itoa(10000+i), "Entry "+strconv.Itoa(i), "2000-01-01", false); err != nil {
+			t.Fatalf("AddKEV #%d: %v", i, err)
+		}
+	}
 	if err := b.AddEdge(TTP(0), Artifact(0), Rel(1)); err != nil {
 		t.Fatalf("AddEdge: %v", err)
 	}
@@ -758,10 +774,15 @@ func TestLayoutMatchesReadme(t *testing.T) {
 		{"ttpGrp", len(e.ttpGrp)},
 		{"grpSoftware", len(e.grpSoftware)},
 		{"softwareGrp", len(e.softwareGrp)},
+		{"kevCWE", len(e.kevCWE)},
+		{"cweKEV", len(e.cweKEV)},
+		{"kevProduct", len(e.kevProduct)},
+		{"productKEV", len(e.productKEV)},
 	}
 	want := []int{
 		199248, 197106, 24492, 28899, 2983, 3558,
 		779, 1186, 285, 1186, 1186, 2337, 2372, 23028, 22534, 23028, 23028,
+		5217, 5292, 20868, 20216,
 	}
 	subtotal, newArrays := 0, 0
 	for i, bl := range blocks {
@@ -777,11 +798,11 @@ func TestLayoutMatchesReadme(t *testing.T) {
 	if subtotal != 456286 {
 		t.Errorf("six-block subtotal = %d words, want 456286", subtotal)
 	}
-	if newArrays != 100949 {
-		t.Errorf("new arrays = %d words, want 100949", newArrays)
+	if newArrays != 152542 {
+		t.Errorf("new arrays = %d words, want 152542", newArrays)
 	}
-	if subtotal+newArrays != 557235 {
-		t.Errorf("total = %d words, want 557235", subtotal+newArrays)
+	if subtotal+newArrays != 608828 {
+		t.Errorf("total = %d words, want 608828", subtotal+newArrays)
 	}
 }
 
@@ -798,6 +819,39 @@ func TestEmptyEngine(t *testing.T) {
 	}
 	if e.WordsPerRow(KindTTP) != 0 || e.WordsPerRow(KindArtifact) != 0 || e.WordsPerRow(KindCountermeasure) != 0 {
 		t.Fatal("strides must be 0 for an empty engine")
+	}
+	if e.WordsPerRow(KindKEV) != 0 || e.WordsPerRow(KindCWE) != 0 || e.WordsPerRow(KindProduct) != 0 {
+		t.Fatal("KEV strides must be 0 for an empty engine")
+	}
+	if e.KEVCount() != 0 || e.CWECount() != 0 || e.ProductCount() != 0 {
+		t.Fatal("KEV counts must be 0 for an empty engine")
+	}
+	if n := e.KEVCWEDegree(0); n != 0 {
+		t.Fatalf("KEVCWEDegree = %d, want 0", n)
+	}
+	if n := e.CWEsForKEV(0, nil); n != 0 {
+		t.Fatalf("CWEsForKEV = %d, want 0", n)
+	}
+	if n := e.KEVsForCWE(0, nil); n != 0 {
+		t.Fatalf("KEVsForCWE = %d, want 0", n)
+	}
+	if n := e.ProductsForKEV(0, nil); n != 0 {
+		t.Fatalf("ProductsForKEV = %d, want 0", n)
+	}
+	if n := e.KEVsForProducts(nil, nil, nil); n != 0 {
+		t.Fatalf("KEVsForProducts = %d, want 0", n)
+	}
+	if n := e.KEVsForCWEs(nil, nil, nil); n != 0 {
+		t.Fatalf("KEVsForCWEs = %d, want 0", n)
+	}
+	if _, ok := e.KEV("CVE-2021-44228"); ok {
+		t.Fatal("KEV on an empty engine must be false")
+	}
+	if _, ok := e.CWE("CWE-78"); ok {
+		t.Fatal("CWE on an empty engine must be false")
+	}
+	if _, ok := e.Product("Apache", "Log4j2"); ok {
+		t.Fatal("Product on an empty engine must be false")
 	}
 	if e.Adjacent(0, 0) || e.AdjacentRel(0, 0, RelAny) {
 		t.Fatal("empty engine must not report adjacency")
@@ -866,6 +920,29 @@ func TestZeroEngine(t *testing.T) {
 	}
 	if e.WordsPerRow(KindTTP) != 0 || e.WordsPerRow(KindArtifact) != 0 || e.WordsPerRow(KindCountermeasure) != 0 {
 		t.Fatal("zero Engine strides must be 0")
+	}
+	if e.WordsPerRow(KindKEV) != 0 || e.WordsPerRow(KindCWE) != 0 || e.WordsPerRow(KindProduct) != 0 {
+		t.Fatal("zero Engine KEV strides must be 0")
+	}
+	if e.KEVCount() != 0 || e.CWECount() != 0 || e.ProductCount() != 0 {
+		t.Fatal("zero Engine KEV counts must be 0")
+	}
+	// The zero Engine has no KEV rows at all, so even the scratch-free reads
+	// answer 0 rather than panicking.
+	if n := e.KEVCWEDegree(0); n != 0 {
+		t.Fatalf("zero Engine KEVCWEDegree = %d, want 0", n)
+	}
+	if n := e.KEVsForProducts(nil, nil, nil); n != 0 {
+		t.Fatalf("zero Engine KEVsForProducts = %d, want 0", n)
+	}
+	if _, ok := e.KEV("CVE-2021-44228"); ok {
+		t.Fatal("zero Engine must resolve no KEV entry")
+	}
+	if _, ok := e.CWE("CWE-78"); ok {
+		t.Fatal("zero Engine must resolve no CWE")
+	}
+	if _, ok := e.Product("Apache", "Log4j2"); ok {
+		t.Fatal("zero Engine must resolve no product")
 	}
 	if _, ok := e.TTPParent(0); ok {
 		t.Fatal("zero Engine TTPParent must be false")
