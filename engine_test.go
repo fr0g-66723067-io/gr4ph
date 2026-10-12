@@ -231,6 +231,64 @@ func buildSynthetic(t *testing.T) *Engine {
 		t.Fatalf("AddGroupSoftwareEdge: %v", err)
 	}
 
+	// The KEV partition: two entries, two weaknesses and two products, with the
+	// edges chosen so every direction of both families is non-empty (entry 0
+	// names both weaknesses, entry 1 only the second; each product has exactly
+	// one entry).
+	cwe := func(id string) CWE {
+		t.Helper()
+		v, err := b.AddCWE(id, id)
+		if err != nil {
+			t.Fatalf("AddCWE(%s): %v", id, err)
+		}
+		return v
+	}
+	cwe20 := cwe("CWE-20")
+	cwe502 := cwe("CWE-502")
+	product := func(vendor, name string) Product {
+		t.Helper()
+		v, err := b.AddProduct(vendor, name)
+		if err != nil {
+			t.Fatalf("AddProduct(%s/%s): %v", vendor, name, err)
+		}
+		return v
+	}
+	alpha := product("Avendor", "Alpha")
+	beta := product("Bvendor", "Beta")
+	kev := func(id, name, added string, ransomware bool) KEV {
+		t.Helper()
+		v, err := b.AddKEV(id, name, added, ransomware)
+		if err != nil {
+			t.Fatalf("AddKEV(%s): %v", id, err)
+		}
+		return v
+	}
+	k0 := kev("CVE-2099-0001", "Alpha Flaw", "2099-01-01", true)
+	k1 := kev("CVE-2099-0002", "Beta Flaw", "2099-01-02", false)
+	for _, w := range []struct {
+		k KEV
+		c CWE
+	}{
+		{k0, cwe20},
+		{k0, cwe502},
+		{k1, cwe502},
+	} {
+		if err := b.AddKEVWeaknessEdge(w.k, w.c); err != nil {
+			t.Fatalf("AddKEVWeaknessEdge: %v", err)
+		}
+	}
+	for _, p := range []struct {
+		k KEV
+		p Product
+	}{
+		{k0, alpha},
+		{k1, beta},
+	} {
+		if err := b.AddKEVProductEdge(p.k, p.p); err != nil {
+			t.Fatalf("AddKEVProductEdge: %v", err)
+		}
+	}
+
 	e, err := b.Build()
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -241,6 +299,9 @@ func buildSynthetic(t *testing.T) *Engine {
 	if e.TacticCount() != 2 || e.PlatformCount() != 2 || e.DataComponentCount() != 2 || e.GroupCount() != 3 {
 		t.Fatalf("vocabulary counts = %d %d %d %d, want 2 2 2 3",
 			e.TacticCount(), e.PlatformCount(), e.DataComponentCount(), e.GroupCount())
+	}
+	if e.KEVCount() != 2 || e.CWECount() != 2 || e.ProductCount() != 2 {
+		t.Fatalf("kev counts = %d %d %d, want 2 2 2", e.KEVCount(), e.CWECount(), e.ProductCount())
 	}
 	return e
 }

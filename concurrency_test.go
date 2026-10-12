@@ -41,6 +41,16 @@ func TestConcurrentQueries(t *testing.T) {
 		for i := range e.TTPCount() {
 			setBit(selT, i)
 		}
+		// The KEV selections: one weakness (all of a weakness class's entries)
+		// and one product.
+		bufK := make([]KEV, e.KEVCount())
+		bufCWE := make([]CWE, e.CWECount())
+		bufP := make([]Product, e.ProductCount())
+		scrK := make([]uint64, e.WordsPerRow(KindKEV))
+		selKEV := make([]uint64, e.WordsPerRow(KindCWE))
+		setBit(selKEV, 1)
+		selProd := make([]uint64, e.WordsPerRow(KindProduct))
+		setBit(selProd, 0)
 
 		var r results
 		r.adjacent = e.AdjacentRel(TTP(0), Artifact(0), RelAny)
@@ -63,6 +73,12 @@ func TestConcurrentQueries(t *testing.T) {
 		r.blind = append(r.blind, ttps[:e.TTPsBlind(selT, selC, scratchT, ttps)]...)
 		r.gain = e.CoverageGain(Countermeasure(0), selC, scratchT)
 		r.observed = append(r.observed, cms[:e.CountermeasuresForObserved(selT, scratchC, cms)]...)
+		r.kevDegree = e.KEVCWEDegree(KEV(0))
+		r.cweEntries = append(r.cweEntries, bufCWE[:e.CWEsForKEV(KEV(0), bufCWE)]...)
+		r.kevEntries = append(r.kevEntries, bufK[:e.KEVsForCWE(CWE(1), bufK)]...)
+		r.productEntries = append(r.productEntries, bufP[:e.ProductsForKEV(KEV(0), bufP)]...)
+		r.kevEntries = append(r.kevEntries, bufK[:e.KEVsForProducts(selProd, scrK, bufK)]...)
+		r.kevEntries = append(r.kevEntries, bufK[:e.KEVsForCWEs(selKEV, scrK, bufK)]...)
 		r.ttpForCM = append(r.ttpForCM, rolled[:e.TTPsForCountermeasureRollup(Countermeasure(0), scratchT, rolled)]...)
 		r.children = append(r.children, ttps[:e.TTPChildren(TTP(0), ttps)]...)
 		r.tacticMask = e.TTPTactics(TTP(0))
@@ -92,7 +108,8 @@ func TestConcurrentQueries(t *testing.T) {
 		len(want.groupsForTTP) == 0 || len(want.softwareForGroup) == 0 ||
 		len(want.grpRollup) == 0 || len(want.groupsForSoftware) == 0 ||
 		len(want.mapped) == 0 || len(want.covered) == 0 || len(want.blind) == 0 ||
-		len(want.observed) == 0 {
+		len(want.observed) == 0 || len(want.kevEntries) == 0 || len(want.cweEntries) == 0 ||
+		len(want.productEntries) == 0 {
 		t.Fatalf("query set produced empty results, so the comparison is vacuous: %+v", want)
 	}
 	const goroutines, iterations = 8, 200
@@ -129,6 +146,10 @@ type results struct {
 	cmTTPRollup, cmViaTTPs, cmForTTP []Countermeasure
 	mapped, covered, blind           []TTP
 	observed                         []Countermeasure
+	kevDegree                        int
+	kevEntries                       []KEV
+	cweEntries                       []CWE
+	productEntries                   []Product
 	dcsExact, dcsRollup              []DataComponent
 	groupsForTTP, softwareForGroup   []Group
 	groupsForSoftware                []Group
@@ -157,6 +178,10 @@ func (r results) equal(o results) bool {
 		equalIDs(r.covered, o.covered) &&
 		equalIDs(r.blind, o.blind) &&
 		equalIDs(r.observed, o.observed) &&
+		equalIDs(r.kevEntries, o.kevEntries) &&
+		equalIDs(r.cweEntries, o.cweEntries) &&
+		equalIDs(r.productEntries, o.productEntries) &&
+		r.kevDegree == o.kevDegree &&
 		r.gain == o.gain &&
 		equalIDs(r.ttpForTactic, o.ttpForTactic) &&
 		equalIDs(r.ttpForPlatform, o.ttpForPlatform) &&

@@ -1,14 +1,14 @@
-// Package hotmethods holds the canonical list of the engine's 51 allocation-free
+// Package hotmethods holds the canonical list of the engine's 57 allocation-free
 // query methods, so the root and ontology zero-allocation tests can prove they
-// cover the same set instead of each counting to 51 on its own.
+// cover the same set instead of each counting to 57 on its own.
 package hotmethods
 
 // Names is the canonical order of the hot-path methods: the exact traversals,
 // the set operations, the roll-ups, the countermeasure queries, the coverage
 // overlay, the technique attributes, the data-component and grouping queries,
-// the hierarchy accessors and the two relation name accessors. Both
-// zero-allocation tests build their cases in this order and assert their case
-// names equal it.
+// the KEV, weakness and product queries, the hierarchy accessors and the two
+// relation name accessors. Both zero-allocation tests build their cases in this
+// order and assert their case names equal it.
 var Names = []string{
 	"Adjacent",
 	"AdjacentRel",
@@ -40,6 +40,12 @@ var Names = []string{
 	"TTPsBlind",
 	"CoverageGain",
 	"CountermeasuresForObserved",
+	"KEVCWEDegree",
+	"CWEsForKEV",
+	"KEVsForCWE",
+	"ProductsForKEV",
+	"KEVsForProducts",
+	"KEVsForCWEs",
 	"TTPTactics",
 	"TTPPlatforms",
 	"TTPFlags",
