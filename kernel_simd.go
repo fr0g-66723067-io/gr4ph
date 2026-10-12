@@ -2,7 +2,10 @@
 
 package gr4ph
 
-import "simd"
+import (
+	"math/bits"
+	"simd"
+)
 
 // wordsPerVector is the number of uint64 words in one SIMD vector. The width is
 // fixed for the life of the process (the simd package reads its GODEBUG setting
@@ -15,7 +18,9 @@ var wordsPerVector = simd.VectorBitSize() / 64
 // else goes through these three kernels, so a portable scalar fallback would be
 // a drop-in replacement (see README "Build requirement").
 //
-// All three kernels require len(dst) == len(src) and operate on whole rows.
+// The four row kernels — orRowInto, andRowInto, andNotRowInto and copyRow —
+// require len(dst) == len(src) and operate on whole rows; orSelectedRowsInto
+// slices rows out of a block by stride and delegates each one to orRowInto.
 // Rows are exact-length (stride words, no padding), so the loops below are
 // uniform for every row length: whole vectors go through LoadUint64s/Store and
 // the tail (up to wordsPerVector-1 words) is handled scalar.
@@ -61,5 +66,40 @@ func copyRow(dst, src []uint64) {
 	}
 	for ; pos < len(dst); pos++ {
 		dst[pos] = src[pos]
+	}
+}
+
+// andNotRowInto computes dst[i] &^= src[i] for every i.
+func andNotRowInto(dst, src []uint64) {
+	pos := 0
+	for ; pos+wordsPerVector <= len(dst); pos += wordsPerVector {
+		a := simd.LoadUint64s(dst[pos:])
+		b := simd.LoadUint64s(src[pos:])
+		a.AndNot(b).Store(dst[pos:])
+	}
+	for ; pos < len(dst); pos++ {
+		dst[pos] &^= src[pos]
+	}
+}
+
+// orSelectedRowsInto computes dst |= block[row*stride : (row+1)*stride] for
+// every set bit row of sel: the union of the block rows a selection names. A
+// row whose offset falls past the end of block is ignored, so a selection with
+// bits past the live range cannot read out of bounds. The set-bit scan is
+// inlined instead of routed through eachBit, so this kernel's allocation
+// profile does not depend on eachBit staying inlinable.
+func orSelectedRowsInto(dst, sel, block []uint64, stride int) {
+	if stride == 0 || len(dst) < stride {
+		return
+	}
+	dst = dst[:stride]
+	for w, word := range sel {
+		for word != 0 {
+			off := (w<<6 + bits.TrailingZeros64(word)) * stride
+			if off+stride <= len(block) {
+				orRowInto(dst, block[off:off+stride])
+			}
+			word &= word - 1
+		}
 	}
 }

@@ -30,6 +30,17 @@ func TestConcurrentQueries(t *testing.T) {
 		dcs := make([]DataComponent, e.DataComponentCount())
 		groups := make([]Group, e.GroupCount())
 		strs := make([]string, e.TTPCount())
+		// The overlay selections: every live countermeasure bit on one side, and
+		// every live technique bit on the other, so the blind set below is not
+		// empty (the non-vacuity guard requires a non-empty result).
+		selC := make([]uint64, e.WordsPerRow(KindCountermeasure))
+		selT := make([]uint64, e.WordsPerRow(KindTTP))
+		for i := range e.CountermeasureCount() {
+			setBit(selC, i)
+		}
+		for i := range e.TTPCount() {
+			setBit(selT, i)
+		}
 
 		var r results
 		r.adjacent = e.AdjacentRel(TTP(0), Artifact(0), RelAny)
@@ -47,6 +58,11 @@ func TestConcurrentQueries(t *testing.T) {
 		r.cmTTPRollup = append(r.cmTTPRollup, cms[:e.CountermeasuresForTTPRollup(TTP(0), scratchC, cms)]...)
 		r.cmViaTTPs = append(r.cmViaTTPs, cms[:e.CountermeasuresForArtifactViaTTPs(Artifact(0), scratchC, cms)]...)
 		r.cmForTTP = append(r.cmForTTP, cms[:e.CountermeasuresForTTP(TTP(1), cms)]...)
+		r.mapped = append(r.mapped, ttps[:e.TTPsMapped(scratchT, ttps)]...)
+		r.covered = append(r.covered, ttps[:e.TTPsCovered(selC, scratchT, ttps)]...)
+		r.blind = append(r.blind, ttps[:e.TTPsBlind(selT, selC, scratchT, ttps)]...)
+		r.gain = e.CoverageGain(Countermeasure(0), selC, scratchT)
+		r.observed = append(r.observed, cms[:e.CountermeasuresForObserved(selT, scratchC, cms)]...)
 		r.ttpForCM = append(r.ttpForCM, rolled[:e.TTPsForCountermeasureRollup(Countermeasure(0), scratchT, rolled)]...)
 		r.children = append(r.children, ttps[:e.TTPChildren(TTP(0), ttps)]...)
 		r.tacticMask = e.TTPTactics(TTP(0))
@@ -74,7 +90,9 @@ func TestConcurrentQueries(t *testing.T) {
 		len(want.dcsExact) == 0 || len(want.dcsRollup) == 0 || len(want.ttpForTactic) == 0 ||
 		len(want.ttpForPlatform) == 0 || len(want.ttpForDC) == 0 ||
 		len(want.groupsForTTP) == 0 || len(want.softwareForGroup) == 0 ||
-		len(want.grpRollup) == 0 || len(want.groupsForSoftware) == 0 {
+		len(want.grpRollup) == 0 || len(want.groupsForSoftware) == 0 ||
+		len(want.mapped) == 0 || len(want.covered) == 0 || len(want.blind) == 0 ||
+		len(want.observed) == 0 {
 		t.Fatalf("query set produced empty results, so the comparison is vacuous: %+v", want)
 	}
 	const goroutines, iterations = 8, 200
@@ -100,6 +118,7 @@ func TestConcurrentQueries(t *testing.T) {
 type results struct {
 	adjacent, defends, subTechnique  bool
 	degree, artifactDegree, cmDegree int
+	gain                             int
 	tacticMask, platformMask         uint64
 	artifactsRel                     []Artifact
 	ttpsRel, ttpsAny, ttpsAll        []TTP
@@ -108,6 +127,8 @@ type results struct {
 	ttpForTactic, grpRollup          []TTP
 	ttpForPlatform, ttpForDC         []TTP
 	cmTTPRollup, cmViaTTPs, cmForTTP []Countermeasure
+	mapped, covered, blind           []TTP
+	observed                         []Countermeasure
 	dcsExact, dcsRollup              []DataComponent
 	groupsForTTP, softwareForGroup   []Group
 	groupsForSoftware                []Group
@@ -132,6 +153,11 @@ func (r results) equal(o results) bool {
 		equalIDs(r.cmTTPRollup, o.cmTTPRollup) &&
 		equalIDs(r.cmViaTTPs, o.cmViaTTPs) &&
 		equalIDs(r.cmForTTP, o.cmForTTP) &&
+		equalIDs(r.mapped, o.mapped) &&
+		equalIDs(r.covered, o.covered) &&
+		equalIDs(r.blind, o.blind) &&
+		equalIDs(r.observed, o.observed) &&
+		r.gain == o.gain &&
 		equalIDs(r.ttpForTactic, o.ttpForTactic) &&
 		equalIDs(r.ttpForPlatform, o.ttpForPlatform) &&
 		equalIDs(r.ttpForDC, o.ttpForDC) &&

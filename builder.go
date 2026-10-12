@@ -46,6 +46,12 @@ type DataComponent uint16
 // sets), software (malware and tools) and campaigns share one id space.
 type Group uint16
 
+// Selection is a caller-owned bitset over one partition's dense ids: bit i of
+// word i>>6 selects id i. The engine reads it and never retains it, so a caller
+// may flip bits between calls — a SIEM alert stream, a deployed-tool
+// inventory. len(sel) must be at least WordsPerRow of the partition it selects.
+type Selection []uint64
+
 // GroupKind tags a grouping node with the ATT&CK object type it came from.
 type GroupKind uint8
 

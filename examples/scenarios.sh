@@ -194,3 +194,20 @@ echo '==========================================================================
 echo
 echo '--- ./gr4ph help'
 ./gr4ph help
+
+echo
+echo '==============================================================================='
+echo 'Coverage — what a deployment defends, what it still misses, what to buy next'
+echo '==============================================================================='
+
+echo
+echo '--- ./gr4ph coverage ContentQuarantine'
+./gr4ph coverage ContentQuarantine     # defended / undefended (mapped but uncovered) / unmapped
+
+echo
+echo '--- ./gr4ph gain -greedy ContentQuarantine'
+./gr4ph gain -greedy ContentQuarantine # the marginal buys on top of that deployment, best first
+
+echo
+echo '--- ./gr4ph contain T1003.001'
+./gr4ph contain T1003.001              # the countermeasures that touch an observed technique

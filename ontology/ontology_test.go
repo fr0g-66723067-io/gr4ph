@@ -54,6 +54,10 @@ func cm(tb testing.TB, e *gr4ph.Engine, name string) gr4ph.Countermeasure {
 	return id
 }
 
+// setSel sets bit i of sel. The root package's setBit is unexported, so the
+// ontology tests build their selections with this.
+func setSel(sel []uint64, i int) { sel[i>>6] |= 1 << uint(i&63) }
+
 func rel(tb testing.TB, e *gr4ph.Engine, name string) gr4ph.Rel {
 	tb.Helper()
 	r, ok := e.Rel(name)
@@ -1118,6 +1122,10 @@ func TestZeroAllocOntology(t *testing.T) {
 	accesses := rel(t, e, "accesses")
 	arts := []gr4ph.Artifact{process, art(t, e, "File")}
 	ttps := []gr4ph.TTP{t1003, t1003a}
+	selC := make([]uint64, e.WordsPerRow(gr4ph.KindCountermeasure))
+	setSel(selC, int(cm0))
+	selT := make([]uint64, e.WordsPerRow(gr4ph.KindTTP))
+	setSel(selT, int(t1003a))
 
 	cases := []struct {
 		name string
@@ -1174,6 +1182,13 @@ func TestZeroAllocOntology(t *testing.T) {
 			ontologySink += e.TTPsForCountermeasureRollup(cm0, scratchT, bufT)
 		}},
 		{"CountermeasureDegree", func() { ontologySink += e.CountermeasureDegree(cm0) }},
+		{"TTPsMapped", func() { ontologySink += e.TTPsMapped(scratchT, bufT) }},
+		{"TTPsCovered", func() { ontologySink += e.TTPsCovered(selC, scratchT, bufT) }},
+		{"TTPsBlind", func() { ontologySink += e.TTPsBlind(selT, selC, scratchT, bufT) }},
+		{"CoverageGain", func() { ontologySink += e.CoverageGain(cm0, selC, scratchT) }},
+		{"CountermeasuresForObserved", func() {
+			ontologySink += e.CountermeasuresForObserved(selT, scratchC, bufC)
+		}},
 		{"TTPTactics", func() { ontologySink += int(e.TTPTactics(t1003a)) }},
 		{"TTPPlatforms", func() { ontologySink += int(e.TTPPlatforms(t1003a)) }},
 		{"TTPFlags", func() { ontologySink += int(e.TTPFlags(t1003a)) }},
@@ -1591,5 +1606,60 @@ func TestOntologyAttributes(t *testing.T) {
 	wantTTPs := "T1207,T1550.002,T1550.003,T1558,T1558.001,T1558.002,T1558.003,T1558.004,T1649"
 	if strings.Join(names, ",") != wantTTPs {
 		t.Fatalf("TTPsForDataComponent(DC0084) = %v, want %s", names, wantTTPs)
+	}
+}
+
+// TestOntologyCoverage pins the overlay queries on the real tables: the mapped
+// range, the blind set of a full deployment, the marginal gain of the two
+// strongest candidates and the mitigation set of one alert. Every literal is
+// re-measured from the committed ontology, not copied from the plan.
+func TestOntologyCoverage(t *testing.T) {
+	e := build(t)
+	scratchT := make([]uint64, e.WordsPerRow(gr4ph.KindTTP))
+	scratchC := make([]uint64, e.WordsPerRow(gr4ph.KindCountermeasure))
+	dstT := make([]gr4ph.TTP, e.TTPCount())
+	dstC := make([]gr4ph.Countermeasure, e.CountermeasureCount())
+
+	allTTP := make([]uint64, e.WordsPerRow(gr4ph.KindTTP))
+	for i := range e.TTPCount() {
+		setSel(allTTP, i)
+	}
+	allCM := make([]uint64, e.WordsPerRow(gr4ph.KindCountermeasure))
+	for i := range e.CountermeasureCount() {
+		setSel(allCM, i)
+	}
+	emptyCM := make([]uint64, e.WordsPerRow(gr4ph.KindCountermeasure))
+
+	if mapped := e.TTPsMapped(scratchT, dstT); mapped != 427 {
+		t.Errorf("TTPsMapped = %d, want 427", mapped)
+	}
+	if covered := e.TTPsCovered(allCM, scratchT, dstT); covered != 427 {
+		t.Errorf("TTPsCovered(all countermeasures) = %d, want 427 (the mapped range)", covered)
+	}
+	if blind := e.TTPsBlind(allTTP, allCM, scratchT, dstT); blind != 759 {
+		t.Errorf("TTPsBlind(all active, all countermeasures) = %d, want 759 (1186-427)", blind)
+	}
+
+	quarantine, ok := e.Countermeasure("ContentQuarantine")
+	if !ok {
+		t.Fatal("no such countermeasure ContentQuarantine")
+	}
+	filtering, ok := e.Countermeasure("NetworkTrafficFiltering")
+	if !ok {
+		t.Fatal("no such countermeasure NetworkTrafficFiltering")
+	}
+	if got := e.CoverageGain(quarantine, emptyCM, scratchT); got != 125 {
+		t.Errorf("CoverageGain(ContentQuarantine, nothing) = %d, want 125", got)
+	}
+	quarantineSel := make([]uint64, e.WordsPerRow(gr4ph.KindCountermeasure))
+	setSel(quarantineSel, int(quarantine))
+	if got := e.CoverageGain(filtering, quarantineSel, scratchT); got != 107 {
+		t.Errorf("CoverageGain(NetworkTrafficFiltering, ContentQuarantine) = %d, want 107", got)
+	}
+
+	observed := make([]uint64, e.WordsPerRow(gr4ph.KindTTP))
+	setSel(observed, int(ttp(t, e, "T1003.001")))
+	if got := e.CountermeasuresForObserved(observed, scratchC, dstC); got != 12 {
+		t.Errorf("CountermeasuresForObserved(T1003.001) = %d, want 12", got)
 	}
 }

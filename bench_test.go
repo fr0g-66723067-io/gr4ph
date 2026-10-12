@@ -186,6 +186,78 @@ func BenchmarkCountermeasuresForTTPRollup(b *testing.B) {
 	}
 }
 
+// BenchmarkTTPsCovered is the union of the selected countermeasure rows over
+// the widest overlay surface the fixture offers: every row of the block is
+// examined, 20 of the 160 are ORed in.
+func BenchmarkTTPsCovered(b *testing.B) {
+	e := benchEngine(b)
+	sel := make([]uint64, e.WordsPerRow(KindCountermeasure))
+	for i := range 20 {
+		setBit(sel, i)
+	}
+	scratch := make([]uint64, e.WordsPerRow(KindTTP))
+	dst := make([]TTP, e.TTPCount())
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		sink += e.TTPsCovered(sel, scratch, dst)
+	}
+}
+
+// BenchmarkTTPsBlind is the blind-spot difference: a fully active technique
+// selection minus the same 20-countermeasure deployment.
+func BenchmarkTTPsBlind(b *testing.B) {
+	e := benchEngine(b)
+	sel := make([]uint64, e.WordsPerRow(KindCountermeasure))
+	active := make([]uint64, e.WordsPerRow(KindTTP))
+	for i := range 20 {
+		setBit(sel, i)
+	}
+	for i := range e.TTPCount() {
+		setBit(active, i)
+	}
+	scratch := make([]uint64, e.WordsPerRow(KindTTP))
+	dst := make([]TTP, e.TTPCount())
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		sink += e.TTPsBlind(active, sel, scratch, dst)
+	}
+}
+
+// BenchmarkCoverageGain is the marginal-gain probe a procurement ranking runs
+// per candidate: one selected-row union plus a masked popcount.
+func BenchmarkCoverageGain(b *testing.B) {
+	e := benchEngine(b)
+	sel := make([]uint64, e.WordsPerRow(KindCountermeasure))
+	for i := range 20 {
+		setBit(sel, i)
+	}
+	scratch := make([]uint64, e.WordsPerRow(KindTTP))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		sink += e.CoverageGain(Countermeasure(0), sel, scratch)
+	}
+}
+
+// BenchmarkCountermeasuresForObserved is the containment query: the union of
+// the transposed rows of a 50-technique observed set.
+func BenchmarkCountermeasuresForObserved(b *testing.B) {
+	e := benchEngine(b)
+	observed := make([]uint64, e.WordsPerRow(KindTTP))
+	for i := range 50 {
+		setBit(observed, i)
+	}
+	scratch := make([]uint64, e.WordsPerRow(KindCountermeasure))
+	dst := make([]Countermeasure, e.CountermeasureCount())
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		sink += e.CountermeasuresForObserved(observed, scratch, dst)
+	}
+}
+
 // attributedEngine is a standalone attributed fixture, kept separate from
 // generatedEngine so that fixture's stride contract (and therefore every
 // existing benchmark) stays untouched. It registers 1200 techniques with the
