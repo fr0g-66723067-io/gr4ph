@@ -10,8 +10,9 @@ sub-technique flag).
 
 Every directed relation is materialised in **both** directions, so a traversal is one row fetch plus
 vector bitwise ops: no pointer chasing, no per-edge allocation, no strings on the hot path.
-Sub-technique roll-up is explicit (`ArtifactsRollup`, `TTPsRollup`, `CountermeasuresForTTPRollup`,
-`TTPsForCountermeasureRollup`, `TTPsForGroupRollup`, `DataComponentsForTTPRollup`), and the
+Sub-technique roll-up is explicit (`ArtifactsRollup`, `ArtifactsRollupRel`, `TTPsRollup`, `TTPsRollupRel`,
+`CountermeasuresForTTPRollup`, `TTPsForCountermeasureRollup`, `TTPsForGroupRollup`,
+`DataComponentsForTTPRollup`), and the
 countermeasure chain answers "which countermeasures apply to this artifact, directly or through the
 techniques that touch it".
 
@@ -78,7 +79,7 @@ flowchart LR
    defend the most technique surface.
 
 `GOEXPERIMENT=simd go run ./examples/incident` walks the five stages on a hand-built graph
-(register → wire → incident → evaluation → response). `GOEXPERIMENT=simd go run ./examples/ontology`
+(boot → wire → incident → evaluation → response). `GOEXPERIMENT=simd go run ./examples/ontology`
 runs both flows against the real tables.
 
 ## Command line
@@ -88,8 +89,11 @@ id, label or alias; artifact name or label; countermeasure id, label or alias; d
 label; grouping-node id or label; ATT&CK tactic id; platform name; CVE id; weakness id; vendor/product
 pair; relation name — resolves to its dense id, and every relation of that node is printed in both
 directions. A grouping label shared by
-two nodes (12 in 19.2, always across kinds: `Frankenstein` is the campaign `C0001` and the actor
-`G0101`) resolves to the byte-smallest id, and the printed header names the node that resolved.
+two nodes resolves to the byte-smallest id, and the printed header names the node that resolved: 12
+labels are shared verbatim in 19.2 (`Frankenstein` is the campaign `C0001` and the actor `G0101`), all
+across kinds, and the resolver's case-insensitive key space folds three case-variant pairs into shared
+keys — 15 keys in all, 13 of them across kinds, the other two (`ngrok`, `triton`) pairing two software
+nodes.
 
 ```sh
 GOEXPERIMENT=simd go run ./cmd/gr4ph <command> [flags] <query> [<query>...]
@@ -140,7 +144,9 @@ relation flag, so every set they print is unfiltered, and neither do `kev`, `cwe
 independently — 11 names, `blocks` among them, are registered in both — so `rel` prints one line
 per family and `-family` narrows it. A technique ATT&CK has revoked or deprecated prints `
 revoked=true` in
-its `ttp` header (`"revoked":true` under `-json`); its D3FEND links live on the successor id. The same
+its `ttp` header (`"revoked":true` under `-json`); ATT&CK moved most of its D3FEND mapping to the
+successor id, but 23 of the 222 flagged techniques still carry offensive edges (`T1053.004`,
+`T1070.001`, `T1070.002`, `T1562.001` and `T1574.002` among them). The same
 header carries the ATT&CK attributes: ` subtechnique=true` for a sub-technique, ` tactics=` with the
 `TA` ids of its tactic mask and ` platforms=` with the names of its platform mask, both in vocabulary
 order and both absent when the technique has no ATT&CK object (the D3FEND-named nodes) — under `-json`
@@ -426,8 +432,9 @@ entries, 189 weaknesses, 722 products, 41 tactics, 15 platforms, 41 + 38 predica
 Strides: `WordsPerRow(KindTTP)` = 19, `KindArtifact` = 4, `KindCountermeasure` = 3,
 `KindDataComponent` = 2, `KindKEV` = 28, `KindCWE` = 3, `KindProduct` = 12; the attribute masks are one
 word per technique (`wTactic` = `wPlatform` = 1).
-A single plane is 37 KiB (technique) / 37 KiB (artifact) — L1/L2 resident; the six existing blocks keep
-their address range, and the new arrays follow them, so the hot six are unchanged.
+A single plane is 37,952 B technique-side and 37,544 B artifact-side, so a plane is L2-resident; the
+six existing blocks keep their address range, and the new arrays follow them, so the hot six are
+unchanged.
 
 ### KEV and the product partition
 
@@ -436,9 +443,9 @@ weaknesses, reaching 1564 of the 1739 entries — 175 catalogued vulnerabilities
 all) and **KEV → product** (exactly one edge per entry, over 722 vendor products; the 732 raw product
 spellings of the feed collapse to those 722 keys). Both are stored in both directions, because both are
 asked: `cwe CWE-78` walks `cweKEV` (110 entries) while `kev CVE-2021-44228` walks `kevCWE` (3 classes),
-and `product Apache/Log4j2` walks `productKEV` (2 entries). An entry row is one word wide over each
-vocabulary (`kevCWE` 3 words, `kevProduct` 12), while a vocabulary row is 28 words wide over the entries
-(`cweKEV`, `productKEV`), so the four blocks cost 403 KiB. There is no
+and `product Apache/Log4j2` walks `productKEV` (2 entries). An entry row is 3 words wide over the
+weakness vocabulary and 12 over the product one (`kevCWE`, `kevProduct`), while a vocabulary row is 28
+words wide over the entries (`cweKEV`, `productKEV`), so the four blocks cost 403 KiB. There is no
 roll-up variant of any of these queries: neither the weakness vocabulary nor the product vocabulary is
 hierarchical, so every one of them follows edges exactly.
 
@@ -498,7 +505,7 @@ Traversals (all take/return ids, all allocate nothing):
 | `DataComponentDegree` `SoftwareDegree` | popcount of one row |
 | `DataComponentsForTTPRollup` | (1 + children) × 2 words, vector OR |
 | `TTPsForGroupRollup` | 19-word row scan + parent map + 19-word bitset |
-| `CWEsForKEV` `ProductsForKEV` | 1 row (1 word over each vocabulary) |
+| `CWEsForKEV` `ProductsForKEV` | 1 row (3 words over the weakness vocabulary, 12 over the product vocabulary) |
 | `KEVCWEDegree` | popcount of one row |
 | `KEVsForCWE` | 1 row (28 words) |
 | `TTPsAny` `TTPsAll` `ArtifactsAny` `ArtifactsAll` | k × row words, vector OR/AND |
@@ -542,7 +549,7 @@ Set and roll-up operations write their intermediate bitset into a caller-owned `
 > `len(scratch) >= e.WordsPerRow(kind)` where `kind` is the partition of the **returned** ids —
 > 19 words for TTP-returning methods, 4 for artifact-returning, 3 for countermeasure-returning,
 > 2 for `KindDataComponent` (the `DataComponentsForTTPRollup` scratch) and 28 for `KindKEV`
-> (`KEVsForCWE`, `KEVsForProducts`, `KEVsForCWEs`).
+> (`KEVsForProducts`, `KEVsForCWEs`; `KEVsForCWE` reads one row and takes no scratch).
 
 Shorter `scratch` panics (`gr4ph: scratch too small`).
 
@@ -599,7 +606,10 @@ The builder enforces two invariants, so roll-up needs no child lists:
 11 parents (`DE-0003`, `EX-0001`, `EX-0005`, `EX-0009`, `EX-0010`, `EX-0012`, `EX-0013`, `EX-0016`,
 `EXF-0006`, `IA-0007`, `RD-0004`) exist in no ATT&CK domain; D3FEND names them only through
 `off_tech_parent`, so the generator synthesises them (`DomainSPARTA`, no edges, no aliases) and the
-tree has no orphans.
+tree has no orphans. `DomainSPARTA` holds 46 nodes in all: those 11 parents, their 23 D3FEND-only
+sub-techniques, and 12 top-level D3FEND technique ids that no ATT&CK domain carries either (`DE-0006`,
+`EX-0003`, `EXF-0001`, `PER-0005`, …). The last group takes its label from the D3FEND mapping and
+does carry edges, so `coverage` counts those 12 as undefended rather than unmapped.
 
 Each partition holds at most `MaxNodes` (65536) entries; `Add*` returns `ErrTooManyNodes` beyond that
 rather than wrapping. `NoParent` is index 65535, so the node at that index cannot itself parent
@@ -626,7 +636,8 @@ make gen        # go run ./cmd/d3fendgen -out ontology/attack_gen.go   (network 
 `cmd/d3fendgen` and `cmd/kevgen` are untagged and import nothing from this module, so they regenerate on
 a stock toolchain; `-enterprise`/`-ics`/`-mobile`/`-d3fend` and `-kev` accept local paths for an offline
 rerun, and the output is byte-identical either way. The generated shape is asserted, not assumed, and a
-run reports exactly what it measured (this is `make gen`'s stdout on the pinned sources, byte for byte):
+run reports exactly what it measured (this is the two generators' stdout on the pinned sources, byte for
+byte, in the order `make gen` runs them):
 
 ```
 d3fendgen: wrote ontology/attack_gen.go
@@ -689,9 +700,9 @@ builder.
 ## Measured performance
 
 `GOEXPERIMENT=simd go test -bench . -benchmem -benchtime=1s -count=10 ./...` on the development
-host (i5-10310U, 128-bit vectors); ns/op below is the median of 10 runs, and every benchmark
-reports 0 B/op and 0 allocs/op. The real-table rows run against `ontology.Register`'s 1186-node
-engine; the synthetic rows run against three root-package fixtures — `benchEngine`'s generated graph
+host (i5-10310U, 128-bit vectors); the table lists all 26 benchmarks, ns/op is the median of 10 runs,
+and every benchmark reports 0 B/op and 0 allocs/op. The real-table rows run against `ontology.Register`'s
+1186-node engine; the synthetic rows run against three root-package fixtures — `benchEngine`'s generated graph
 (1200 techniques, 250 artifacts, 160 countermeasures), `attributedEngine` (1200 techniques with
 41 tactics, 15 platforms and 1212 grouping nodes, and no artifacts, countermeasures or data
 components) and `kevEngine` (the catalog's shape: 1739 KEV entries, 189 weaknesses, 722 products, 1679
@@ -699,25 +710,32 @@ weakness edges and one product edge per entry):
 
 | benchmark | fixture | ns/op |
 |---|---|---|
-| `TTPsRel(Process, accesses)` | real tables | 28 |
-| `TTPsAny(Process, File)` | real tables | 103 |
-| `CountermeasuresForArtifactViaTTPs(Process)` | real tables | 119 |
-| `CountermeasuresForTTPRollup(T1546)` | real tables | 216 |
-| `AdjacentRel` | synthetic | 7 |
+| `TTPsRel(Process, accesses)` | real tables | 14 |
+| `TTPsAny(Process, File)` | real tables | 91 |
+| `CountermeasuresForArtifactViaTTPs(Process)` | real tables | 105 |
+| `CountermeasuresForTTPRollup(T1546)` | real tables | 190 |
+| `AdjacentRel` | synthetic | 6 |
+| `Artifacts` (one technique row) | synthetic | 12 |
+| `ArtifactsRollup` (one technique row + children) | synthetic | 32 |
 | `TTPTactics` | synthetic | 2 |
-| `TTPsForTactic` (212-technique row) | synthetic | 226 |
-| `TTPsForGroupRollup` | synthetic | 290 |
-| `TTPsCovered` (20-countermeasure selection) | synthetic | 678 |
-| `TTPsBlind` (1200 active, 20 of 160 deployed) | synthetic | 1823 |
-| `CoverageGain` (20-countermeasure selection) | synthetic | 636 |
-| `CountermeasuresForObserved` (50-bit observed set) | synthetic | 495 |
-| `TTPsMapped` (all 157 countermeasures) | synthetic | 4740 |
-| `KEVsForProducts` (50 of 722 products) | synthetic | 2305 |
-| `KEVsForCWEs` (all 189 weaknesses) | synthetic | 9340 |
+| `TTPsForTactic` (212-technique row) | synthetic | 221 |
+| `TTPsForGroupRollup` | synthetic | 248 |
+| `TTPsCovered` (20-countermeasure selection) | synthetic | 661 |
+| `TTPsBlind` (1200 active, 20 of 160 deployed) | synthetic | 1714 |
+| `CoverageGain` (20-countermeasure selection) | synthetic | 635 |
+| `CountermeasuresForObserved` (50-bit observed set) | synthetic | 473 |
+| `CountermeasuresForArtifactViaTTPs` (one artifact) | synthetic | 83 |
+| `CountermeasuresForTTPRollup` (one technique row + children) | synthetic | 26 |
+| `TTPsRel` (one artifact plane) | synthetic | 22 |
+| `TTPsRollup` (one artifact row) | synthetic | 80 |
+| `TTPsAny` (RelAny, two artifacts) | synthetic | 92 |
+| `TTPsMapped` (all 157 countermeasures) | synthetic | 4960 |
+| `KEVsForProducts` (50 of 722 products) | synthetic | 2245 |
+| `KEVsForCWEs` (all 189 weaknesses) | synthetic | 9215 |
 | `CWEsForKEV` (one entry) | synthetic | 14 |
-| `KEVCWEDegree` (one entry) | synthetic | 4 |
-| `KEVsForCWE` (one class) | synthetic | 72 |
-| `ProductsForKEV` (one entry) | synthetic | 23 |
+| `KEVCWEDegree` (one entry) | synthetic | 5 |
+| `KEVsForCWE` (one class) | synthetic | 75 |
+| `ProductsForKEV` (one entry) | synthetic | 24 |
 
 The eleven round-1 arrays (ten blocks plus the `ttpFlags` column) and the four KEV blocks sit after the
 six existing blocks, so
@@ -734,8 +752,9 @@ overlay rows are a selected-row union (20 rows of the countermeasure block, or e
 `TTPsBlind`'s active set) plus one 19-word difference or popcount.
 
 The zero-allocation contract is enforced by tests, not by convention: `AllocsPerRun` must be 0 for
-every method in the pinned list (`internal/hotmethods`), on a synthetic graph, the 1186-node engine
-and the KEV fixture.
+every method in the pinned list (`internal/hotmethods`), on a synthetic graph
+(`TestZeroAllocSynthetic`) and on the 1186-node engine (`TestZeroAllocOntology`) — the second is what
+covers the KEV queries at the real strides.
 
 Round 2 (the KEV family) adds four arrays and no change to any existing block: against a worktree at
 `60f68a3` (the round-1 merge; same host, `-benchtime=1s -count=1` interleaved ten times per tree,
@@ -755,10 +774,10 @@ benchmarks are still present, all 26 report 0 `B/op` and 0 `allocs/op`, and ever
 within 1.02× — `BenchmarkTTPsBlind`, the method that gained the work, reads 0.989× (1591.5 → 1573.5 ns)
 and the worst row is `BenchmarkAdjacentRel` at 1.020× (5.8 → 5.9 ns, a single row fetch).
 `BenchmarkOntologyTTPsRel` reads 0.615×, the test-binary layout effect round 1 documented in the other
-direction. The four new rows are medians of the filtered
-`-bench 'BenchmarkTTPsMapped|BenchmarkKEVCWEDegree|BenchmarkKEVsForCWE|BenchmarkProductsForKEV'`
-`-benchmem -benchtime=1s -count=10` run, so they are measured without a preceding benchmark's cache
-state.
+direction. The table above is one full-suite `-count=10` run of the declared command, so every row in
+it — including the four methods this round added — is reproducible with that single command; the
+interleaved A/B medians quoted here are lower (1573.5 ns for `TTPsBlind`, for instance) because each
+sample starts a fresh process with a colder cache.
 
 ## License
 
