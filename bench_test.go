@@ -275,9 +275,9 @@ func BenchmarkTTPsMapped(b *testing.B) {
 // kevEngine is a standalone KEV fixture, kept separate from the ATT&CK
 // fixtures so their stride contracts stay untouched. It registers the pinned
 // catalog's shape — 1739 entries, 189 weaknesses, 722 products (the 732 raw
-// spellings are 722 keys) — with 1679 weakness edges and one product edge per
-// entry, so the KEV strides are the real ones: 28 words over entries, 3 over
-// weaknesses, 12 over products.
+// spellings are 722 keys) — with 1679 distinct weakness edges and one product
+// edge per entry, so the KEV strides are the real ones: 28 words over entries,
+// 3 over weaknesses, 12 over products.
 func kevEngine(tb testing.TB) *Engine {
 	tb.Helper()
 	b := NewBuilder()
@@ -300,8 +300,17 @@ func kevEngine(tb testing.TB) *Engine {
 			tb.Fatalf("AddKEV: %v", err)
 		}
 	}
-	for range 1679 {
-		if err := b.AddKEVWeaknessEdge(KEV(rng.IntN(1739)), CWE(rng.IntN(189))); err != nil {
+	// The 1679 weakness references are distinct pairs, as the catalog's are: a
+	// draw that repeats one would leave the matrix short of the shape this
+	// fixture documents, silently changing what the KEV row widths cost.
+	seen := make(map[[2]uint16]struct{}, 1679)
+	for len(seen) < 1679 {
+		k, c := uint16(rng.IntN(1739)), uint16(rng.IntN(189))
+		if _, dup := seen[[2]uint16{k, c}]; dup {
+			continue
+		}
+		seen[[2]uint16{k, c}] = struct{}{}
+		if err := b.AddKEVWeaknessEdge(KEV(k), CWE(c)); err != nil {
 			tb.Fatalf("AddKEVWeaknessEdge: %v", err)
 		}
 	}
@@ -323,6 +332,13 @@ func kevEngine(tb testing.TB) *Engine {
 	}
 	if got := e.WordsPerRow(KindProduct); got != 12 {
 		tb.Fatalf("WordsPerRow(Product) = %d, want 12", got)
+	}
+	edges := 0
+	for i := range 1739 {
+		edges += e.KEVCWEDegree(KEV(i))
+	}
+	if edges != 1679 {
+		tb.Fatalf("the fixture's KEVCWEDegree sums to %d, want the catalog's 1679 edges", edges)
 	}
 	return e
 }
