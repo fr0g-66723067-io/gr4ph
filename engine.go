@@ -1076,7 +1076,9 @@ func (e *Engine) TTPsCovered(sel Selection, scratch []uint64, dst []TTP) int {
 
 // TTPsBlind writes the techniques that are active and not covered: active &^
 // covered, i.e. the blind spots of a deployed set. Both selections are
-// caller-owned; active is over techniques, sel over countermeasures.
+// caller-owned; active is over techniques, sel over countermeasures. active is
+// a selection like any other, so a bit past the technique range selects nothing
+// rather than inventing an id.
 // Results are truncated to len(dst) and the return value is the total number
 // of matches.
 func (e *Engine) TTPsBlind(active Selection, sel Selection, scratch []uint64, dst []TTP) int {
@@ -1092,6 +1094,10 @@ func (e *Engine) TTPsBlind(active Selection, sel Selection, scratch []uint64, ds
 	for i := range row {
 		row[i] = active[i] &^ row[i]
 	}
+	// The active side is the only direct-enumeration path in the overlay, so it
+	// is the one that must mask its own tail: the covered side is a selection
+	// walked through orSelectedRowsInto, which ignores a row past the block.
+	maskTail(row, e.nTTP)
 	return enumerate(row, dst)
 }
 

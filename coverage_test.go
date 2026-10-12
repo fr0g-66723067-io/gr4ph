@@ -157,6 +157,11 @@ func TestCoverageTotality(t *testing.T) {
 	if got := e.CoverageGain(0, selOf(1, 40), scratchT); got != 2 {
 		t.Errorf("CoverageGain over a selection with bit 40 = %d, want 2", got)
 	}
+	// The active side of TTPsBlind is the caller's technique selection, so the
+	// same rule holds there: bit 40 selects no technique.
+	if n := e.TTPsBlind(selOf(1, 0, 40), selOf(1, 0), scratchT, dstT); n != 1 || !equalIDs(dstT[:n], []TTP{0}) {
+		t.Errorf("TTPsBlind with an active bit past the range = %d %v, want 1 [0]", n, dstT[:n])
+	}
 
 	empty, err := NewBuilder().Build()
 	if err != nil {
