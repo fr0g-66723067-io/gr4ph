@@ -2,7 +2,10 @@
 
 package gr4ph
 
-import "testing"
+import (
+	"strconv"
+	"testing"
+)
 
 // The mask-driven coverage overlay on the synthetic fixture: cm0 defends
 // T1003.001 (1) and T1059.001 (4), cm1 defends T1003 (0) and T1003.002 (2), so
@@ -228,4 +231,40 @@ func TestCoverageGuards(t *testing.T) {
 	mustPanic(t, "TTPsCovered short scratch", "gr4ph: scratch too small", func() {
 		e.TTPsCovered(selOf(1, 0), scratchT[:0], dstT)
 	})
+}
+
+// TestCoverageMaskTailFullWord pins maskTail's no-op: with exactly 64
+// techniques the single word of a KindTTP row is full, so rem is 0, there is no
+// tail to clear and bit 63 must survive. Every other fixture has nTTP ≡ 6, 48
+// or 34 (mod 64) — 6 synthetic, 1200 bench, 1186 real — so this is the only
+// case that reaches rem == 0, and a maskTail that masked unconditionally (or
+// dropped the rem != 0 clause, which is the same thing at a full word) would
+// wipe the whole row: the case reads 0 ids where it must read 2.
+func TestCoverageMaskTailFullWord(t *testing.T) {
+	b := NewBuilder()
+	for i := range 64 {
+		if _, err := b.AddTTP("T"+strconv.Itoa(i), "t"+strconv.Itoa(i), DomainEnterprise, NoParent, false); err != nil {
+			t.Fatalf("AddTTP #%d: %v", i, err)
+		}
+	}
+	e, err := b.Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if got := e.WordsPerRow(KindTTP); got != 1 {
+		t.Fatalf("WordsPerRow(TTP) = %d, want 1 for 64 techniques", got)
+	}
+	scratchT := make([]uint64, e.WordsPerRow(KindTTP))
+	dstT := make([]TTP, e.TTPCount())
+
+	// Nothing deployed: the blind set is the active set, and bit 63 is both the
+	// last live technique and the last bit of the row's only word.
+	if n := e.TTPsBlind(selOf(2, 0, 63), selOf(1), scratchT, dstT); n != 2 || !equalIDs(dstT[:n], []TTP{0, 63}) {
+		t.Errorf("TTPsBlind over a full word = %d %v, want 2 [0 63]", n, dstT[:n])
+	}
+	// Bits at and past the live range select nothing, even though the caller's
+	// selection is wide enough to hold them.
+	if n := e.TTPsBlind(selOf(2, 0, 63, 64, 70), selOf(1), scratchT, dstT); n != 2 || !equalIDs(dstT[:n], []TTP{0, 63}) {
+		t.Errorf("TTPsBlind with bits past the live range = %d %v, want 2 [0 63]", n, dstT[:n])
+	}
 }
