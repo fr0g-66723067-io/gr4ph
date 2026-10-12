@@ -452,12 +452,12 @@ hierarchical, so every one of them follows edges exactly.
 There is deliberately **no KEV ↔ ATT&CK `software` block**, because the two name different things: the
 catalog names the victim-side products that were exploited (`Microsoft Windows`, `Apache Log4j2`, `Cisco
 IOS`), while ATT&CK's 957 malware and tool nodes name attacker tooling (`Mimikatz`, `Cobalt Strike`). The
-measurement over the pinned sources: normalising the 957 software node names and their aliases (1254
-distinct keys) and comparing them with the 722 product names matches 3 — `Spark`, `Cobalt Strike` and
-`ScreenConnect`, the last through its `ConnectWise` alias — which is 0.4%, and a token-set comparison
-that ignores word order matches the same 3. A join on that overlap would be a three-row lookup table that
-is wrong for the other 719 products, so `kev` prints the catalog's own vendor and product strings and
-nothing maps them onto the ATT&CK software partition.
+measurement over the pinned sources: normalising the 957 software node names and their aliases (1252
+distinct keys) and comparing them with the 722 product names matches 3 — `Spark` (S0543), `Cobalt
+Strike` (S0154) and `ScreenConnect`, an alias of the `ConnectWise` node S0591 — which is 0.4%, and a
+token-set comparison that ignores word order matches the same 3. A join on that overlap would be a
+three-row lookup table that is wrong for the other 719 products, so `kev` prints the catalog's own
+vendor and product strings and nothing maps them onto the ATT&CK software partition.
 
 ## API
 

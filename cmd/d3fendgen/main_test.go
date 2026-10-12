@@ -900,8 +900,9 @@ func TestEmitProducesValidGo(t *testing.T) {
 
 // --- label resolution and node derivation ---
 
-// csvHeader is the 14-column header of d3fend-full-mappings.csv@1.6.0, in the
-// order the column constants list.
+// csvHeader is a 14-column projection of d3fend-full-mappings.csv@1.6.0's header
+// — the pinned file carries 27 columns, and the parser maps the ones it reads by
+// name — in the order the column constants list.
 const csvHeader = "def_tech_label,def_artifact_rel_label,def_artifact_label,off_artifact_label," +
 	"off_artifact_rel_label,off_tech_label,off_tech_parent_label," +
 	"def_tech,def_artifact_rel,def_artifact,off_artifact,off_artifact_rel,off_tech,off_tech_parent\n"

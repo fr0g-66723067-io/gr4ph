@@ -7,7 +7,8 @@ import "math/bits"
 // Bit helpers over a single bitmatrix row ([]uint64, LSB-first within each
 // word: bit i lives in word i>>6, mask 1<<(i&63)).
 //
-// For the pinned tables the rows are 3-19 words long, so bit *scanning* is
+// For the pinned tables the rows are 3-28 words long (the 28-word KEV and
+// weakness rows over the entries are the widest), so bit *scanning* is
 // scalar: there is no SIMD instruction that enumerates set-bit indices, and
 // math/bits compiles to single tzcnt/popcnt instructions. Only the bulk row
 // arithmetic (OR/AND/COPY) is vectorised, in kernel_simd.go. The engine itself
