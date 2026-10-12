@@ -1384,6 +1384,21 @@ func TestJSONWriteError(t *testing.T) {
 	}
 }
 
+// TestTextWriteError pins the text branch of the same contract: writeText's
+// first error is reported verbatim on stderr and the status is 1, instead of a
+// full disk or a closed pipe exiting 0 silently.
+func TestTextWriteError(t *testing.T) {
+	e := fixtureEngine(t)
+	var stderr bytes.Buffer
+	status := run(e, []string{"ttp", "T1059"}, errWriter{}, &stderr)
+	if status != 1 {
+		t.Fatalf("status = %d, want 1", status)
+	}
+	if want := "gr4ph: " + errClosed.Error() + "\n"; stderr.String() != want {
+		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+	}
+}
+
 // errWriter fails every write, standing in for a closed stdout.
 type errWriter struct{}
 

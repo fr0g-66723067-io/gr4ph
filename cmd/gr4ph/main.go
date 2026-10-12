@@ -1156,9 +1156,15 @@ func finish(stdout, stderr io.Writer, results []result, failures []string, asJSO
 		}
 	} else {
 		for i, res := range results {
-			writeText(stdout, res)
+			if err := writeText(stdout, res); err != nil {
+				fmt.Fprintf(stderr, "gr4ph: %v\n", err)
+				return 1
+			}
 			if i < len(results)-1 {
-				fmt.Fprintln(stdout)
+				if _, err := fmt.Fprintln(stdout); err != nil {
+					fmt.Fprintf(stderr, "gr4ph: %v\n", err)
+					return 1
+				}
 			}
 		}
 	}
@@ -1171,49 +1177,72 @@ func finish(stdout, stderr io.Writer, results []result, failures []string, asJSO
 	return status
 }
 
+// errRecorder passes writes through and keeps the first error, so writeText's
+// block of formatted lines needs one check instead of one per line. After an
+// error it reports success, so a dead stream is not written to again.
+type errRecorder struct {
+	w   io.Writer
+	err error
+}
+
+func (r *errRecorder) Write(p []byte) (int, error) {
+	if r.err != nil {
+		return len(p), nil
+	}
+	n, err := r.w.Write(p)
+	if err != nil {
+		r.err = err
+	}
+	return n, err
+}
+
 // writeText writes one block: a header line, then one line per set or plane.
-func writeText(w io.Writer, res result) {
+// It returns the first write error, so a full disk or a closed pipe is not
+// reported as success.
+func writeText(w io.Writer, res result) error {
+	rec := &errRecorder{w: w}
 	switch res.Kind {
 	case "ttp":
-		fmt.Fprintf(w, "ttp %s%s domain=%s%s children=%d%s%s%s%s\n",
+		fmt.Fprintf(rec, "ttp %s%s domain=%s%s children=%d%s%s%s%s\n",
 			res.Name, quoted(res.Label), res.Domain, parentPart(res.Parent), *res.Children,
 			revokedPart(res.Revoked), subTechniquePart(res.SubTechnique),
 			tacticsPart(res.Tactics), platformsPart(res.Platforms))
 	case "group":
-		fmt.Fprintf(w, "group %s%s kind=%s\n", res.Name, quoted(res.Label), res.GroupKind)
+		fmt.Fprintf(rec, "group %s%s kind=%s\n", res.Name, quoted(res.Label), res.GroupKind)
 	case "kev":
-		fmt.Fprintf(w, "kev %s%s added=%s ransomware=%t vendor=%q product=%q\n",
+		fmt.Fprintf(rec, "kev %s%s added=%s ransomware=%t vendor=%q product=%q\n",
 			res.Name, quoted(res.Label), res.Added, res.Ransomware, res.Vendor, res.Product)
 	case "coverage":
-		fmt.Fprintf(w, "coverage deployed=%d mapped=%d\n", *res.Deployed, *res.Mapped)
+		fmt.Fprintf(rec, "coverage deployed=%d mapped=%d\n", *res.Deployed, *res.Mapped)
 	case "gain":
 		if res.Greedy != nil {
-			fmt.Fprintf(w, "gain deployed=%d greedy=%d\n", *res.Deployed, *res.Greedy)
+			fmt.Fprintf(rec, "gain deployed=%d greedy=%d\n", *res.Deployed, *res.Greedy)
 		} else {
-			fmt.Fprintf(w, "gain deployed=%d candidates=%d shown=%d\n", *res.Deployed, *res.Candidates, len(res.Gains))
+			fmt.Fprintf(rec, "gain deployed=%d candidates=%d shown=%d\n", *res.Deployed, *res.Candidates, len(res.Gains))
 		}
 		for _, g := range res.Gains {
-			fmt.Fprintf(w, "  %d  %s%s\n", g.Gain, g.Name, quoted(g.Label))
+			fmt.Fprintf(rec, "  %d  %s%s\n", g.Gain, g.Name, quoted(g.Label))
 		}
-		return
+		return rec.err
 	case "contain":
-		fmt.Fprintf(w, "contain observed=%d\n", *res.Observed)
+		fmt.Fprintf(rec, "contain observed=%d\n", *res.Observed)
 	case "rel":
 		for _, p := range res.Planes {
 			from, to := "technique", "artifact"
 			if p.Family == "defensive" {
 				from, to = "countermeasure", "artifact"
 			}
-			fmt.Fprintf(w, "rel %s %s %splane %d/%d (%s -> %s): edges=%d sources=%d\n",
+			fmt.Fprintf(rec, "rel %s %s %splane %d/%d (%s -> %s): edges=%d sources=%d\n",
 				res.Name, p.Family, unionPart(p.ID), p.ID, p.Count, from, to, p.Edges, p.Sources)
 		}
-		return
+		return rec.err
 	default:
-		fmt.Fprintf(w, "%s %s%s\n", res.Kind, res.Name, quoted(res.Label))
+		fmt.Fprintf(rec, "%s %s%s\n", res.Kind, res.Name, quoted(res.Label))
 	}
 	for _, s := range res.Sets {
-		fmt.Fprintf(w, "  %-4s%s (%d): %s\n", s.Dir, s.Name, s.Count, nodeList(s.Nodes))
+		fmt.Fprintf(rec, "  %-4s%s (%d): %s\n", s.Dir, s.Name, s.Count, nodeList(s.Nodes))
 	}
+	return rec.err
 }
 
 // writeJSON writes res as one JSON object on one line.
