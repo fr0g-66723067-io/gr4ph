@@ -268,6 +268,43 @@ rel blocks defensive plane 3/3 (countermeasure -> artifact): edges=1 sources=1
 	fixturePlatformWindows = `platform Windows
   out techniques (2): T1003 "OS Credential Dumping", T1003.001 "LSASS Memory"
 `
+
+	// The overlay verbs on the fixture: both countermeasures defend T1003.001
+	// only, so the mapped range is that one technique, the four others are
+	// unmapped and anything below the mapping is undefended.
+	fixtureCoverageHardening = `coverage deployed=1 mapped=1
+  in  defended (1): T1003.001 "LSASS Memory"
+  in  undefended (0): -
+  in  unmapped (4): T1003 "OS Credential Dumping", T1059 "Command and Scripting Interpreter", T1015 "Accessibility Features", T1546.008 "Accessibility Features"
+`
+
+	fixtureCoverageEmpty = `coverage deployed=0 mapped=1
+  in  defended (0): -
+  in  undefended (1): T1003.001 "LSASS Memory"
+  in  unmapped (4): T1003 "OS Credential Dumping", T1059 "Command and Scripting Interpreter", T1015 "Accessibility Features", T1546.008 "Accessibility Features"
+`
+
+	// Equal gains are ordered by the byte-smallest countermeasure id
+	// (ContentQuarantine before CredentialHardening), not by dense id.
+	fixtureGainEmpty = `gain deployed=0 candidates=2 shown=2
+  1  ContentQuarantine "Content Quarantine"
+  1  CredentialHardening "Credential Hardening"
+`
+
+	// The greedy walk buys the maximum gain first and stops as soon as no
+	// candidate gains anything: on this fixture the second countermeasure adds
+	// nothing, so the sequence is one row long.
+	fixtureGainGreedy = `gain deployed=0 greedy=1
+  1  ContentQuarantine "Content Quarantine"
+`
+
+	fixtureContainSub = `contain observed=1
+  out countermeasures (2): CredentialHardening "Credential Hardening", ContentQuarantine "Content Quarantine"
+`
+
+	fixtureContainIsolated = `contain observed=1
+  out countermeasures (0): -
+`
 )
 
 // TestTextFixture pins the text encoder byte for byte, one case per behaviour,
@@ -375,6 +412,12 @@ func TestTextFixture(t *testing.T) {
 		{"group campaign with no edges", []string{"group", "C0001"}, fixtureGroupCampaign},
 		{"tactic by TA id", []string{"tactic", "TA0001"}, fixtureTacticInitial},
 		{"platform by name", []string{"platform", "Windows"}, fixturePlatformWindows},
+		{"coverage of one deployed countermeasure", []string{"coverage", "CredentialHardening"}, fixtureCoverageHardening},
+		{"coverage of an empty deployment", []string{"coverage"}, fixtureCoverageEmpty},
+		{"gain against an empty deployment", []string{"gain"}, fixtureGainEmpty},
+		{"greedy gain sequence", []string{"gain", "-greedy"}, fixtureGainGreedy},
+		{"containment set of a defended technique", []string{"contain", "T1003.001"}, fixtureContainSub},
+		{"containment set of an isolated technique", []string{"contain", "T1059"}, fixtureContainIsolated},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -552,6 +595,71 @@ func TestJSONFixture(t *testing.T) {
 	out, _, status = runCase(t, e, "-json", "ttp", "T1003.001", "T1059")
 	if status != 0 || strings.Count(out, "\n") != 2 {
 		t.Fatalf("status = %d, lines = %d in\n%s", status, strings.Count(out, "\n"), out)
+	}
+
+	// The overlay verbs: coverage carries the deployment and the three states,
+	// gain the candidate ranking with its counts, contain the observed count.
+	out, stderr, status = runCase(t, e, "-json", "coverage", "ContentQuarantine")
+	if status != 0 || stderr != "" {
+		t.Fatalf("status = %d, stderr = %q, want 0 and empty", status, stderr)
+	}
+	if !strings.Contains(out, `"deployed":1`) || !strings.Contains(out, `"mapped":1`) {
+		t.Errorf("coverage JSON must carry the deployment and the mapped count: %s", out)
+	}
+	for _, want := range []string{`"name":"defended"`, `"name":"undefended"`, `"name":"unmapped"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("coverage JSON lacks %s: %s", want, out)
+		}
+	}
+	var cov result
+	if err := json.Unmarshal([]byte(out), &cov); err != nil {
+		t.Fatalf("decode %q: %v", out, err)
+	}
+	if cov.Deployed == nil || *cov.Deployed != 1 || cov.Mapped == nil || *cov.Mapped != 1 {
+		t.Fatalf("coverage counts = %v/%v, want 1/1", cov.Deployed, cov.Mapped)
+	}
+	if len(cov.Sets) != 3 || cov.Sets[0].Dir != "in" || cov.Sets[0].Count != 1 ||
+		cov.Sets[1].Count != 0 || cov.Sets[2].Count != 4 {
+		t.Fatalf("coverage sets = %+v, want in defended 1, undefended 0, unmapped 4", cov.Sets)
+	}
+
+	out, stderr, status = runCase(t, e, "-json", "gain", "-all")
+	if status != 0 || stderr != "" {
+		t.Fatalf("status = %d, stderr = %q, want 0 and empty", status, stderr)
+	}
+	if !strings.Contains(out, `"candidates":2`) || !strings.Contains(out, `"gain":1`) {
+		t.Errorf("gain JSON must carry the candidate count and the gains: %s", out)
+	}
+	var gn result
+	if err := json.Unmarshal([]byte(out), &gn); err != nil {
+		t.Fatalf("decode %q: %v", out, err)
+	}
+	if gn.Candidates == nil || *gn.Candidates != 2 || len(gn.Gains) != 2 {
+		t.Fatalf("gain counts = %v gains %+v, want 2 candidates", gn.Candidates, gn.Gains)
+	}
+	if gn.Gains[0].Name != "ContentQuarantine" || gn.Gains[0].Gain != 1 || gn.Gains[0].Label != "Content Quarantine" {
+		t.Fatalf("gain[0] = %+v, want ContentQuarantine 1", gn.Gains[0])
+	}
+	if gn.Sets != nil || gn.ID != nil {
+		t.Errorf("gain carries sets %+v / id %v, want neither", gn.Sets, gn.ID)
+	}
+
+	out, stderr, status = runCase(t, e, "-json", "contain", "T1003.001")
+	if status != 0 || stderr != "" {
+		t.Fatalf("status = %d, stderr = %q, want 0 and empty", status, stderr)
+	}
+	if !strings.Contains(out, `"observed":1`) {
+		t.Errorf("contain JSON must carry the observed count: %s", out)
+	}
+	var ct result
+	if err := json.Unmarshal([]byte(out), &ct); err != nil {
+		t.Fatalf("decode %q: %v", out, err)
+	}
+	if ct.Observed == nil || *ct.Observed != 1 {
+		t.Fatalf("contain observed = %v, want 1", ct.Observed)
+	}
+	if len(ct.Sets) != 1 || ct.Sets[0].Dir != "out" || ct.Sets[0].Name != "countermeasures" || ct.Sets[0].Count != 2 {
+		t.Fatalf("contain sets = %+v, want out countermeasures 2", ct.Sets)
 	}
 }
 
@@ -833,6 +941,111 @@ func TestOntologyValues(t *testing.T) {
 			}
 		})
 	}
+
+	// The overlay verbs on the committed tables: one deployment's three states
+	// and the containment set of one alert.
+	overlay := []struct {
+		name   string
+		args   []string
+		header string
+		set    string
+		count  int
+	}{
+		{
+			"coverage: defended",
+			[]string{"coverage", "ContentQuarantine"},
+			"coverage deployed=1 mapped=427", "in defended", 125,
+		},
+		{
+			"coverage: undefended",
+			[]string{"coverage", "ContentQuarantine"},
+			"coverage deployed=1 mapped=427", "in undefended", 302,
+		},
+		{
+			"coverage: unmapped",
+			[]string{"coverage", "ContentQuarantine"},
+			"coverage deployed=1 mapped=427", "in unmapped", 759,
+		},
+		{
+			"contain: one alert",
+			[]string{"contain", "T1003.001"},
+			"contain observed=1", "out countermeasures", 12,
+		},
+	}
+	for _, tt := range overlay {
+		t.Run(tt.name, func(t *testing.T) {
+			out, stderr, status := runCase(t, e, tt.args...)
+			if status != 0 || stderr != "" {
+				t.Fatalf("status = %d, stderr = %q, want 0 and empty", status, stderr)
+			}
+			if got := strings.SplitN(out, "\n", 2)[0]; got != tt.header {
+				t.Errorf("header = %q, want %q", got, tt.header)
+			}
+			count, nodes := setLine(t, out, tt.set)
+			if count != tt.count || len(nodes) != tt.count {
+				t.Errorf("%s = %d nodes/%d count, want %d", tt.set, len(nodes), count, tt.count)
+			}
+		})
+	}
+
+	// gain -greedy walks from the empty deployment: 21 buys cover the whole
+	// mapped range, led by ContentQuarantine (125) and NetworkTrafficFiltering
+	// (107). The walk is replayed through coverage, so the claim "21 buys cover
+	// everything mapped" is checked, not asserted.
+	out, stderr, status = runCase(t, e, "gain", "-greedy")
+	if status != 0 || stderr != "" {
+		t.Fatalf("gain -greedy: status = %d, stderr = %q, want 0 and empty", status, stderr)
+	}
+	if got := strings.SplitN(out, "\n", 2)[0]; got != "gain deployed=0 greedy=21" {
+		t.Errorf("gain -greedy header = %q, want gain deployed=0 greedy=21", got)
+	}
+	rows := gainRows(t, out)
+	if len(rows) != 21 {
+		t.Fatalf("gain -greedy lists %d candidates, want 21", len(rows))
+	}
+	if rows[0].Name != "ContentQuarantine" || rows[0].Gain != 125 {
+		t.Errorf("gain -greedy[0] = %+v, want ContentQuarantine 125", rows[0])
+	}
+	if rows[1].Name != "NetworkTrafficFiltering" || rows[1].Gain != 107 {
+		t.Errorf("gain -greedy[1] = %+v, want NetworkTrafficFiltering 107", rows[1])
+	}
+	coverageArgs := append([]string{"coverage"}, rowNames(rows)...)
+	covOut, stderr, status := runCase(t, e, coverageArgs...)
+	if status != 0 || stderr != "" {
+		t.Fatalf("coverage of the greedy deployment: status = %d, stderr = %q", status, stderr)
+	}
+	if count, _ := setLine(t, covOut, "in undefended"); count != 0 {
+		t.Errorf("the greedy deployment leaves %d techniques undefended, want 0", count)
+	}
+	if count, _ := setLine(t, covOut, "in defended"); count != 427 {
+		t.Errorf("the greedy deployment defends %d techniques, want the whole mapped range (427)", count)
+	}
+
+	// The ranking mode against the empty deployment: the gains are each
+	// countermeasure's own degree there, so NetworkTrafficFiltering reads 121
+	// while the marginal 107 above is its gain over ContentQuarantine.
+	out, stderr, status = runCase(t, e, "gain", "-top", "2")
+	if status != 0 || stderr != "" {
+		t.Fatalf("gain -top 2: status = %d, stderr = %q, want 0 and empty", status, stderr)
+	}
+	if got := strings.SplitN(out, "\n", 2)[0]; got != "gain deployed=0 candidates=157 shown=2" {
+		t.Errorf("gain -top 2 header = %q, want gain deployed=0 candidates=157 shown=2", got)
+	}
+	if got := gainLine(t, out, "ContentQuarantine"); got != 125 {
+		t.Errorf("gain -top 2 ContentQuarantine = %d, want 125", got)
+	}
+	if got := gainLine(t, out, "NetworkTrafficFiltering"); got != 121 {
+		t.Errorf("gain -top 2 NetworkTrafficFiltering = %d, want 121", got)
+	}
+}
+
+// rowNames returns the countermeasure ids of decoded gain rows, in order.
+func rowNames(rows []gain) []string {
+	names := make([]string, 0, len(rows))
+	for _, g := range rows {
+		names = append(names, g.Name)
+	}
+	return names
 }
 
 // TestFlagForms pins the accepted spellings of the flags: an attached value, the
@@ -1020,7 +1233,8 @@ func exampleArgs(t *testing.T, line string) []string {
 }
 
 // TestErrors pins every failure mode the fixture can reach: the exact stderr
-// line, the exit status, and an empty stdout for every usage error.
+// line, the exit status, and the stdout the invocation still writes (empty for
+// every usage error and for a command that builds its block per resolved query).
 func TestErrors(t *testing.T) {
 	e := fixtureEngine(t)
 	tests := []struct {
@@ -1028,59 +1242,97 @@ func TestErrors(t *testing.T) {
 		args     []string
 		wantErr  string
 		wantExit int
-		usage    bool // whether usage follows the message on stderr
+		wantOut  string // "" for the commands that write one block per resolved query
+		usage    bool   // whether usage follows the message on stderr
 	}{
-		{"no arguments at all", nil, "", 2, true},
-		{"unknown command", []string{"nope"}, "gr4ph: unknown command: nope\n", 2, true},
-		{"ttp without a query", []string{"ttp"}, "gr4ph: missing query\n", 2, false},
-		{"artifact without a query", []string{"artifact"}, "gr4ph: missing query\n", 2, false},
-		{"cm without a query", []string{"cm"}, "gr4ph: missing query\n", 2, false},
-		{"rel without a name", []string{"rel"}, "gr4ph: missing relation name\n", 2, false},
-		{"dc without a query", []string{"dc"}, "gr4ph: missing query\n", 2, false},
-		{"group without a query", []string{"group"}, "gr4ph: missing query\n", 2, false},
-		{"tactic without a query", []string{"tactic"}, "gr4ph: missing query\n", 2, false},
-		{"platform without a query", []string{"platform"}, "gr4ph: missing query\n", 2, false},
-		{"undefined flag", []string{"ttp", "-nope", "X"}, "gr4ph: flag provided but not defined: -nope\n", 2, true},
-		{"undefined flag in artifact", []string{"artifact", "-nope", "X"}, "gr4ph: flag provided but not defined: -nope\n", 2, true},
-		{"undefined flag in cm", []string{"cm", "-nope", "X"}, "gr4ph: flag provided but not defined: -nope\n", 2, true},
-		{"undefined flag in rel", []string{"rel", "-nope", "any"}, "gr4ph: flag provided but not defined: -nope\n", 2, true},
+		{"no arguments at all", nil, "", 2, "", true},
+		{"unknown command", []string{"nope"}, "gr4ph: unknown command: nope\n", 2, "", true},
+		{"ttp without a query", []string{"ttp"}, "gr4ph: missing query\n", 2, "", false},
+		{"artifact without a query", []string{"artifact"}, "gr4ph: missing query\n", 2, "", false},
+		{"cm without a query", []string{"cm"}, "gr4ph: missing query\n", 2, "", false},
+		{"rel without a name", []string{"rel"}, "gr4ph: missing relation name\n", 2, "", false},
+		{"dc without a query", []string{"dc"}, "gr4ph: missing query\n", 2, "", false},
+		{"group without a query", []string{"group"}, "gr4ph: missing query\n", 2, "", false},
+		{"tactic without a query", []string{"tactic"}, "gr4ph: missing query\n", 2, "", false},
+		{"platform without a query", []string{"platform"}, "gr4ph: missing query\n", 2, "", false},
+		{"contain without a query", []string{"contain"}, "gr4ph: missing query\n", 2, "", false},
+		{"undefined flag", []string{"ttp", "-nope", "X"}, "gr4ph: flag provided but not defined: -nope\n", 2, "", true},
+		{"undefined flag in artifact", []string{"artifact", "-nope", "X"}, "gr4ph: flag provided but not defined: -nope\n", 2, "", true},
+		{"undefined flag in cm", []string{"cm", "-nope", "X"}, "gr4ph: flag provided but not defined: -nope\n", 2, "", true},
+		{"undefined flag in rel", []string{"rel", "-nope", "any"}, "gr4ph: flag provided but not defined: -nope\n", 2, "", true},
+		{"undefined flag in coverage", []string{"coverage", "-nope", "X"}, "gr4ph: flag provided but not defined: -nope\n", 2, "", true},
+		{"undefined flag in gain", []string{"gain", "-nope", "X"}, "gr4ph: flag provided but not defined: -nope\n", 2, "", true},
+		{"undefined flag in contain", []string{"contain", "-nope", "X"}, "gr4ph: flag provided but not defined: -nope\n", 2, "", true},
 		{
 			"-family outside off/def",
 			[]string{"rel", "-family", "sideways", "accesses"},
-			"gr4ph: -family must be off or def, got sideways\n", 2, false,
+			"gr4ph: -family must be off or def, got sideways\n", 2, "", false,
 		},
-		{"unresolved technique", []string{"ttp", "no-such"}, "gr4ph: no such technique: no-such\n", 1, false},
-		{"unresolved artifact", []string{"artifact", "no-such"}, "gr4ph: no such artifact: no-such\n", 1, false},
-		{"unresolved countermeasure", []string{"cm", "no-such"}, "gr4ph: no such countermeasure: no-such\n", 1, false},
-		{"unresolved relation", []string{"rel", "no-such"}, "gr4ph: no such relation: no-such\n", 1, false},
-		{"unresolved data component", []string{"dc", "no-such"}, "gr4ph: no such data component: no-such\n", 1, false},
-		{"unresolved group", []string{"group", "no-such"}, "gr4ph: no such group: no-such\n", 1, false},
-		{"unresolved tactic", []string{"tactic", "no-such"}, "gr4ph: no such tactic: no-such\n", 1, false},
-		{"unresolved platform", []string{"platform", "no-such"}, "gr4ph: no such platform: no-such\n", 1, false},
+		{
+			"-greedy with -top",
+			[]string{"gain", "-greedy", "-top", "3"},
+			"gr4ph: -greedy cannot be combined with -top or -all\n", 2, "", false,
+		},
+		{
+			"-greedy with -all",
+			[]string{"gain", "-greedy", "-all"},
+			"gr4ph: -greedy cannot be combined with -top or -all\n", 2, "", false,
+		},
+		{
+			"negative -top",
+			[]string{"gain", "-top", "-1"},
+			"gr4ph: -top must not be negative\n", 2, "", false,
+		},
+		{"unresolved technique", []string{"ttp", "no-such"}, "gr4ph: no such technique: no-such\n", 1, "", false},
+		{"unresolved artifact", []string{"artifact", "no-such"}, "gr4ph: no such artifact: no-such\n", 1, "", false},
+		{"unresolved countermeasure", []string{"cm", "no-such"}, "gr4ph: no such countermeasure: no-such\n", 1, "", false},
+		{"unresolved relation", []string{"rel", "no-such"}, "gr4ph: no such relation: no-such\n", 1, "", false},
+		{"unresolved data component", []string{"dc", "no-such"}, "gr4ph: no such data component: no-such\n", 1, "", false},
+		{"unresolved group", []string{"group", "no-such"}, "gr4ph: no such group: no-such\n", 1, "", false},
+		{"unresolved tactic", []string{"tactic", "no-such"}, "gr4ph: no such tactic: no-such\n", 1, "", false},
+		{"unresolved platform", []string{"platform", "no-such"}, "gr4ph: no such platform: no-such\n", 1, "", false},
 		{
 			"relation of the other family",
 			[]string{"rel", "-family", "off", "analyzes"},
-			"gr4ph: no such offensive relation: analyzes\n", 1, false,
+			"gr4ph: no such offensive relation: analyzes\n", 1, "", false,
 		},
 		{
 			"relation of the other family, defensively",
 			[]string{"rel", "-family", "def", "accesses"},
-			"gr4ph: no such defensive relation: accesses\n", 1, false,
+			"gr4ph: no such defensive relation: accesses\n", 1, "", false,
 		},
 		{
 			"offensive relation filter outside its family",
 			[]string{"ttp", "-rel", "analyzes", "T1003.001"},
-			"gr4ph: no such offensive relation: analyzes\n", 1, false,
+			"gr4ph: no such offensive relation: analyzes\n", 1, "", false,
 		},
 		{
 			"defensive relation filter in artifact",
 			[]string{"artifact", "-defrel", "accesses", "Process"},
-			"gr4ph: no such defensive relation: accesses\n", 1, false,
+			"gr4ph: no such defensive relation: accesses\n", 1, "", false,
 		},
 		{
 			"defensive relation filter in cm",
 			[]string{"cm", "-defrel", "accesses", "Process"},
-			"gr4ph: no such defensive relation: accesses\n", 1, false,
+			"gr4ph: no such defensive relation: accesses\n", 1, "", false,
+		},
+		// The overlay verbs build one block per invocation, so an unresolved
+		// query still prints the block of the empty deployment: the states of
+		// "nothing deployed" are an answer, not a silence.
+		{
+			"unresolved countermeasure in coverage",
+			[]string{"coverage", "no-such"},
+			"gr4ph: no such countermeasure: no-such\n", 1, fixtureCoverageEmpty, false,
+		},
+		{
+			"unresolved countermeasure in gain",
+			[]string{"gain", "no-such"},
+			"gr4ph: no such countermeasure: no-such\n", 1, fixtureGainEmpty, false,
+		},
+		{
+			"unresolved technique in contain",
+			[]string{"contain", "no-such"},
+			"gr4ph: no such technique: no-such\n", 1, "contain observed=0\n  out countermeasures (0): -\n", false,
 		},
 	}
 	for _, tt := range tests {
@@ -1089,8 +1341,8 @@ func TestErrors(t *testing.T) {
 			if status != tt.wantExit {
 				t.Errorf("status = %d, want %d", status, tt.wantExit)
 			}
-			if out != "" {
-				t.Errorf("stdout = %q, want empty", out)
+			if out != tt.wantOut {
+				t.Errorf("stdout = %q, want %q", out, tt.wantOut)
 			}
 			want := tt.wantErr
 			if tt.usage {
@@ -1119,14 +1371,54 @@ func TestHelp(t *testing.T) {
 			if out != usage {
 				t.Fatalf("stdout = %q, want the usage text", out)
 			}
-			for _, want := range []string{"usage: gr4ph", "ttp <query>", "artifact <query>", "cm <query>",
-				"dc <query>", "group <query>", "tactic <ta-id>", "platform <name>", "rel <name>", "exit status: 0"} {
+			for _, want := range []string{
+				"usage: gr4ph", "ttp <query>", "artifact <query>", "cm <query>",
+				"dc <query>", "group <query>", "tactic <ta-id>", "platform <name>", "rel <name>", "exit status: 0",
+				"coverage <cm>", "gain <cm>", "contain <ttp>",
+			} {
 				if !strings.Contains(out, want) {
 					t.Errorf("usage does not mention %q", want)
 				}
 			}
 		})
 	}
+}
+
+// gainRows decodes the candidate lines of a gain block into their names, labels
+// and gains, in printed order.
+func gainRows(t *testing.T, out string) []gain {
+	t.Helper()
+	var rows []gain
+	for _, line := range strings.Split(out, "\n") {
+		rest, ok := strings.CutPrefix(line, "  ")
+		if !ok {
+			continue
+		}
+		gainStr, rest, ok := strings.Cut(rest, "  ")
+		if !ok {
+			t.Fatalf("gainRows: malformed line %q", line)
+		}
+		g, err := strconv.Atoi(gainStr)
+		if err != nil {
+			t.Fatalf("gainRows: gain in %q: %v", line, err)
+		}
+		name, label, _ := strings.Cut(rest, " ")
+		rows = append(rows, gain{Name: name, Label: strings.Trim(label, `"`), Gain: g})
+	}
+	return rows
+}
+
+// gainLine returns the gain of the candidate row naming name, e.g.
+// gainLine(t, out, "ContentQuarantine").
+func gainLine(t *testing.T, out, name string) int {
+	t.Helper()
+	for _, g := range gainRows(t, out) {
+		if g.Name == name {
+			return g.Gain
+		}
+	}
+	t.Fatalf("gainLine: no %q row in output:\n%s", name, out)
+	return 0
 }
 
 // setLine returns the match count and the node list of the line whose set name

@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/fr0g-66723067-io/gr4ph"
@@ -38,6 +39,12 @@ const usage = `usage: gr4ph <command> [flags] <query> [<query>...]
   platform <name>    resolve a platform name; list the techniques that run on it
   rel <name>         resolve a relation name; report its plane, edge count and source
                      count in each family it belongs to
+  coverage <cm>...   resolve countermeasures as the deployed set; classify every technique as
+                     defended, undefended (mapped but uncovered) or unmapped
+  gain <cm>...       resolve countermeasures as the deployed set; rank candidates by the techniques
+                     they would newly cover
+  contain <ttp>...   resolve techniques as the observed set; list the countermeasures that touch any
+                     of them
   help               print this message
 
 flags (before or after the queries; -json may also precede the command):
@@ -47,6 +54,11 @@ flags (before or after the queries; -json may also precede the command):
             -defrel <name>     defensive relation plane for the countermeasure set (default any)
   cm:       -defrel <name>     defensive relation plane for the artifact set (default any)
   rel:      -family <off|def>  restrict the family (default: both)
+  coverage: (no flags)
+  gain:     -top <n>           how many candidates to rank (default 10)
+            -all               every candidate with a non-zero gain
+            -greedy            the successive maximum-gain sequence instead of a ranking
+  contain:  (no flags)
 
 examples:
   gr4ph ttp 'lsass memory'                 an alert string, not an id
@@ -63,6 +75,9 @@ examples:
   gr4ph platform Windows                   the techniques of one platform
   gr4ph rel blocks                         one line per family it is in
   gr4ph rel -family def blocks             one family only
+  gr4ph coverage ContentQuarantine         what that one countermeasure defends
+  gr4ph gain -greedy ContentQuarantine     the greedy order that finishes that deployment
+  gr4ph contain T1003.001                  mitigations for an alert on LSASS memory
   gr4ph -json ttp T0821                    one JSON object per query
   gr4ph help                               this message
 
@@ -97,10 +112,19 @@ type plane struct {
 	Sources int    `json:"sources"` // sources with at least one target
 }
 
+// gain is one row of a gain result: a candidate countermeasure and the number of
+// techniques it would newly cover on top of the deployed selection.
+type gain struct {
+	ID    int    `json:"id"`
+	Name  string `json:"name"`
+	Label string `json:"label,omitempty"`
+	Gain  int    `json:"gain"`
+}
+
 // result is one resolved query: the JSON object, and the source of the text block.
 type result struct {
 	Query    string `json:"query"`
-	Kind     string `json:"kind"` // "ttp", "artifact", "cm", "rel"
+	Kind     string `json:"kind"` // "ttp", "artifact", "cm", "dc", "group", "tactic", "platform", "rel", "coverage", "gain", "contain"
 	ID       *int   `json:"id,omitempty"`
 	Name     string `json:"name"`
 	Label    string `json:"label,omitempty"`
@@ -114,8 +138,16 @@ type result struct {
 	Platforms    []string `json:"platforms,omitempty"`    // ttp only
 	SubTechnique bool     `json:"subtechnique,omitempty"` // ttp only, absent on a top-level technique
 	GroupKind    string   `json:"group_kind,omitempty"`   // group only: actor|software|campaign
-	Sets         []set    `json:"sets,omitempty"`         // node kinds
-	Planes       []plane  `json:"planes,omitempty"`       // rel
+	// The overlay verbs: coverage and gain take countermeasures, contain takes
+	// techniques, and every count is the number of distinct resolved queries.
+	Deployed   *int    `json:"deployed,omitempty"`   // coverage, gain
+	Mapped     *int    `json:"mapped,omitempty"`     // coverage
+	Observed   *int    `json:"observed,omitempty"`   // contain
+	Candidates *int    `json:"candidates,omitempty"` // gain
+	Greedy     *int    `json:"greedy,omitempty"`     // gain -greedy
+	Gains      []gain  `json:"gains,omitempty"`      // gain
+	Sets       []set   `json:"sets,omitempty"`       // node kinds
+	Planes     []plane `json:"planes,omitempty"`     // rel
 }
 
 func main() {
@@ -171,6 +203,12 @@ func run(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
 		return runPlatform(e, rest, stdout, stderr)
 	case "rel":
 		return runRel(e, rest, stdout, stderr)
+	case "coverage":
+		return runCoverage(e, rest, stdout, stderr)
+	case "gain":
+		return runGain(e, rest, stdout, stderr)
+	case "contain":
+		return runContain(e, rest, stdout, stderr)
 	}
 	fmt.Fprintf(stderr, "gr4ph: unknown command: %s\n", cmd)
 	fmt.Fprint(stderr, usage)
@@ -665,6 +703,257 @@ func runRel(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
 	return finish(stdout, stderr, results, failures, *jsonOut)
 }
 
+// runCoverage answers `coverage <cm>...`: the resolved countermeasures are the
+// deployed set, and every technique is classified as defended (covered by the
+// deployment), undefended (inside the D3FEND mapping but uncovered) or unmapped
+// (outside the mapping, so no countermeasure can cover it). One result per
+// invocation, not per query: the three sets describe the deployment as a whole.
+func runCoverage(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("coverage", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", false, "")
+	flags, queries := splitArgs(fs, args)
+	if status, ok := parse(fs, flags, stdout, stderr); !ok {
+		return status
+	}
+	// No query is a valid invocation here: the empty deployment is a real
+	// question ("what does nothing cover?"), and its answer is the state of an
+	// organisation that has bought no countermeasure yet.
+	buf := newBuffers(e)
+	failures := make([]string, 0)
+	deployed := make([]uint64, e.WordsPerRow(gr4ph.KindCountermeasure))
+	seen := make(map[gr4ph.Countermeasure]bool)
+	for _, q := range queries {
+		cm, ok := e.Countermeasure(q)
+		if !ok {
+			failures = append(failures, "gr4ph: no such countermeasure: "+q)
+			continue
+		}
+		if seen[cm] {
+			continue
+		}
+		seen[cm] = true
+		setBit(deployed, int(cm))
+	}
+
+	// The three states, each computed by one overlay query. The mapped range
+	// doubles as the active set of the undefended set, so no state is derived
+	// from another state's output.
+	defendedN := e.TTPsCovered(deployed, buf.scrT, buf.ttps)
+	defended := set{Dir: "in", Name: "defended", Count: defendedN, Nodes: ttpNodes(e, buf.ttps, defendedN)}
+	mappedN := e.TTPsMapped(buf.scrT, buf.ttps)
+	mapped := make([]uint64, e.WordsPerRow(gr4ph.KindTTP))
+	for _, t := range buf.ttps[:mappedN] {
+		setBit(mapped, int(t))
+	}
+	undefendedN := e.TTPsBlind(mapped, deployed, buf.scrT, buf.ttps)
+	undefended := set{Dir: "in", Name: "undefended", Count: undefendedN, Nodes: ttpNodes(e, buf.ttps, undefendedN)}
+	allTTP, allCM := allSelections(e)
+	unmappedN := e.TTPsBlind(allTTP, allCM, buf.scrT, buf.ttps)
+	unmapped := set{Dir: "in", Name: "unmapped", Count: unmappedN, Nodes: ttpNodes(e, buf.ttps, unmappedN)}
+
+	res := result{
+		Query:    strings.Join(queries, " "),
+		Kind:     "coverage",
+		Deployed: new(len(seen)),
+		Mapped:   new(mappedN),
+		Sets:     []set{defended, undefended, unmapped},
+	}
+	return finish(stdout, stderr, []result{res}, failures, *jsonOut)
+}
+
+// runGain answers `gain <cm>...`: the resolved countermeasures are the deployed
+// set, and every candidate is ranked by the techniques it would newly cover on
+// top of it. -greedy replaces the ranking with the successive maximum-gain
+// sequence, which is the order a procurement plan would buy in.
+func runGain(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("gain", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	top := fs.Int("top", 10, "")
+	all := fs.Bool("all", false, "")
+	greedy := fs.Bool("greedy", false, "")
+	jsonOut := fs.Bool("json", false, "")
+	flags, queries := splitArgs(fs, args)
+	if status, ok := parse(fs, flags, stdout, stderr); !ok {
+		return status
+	}
+	// -top carries a default, so only an explicitly set one conflicts with
+	// -greedy (fs.Visit reports the flags the caller actually passed).
+	explicit := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if *greedy && (explicit["top"] || *all) {
+		fmt.Fprintln(stderr, "gr4ph: -greedy cannot be combined with -top or -all")
+		return 2
+	}
+	if *top < 0 {
+		fmt.Fprintln(stderr, "gr4ph: -top must not be negative")
+		return 2
+	}
+	// No query is a valid invocation here either: ranking every countermeasure
+	// against an empty deployment is the "what should we buy first?" question.
+
+	buf := newBuffers(e)
+	failures := make([]string, 0)
+	deployed := make([]uint64, e.WordsPerRow(gr4ph.KindCountermeasure))
+	seen := make(map[gr4ph.Countermeasure]bool)
+	for _, q := range queries {
+		cm, ok := e.Countermeasure(q)
+		if !ok {
+			failures = append(failures, "gr4ph: no such countermeasure: "+q)
+			continue
+		}
+		if seen[cm] {
+			continue
+		}
+		seen[cm] = true
+		setBit(deployed, int(cm))
+	}
+
+	res := result{
+		Query:    strings.Join(queries, " "),
+		Kind:     "gain",
+		Deployed: new(len(seen)),
+	}
+	if *greedy {
+		var rounds int
+		res.Gains, rounds = greedyGain(e, deployed, buf.scrT)
+		res.Greedy = &rounds
+		return finish(stdout, stderr, []result{res}, failures, *jsonOut)
+	}
+
+	candidates := make([]gain, 0, e.CountermeasureCount())
+	for cm := range e.CountermeasureCount() {
+		g := e.CoverageGain(gr4ph.Countermeasure(cm), deployed, buf.scrT)
+		if g <= 0 {
+			continue
+		}
+		name := e.CountermeasureName(gr4ph.Countermeasure(cm))
+		candidates = append(candidates, gain{
+			ID:    cm,
+			Name:  name,
+			Label: collapseLabel(name, e.CountermeasureLabel(gr4ph.Countermeasure(cm))),
+			Gain:  g,
+		})
+	}
+	// A total order: gain descending, then the byte-smallest countermeasure id,
+	// so the output is deterministic whatever the dense ids are.
+	slices.SortFunc(candidates, func(a, b gain) int {
+		if a.Gain != b.Gain {
+			return b.Gain - a.Gain
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+	shown := candidates
+	if !*all && *top < len(shown) {
+		shown = shown[:*top]
+	}
+	res.Candidates = new(len(candidates))
+	res.Gains = shown
+	return finish(stdout, stderr, []result{res}, failures, *jsonOut)
+}
+
+// greedyGain is the successive maximum-gain sequence over the accumulated
+// selection: each round buys the candidate that covers the most still-uncovered
+// techniques, ties broken by the byte-smallest countermeasure id, and the walk
+// stops as soon as no candidate gains anything. It returns the rows and the
+// number of rounds. Policy lives here, not in the engine, so the engine keeps
+// only the primitive.
+func greedyGain(e *gr4ph.Engine, deployed []uint64, scratch []uint64) ([]gain, int) {
+	sel := make([]uint64, len(deployed))
+	copy(sel, deployed)
+	var rows []gain
+	for {
+		best := -1
+		bestGain := 0
+		bestName := ""
+		for cm := range e.CountermeasureCount() {
+			g := e.CoverageGain(gr4ph.Countermeasure(cm), sel, scratch)
+			if g <= 0 {
+				continue
+			}
+			name := e.CountermeasureName(gr4ph.Countermeasure(cm))
+			if g > bestGain || (g == bestGain && strings.Compare(name, bestName) < 0) {
+				best, bestGain, bestName = cm, g, name
+			}
+		}
+		if best < 0 {
+			return rows, len(rows)
+		}
+		cm := gr4ph.Countermeasure(best)
+		rows = append(rows, gain{
+			ID:    best,
+			Name:  bestName,
+			Label: collapseLabel(bestName, e.CountermeasureLabel(cm)),
+			Gain:  bestGain,
+		})
+		setBit(sel, best)
+	}
+}
+
+// runContain answers `contain <ttp>...`: the resolved techniques are the observed
+// set, and the answer is every countermeasure that touches any of them — the
+// mitigation set for the current state of an intrusion.
+func runContain(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("contain", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", false, "")
+	flags, queries := splitArgs(fs, args)
+	if status, ok := parse(fs, flags, stdout, stderr); !ok {
+		return status
+	}
+	if len(queries) == 0 {
+		fmt.Fprintln(stderr, "gr4ph: missing query")
+		return 2
+	}
+
+	buf := newBuffers(e)
+	failures := make([]string, 0)
+	observed := make([]uint64, e.WordsPerRow(gr4ph.KindTTP))
+	seen := make(map[gr4ph.TTP]bool)
+	for _, q := range queries {
+		t, ok := e.Incident(q)
+		if !ok {
+			failures = append(failures, "gr4ph: no such technique: "+q)
+			continue
+		}
+		if seen[t] {
+			continue
+		}
+		seen[t] = true
+		setBit(observed, int(t))
+	}
+
+	n := e.CountermeasuresForObserved(observed, buf.scrC, buf.cms)
+	res := result{
+		Query:    strings.Join(queries, " "),
+		Kind:     "contain",
+		Observed: new(len(seen)),
+		Sets: []set{
+			{Dir: "out", Name: "countermeasures", Count: n, Nodes: cmNodes(e, buf.cms, n)},
+		},
+	}
+	return finish(stdout, stderr, []result{res}, failures, *jsonOut)
+}
+
+// setBit sets bit i of sel. The library's own helper is unexported, and the CLI
+// owns its selections: the engine never retains one.
+func setBit(sel []uint64, i int) { sel[i>>6] |= 1 << uint(i&63) }
+
+// allSelections returns a selection with every live technique bit and every live
+// countermeasure bit set: the active set of "everything that could be observed"
+// and the deployment of "every countermeasure there is".
+func allSelections(e *gr4ph.Engine) (ttps, cms []uint64) {
+	ttps = make([]uint64, e.WordsPerRow(gr4ph.KindTTP))
+	for i := range e.TTPCount() {
+		setBit(ttps, i)
+	}
+	cms = make([]uint64, e.WordsPerRow(gr4ph.KindCountermeasure))
+	for i := range e.CountermeasureCount() {
+		setBit(cms, i)
+	}
+	return ttps, cms
+}
+
 // scanOffensive counts the distinct (technique, artifact) pairs of plane r and
 // the techniques that have at least one. It allocates nothing: buf is the
 // caller's full-size artifact buffer.
@@ -728,6 +1017,20 @@ func writeText(w io.Writer, res result) {
 			tacticsPart(res.Tactics), platformsPart(res.Platforms))
 	case "group":
 		fmt.Fprintf(w, "group %s%s kind=%s\n", res.Name, quoted(res.Label), res.GroupKind)
+	case "coverage":
+		fmt.Fprintf(w, "coverage deployed=%d mapped=%d\n", *res.Deployed, *res.Mapped)
+	case "gain":
+		if res.Greedy != nil {
+			fmt.Fprintf(w, "gain deployed=%d greedy=%d\n", *res.Deployed, *res.Greedy)
+		} else {
+			fmt.Fprintf(w, "gain deployed=%d candidates=%d shown=%d\n", *res.Deployed, *res.Candidates, len(res.Gains))
+		}
+		for _, g := range res.Gains {
+			fmt.Fprintf(w, "  %d  %s%s\n", g.Gain, g.Name, quoted(g.Label))
+		}
+		return
+	case "contain":
+		fmt.Fprintf(w, "contain observed=%d\n", *res.Observed)
 	case "rel":
 		for _, p := range res.Planes {
 			from, to := "technique", "artifact"
