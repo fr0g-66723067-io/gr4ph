@@ -3,6 +3,7 @@
 package gr4ph
 
 import (
+	"reflect"
 	"slices"
 	"testing"
 
@@ -152,6 +153,72 @@ func TestZeroAllocSynthetic(t *testing.T) {
 	for _, c := range cases {
 		if n := testing.AllocsPerRun(200, c.fn); n != 0 {
 			t.Errorf("%s: %v allocs/op, want 0", c.name, n)
+		}
+	}
+}
+
+// coldNames are the engine's methods the zero-allocation tests deliberately do
+// not cover: the O(1) sizing accessors, resolvers, string accessors and
+// boundary formatters. They allocate by contract (string accessors return
+// strings) or are a single length, lookup or format, so a case for each would
+// measure the Go runtime rather than the engine.
+var coldNames = map[string]bool{
+	"Artifact": true, "ArtifactCount": true, "ArtifactLabel": true, "ArtifactName": true,
+	"CWE": true, "CWECount": true, "CWEID": true,
+	"Countermeasure": true, "CountermeasureCount": true, "CountermeasureLabel": true,
+	"CountermeasureName": true, "CountermeasureResponse": true,
+	"DataComponent": true, "DataComponentCount": true, "DataComponentID": true,
+	"DataComponentLabel": true,
+	"DefRel":             true, "DefRelCount": true,
+	"Group": true, "GroupCount": true, "GroupID": true, "GroupKind": true, "GroupLabel": true,
+	"Incident": true,
+	"KEV":      true, "KEVAdded": true, "KEVCount": true, "KEVID": true, "KEVName": true,
+	"KEVProduct": true, "KEVProductName": true, "KEVProductVendor": true,
+	"KEVRansomware": true, "KEVVendor": true,
+	"Platform": true, "PlatformCount": true, "PlatformName": true,
+	"Product": true, "ProductCount": true,
+	"Rel": true, "RelCount": true, "Response": true,
+	"TTPCount": true, "TTPDomain": true, "TTPLabel": true, "TTPName": true, "TTPRevoked": true,
+	"Tactic": true, "TacticCount": true, "TacticID": true, "TacticLabel": true,
+	"WordsPerRow": true,
+}
+
+// TestHotMethodRegistryCoversEngine pins the classification the two
+// zero-allocation tests depend on. internal/hotmethods.Names is hand-synced with
+// their case tables, and nothing else checks that the engine's method set is the
+// union of that registry and the cold list: a new query method in neither would
+// be a method whose allocation profile no test measures.
+func TestHotMethodRegistryCoversEngine(t *testing.T) {
+	if len(hotmethods.Names) != 57 {
+		t.Errorf("the hot registry holds %d names, want 57", len(hotmethods.Names))
+	}
+	hot := make(map[string]bool, len(hotmethods.Names))
+	for _, name := range hotmethods.Names {
+		hot[name] = true
+	}
+
+	engine := reflect.TypeOf((*Engine)(nil))
+	if got, want := engine.NumMethod(), len(hot)+len(coldNames); got != want {
+		t.Errorf("*Engine has %d exported methods, want %d (%d hot + %d cold)",
+			got, want, len(hot), len(coldNames))
+	}
+	for i := range engine.NumMethod() {
+		name := engine.Method(i).Name
+		switch {
+		case hot[name] && coldNames[name]:
+			t.Errorf("%s is classified both hot and cold", name)
+		case !hot[name] && !coldNames[name]:
+			t.Errorf("%s is classified nowhere: add it to internal/hotmethods.Names (hot) or to coldNames (cold)", name)
+		}
+	}
+	for _, name := range hotmethods.Names {
+		if _, ok := engine.MethodByName(name); !ok {
+			t.Errorf("the hot registry names %s, which is not an exported method of *Engine", name)
+		}
+	}
+	for name := range coldNames {
+		if _, ok := engine.MethodByName(name); !ok {
+			t.Errorf("the cold list names %s, which is not an exported method of *Engine", name)
 		}
 	}
 }

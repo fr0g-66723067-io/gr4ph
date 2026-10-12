@@ -365,15 +365,17 @@ func TestLoadErrors(t *testing.T) {
 	}
 }
 
-// TestPinnedShapeIsTheCatalogShape crosses the pinned literal against the
-// catalog it claims: the version string and the six counts must agree with what
-// the generator would measure for that version.
+// TestPinnedShapeIsTheCatalogShape pins the version agreement of the two
+// literals and the internal consistency of the counts: a literal that cannot
+// describe any catalog is caught here. The counts themselves are crossed against
+// the feed by run's checkShape, and after a re-pin by the count pins in
+// ontology/ontology_test.go and cmd/gr4ph/main_test.go.
 func TestPinnedShapeIsTheCatalogShape(t *testing.T) {
-	if pinnedShape.catalog == "" || !strings.HasPrefix(sourceKEV, sourceFile()+"@") ||
-		sourceKEV != sourceFile()+"@"+pinnedShape.catalog {
+	if sourceKEV != sourceFile()+"@"+pinnedShape.catalog {
 		t.Fatalf("sourceKEV %q and pinnedShape.catalog %q disagree", sourceKEV, pinnedShape.catalog)
 	}
-	if pinnedShape.entriesWithCWE > pinnedShape.entries || pinnedShape.cweEdges < pinnedShape.entriesWithCWE {
+	if pinnedShape.entriesWithCWE > pinnedShape.entries || pinnedShape.cweEdges < pinnedShape.entriesWithCWE ||
+		pinnedShape.ransomware > pinnedShape.entries || pinnedShape.products > pinnedShape.entries {
 		t.Fatalf("pinnedShape is internally inconsistent: %+v", pinnedShape)
 	}
 }
