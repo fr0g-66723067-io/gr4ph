@@ -2,7 +2,10 @@
 
 package gr4ph
 
-import "strconv"
+import (
+	"math/bits"
+	"strconv"
+)
 
 // Engine is the frozen graph: four multi-plane bitmatrix blocks, twelve
 // single-plane blocks, the per-technique attribute columns and the
@@ -28,6 +31,11 @@ import "strconv"
 // stride (WordsPerRow panics "gr4ph: unknown kind"), or a scratch row shorter than
 // WordsPerRow(returned partition). The scratch check runs before the id bounds
 // check, so an undersized scratch panics even when the id is out of range.
+//
+// The overlay queries take a caller-owned Selection and never retain it; a
+// selection shorter than WordsPerRow of the partition it selects panics
+// "gr4ph: selection too small", the same class of engine misuse as an
+// undersized scratch row.
 //
 // The cold string accessors (TTPName, TTPLabel, TTPDomain, ArtifactName, ...)
 // panic on an out-of-range id; Response and CountermeasureResponse are the
@@ -213,6 +221,15 @@ func (e *Engine) checkDefRel(dr DefRel) {
 func (e *Engine) checkScratch(scratch []uint64, cols Kind) {
 	if len(scratch) < e.WordsPerRow(cols) {
 		panic("gr4ph: scratch too small")
+	}
+}
+
+// checkSelection enforces the selection sizing rule: len(sel) must be at least
+// WordsPerRow of the partition it selects. An undersized selection is the same
+// class of engine misuse as an undersized scratch row.
+func (e *Engine) checkSelection(sel []uint64, cols Kind) {
+	if len(sel) < e.WordsPerRow(cols) {
+		panic("gr4ph: selection too small")
 	}
 }
 
@@ -856,6 +873,95 @@ func (e *Engine) CountermeasureDegree(cm Countermeasure) int {
 		return 0
 	}
 	return popcountRow(e.row(e.cmTTP, e.cmTTPOff(cm), e.wTTP))
+}
+
+// --- hot path: coverage overlay (mask-driven) ---
+
+// TTPsMapped writes the techniques with at least one defends-against edge — the
+// range of the D3FEND mapping, i.e. the set the coverage states are measured
+// against — and returns the total. It is the union of every cmTTP row, computed
+// per call rather than stored: the union is derivable and the engine keeps no
+// duplicate of a derivable row.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
+func (e *Engine) TTPsMapped(scratch []uint64, dst []TTP) int {
+	e.checkScratch(scratch, KindTTP)
+	row := scratch[:e.wTTP]
+	clear(row)
+	for cm := range e.nCM {
+		orRowInto(row, e.row(e.cmTTP, e.cmTTPOff(Countermeasure(cm)), e.wTTP))
+	}
+	return enumerate(row, dst)
+}
+
+// TTPsCovered writes the techniques defended by any countermeasure the
+// selection names: the union of the selected cmTTP rows. A selection bit past
+// the live countermeasure range selects no row, so a stale inventory cannot
+// fail.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
+func (e *Engine) TTPsCovered(sel Selection, scratch []uint64, dst []TTP) int {
+	e.checkSelection(sel, KindCountermeasure)
+	e.checkScratch(scratch, KindTTP)
+	row := scratch[:e.wTTP]
+	clear(row)
+	orSelectedRowsInto(row, sel, e.cmTTP, e.wTTP)
+	return enumerate(row, dst)
+}
+
+// TTPsBlind writes the techniques that are active and not covered: active &^
+// covered, i.e. the blind spots of a deployed set. Both selections are
+// caller-owned; active is over techniques, sel over countermeasures.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
+func (e *Engine) TTPsBlind(active Selection, sel Selection, scratch []uint64, dst []TTP) int {
+	e.checkSelection(active, KindTTP)
+	e.checkSelection(sel, KindCountermeasure)
+	e.checkScratch(scratch, KindTTP)
+	row := scratch[:e.wTTP]
+	clear(row)
+	orSelectedRowsInto(row, sel, e.cmTTP, e.wTTP)
+	// row is now the covered set; mask it out of the active set. A row kernel
+	// cannot do this in place — the operation reads two different slices — so
+	// the loop is the whole computation.
+	for i := range row {
+		row[i] = active[i] &^ row[i]
+	}
+	return enumerate(row, dst)
+}
+
+// CoverageGain returns how many techniques cm would newly cover on top of the
+// deployed selection: popcount(cmTTP[cm] &^ covered(sel)). It is the marginal
+// value of adding one countermeasure, the number a procurement ranking sorts
+// by. An out-of-range cm yields 0.
+func (e *Engine) CoverageGain(cm Countermeasure, sel Selection, scratch []uint64) int {
+	e.checkSelection(sel, KindCountermeasure)
+	e.checkScratch(scratch, KindTTP)
+	row := scratch[:e.wTTP]
+	clear(row)
+	orSelectedRowsInto(row, sel, e.cmTTP, e.wTTP)
+	if !e.okCM(cm) {
+		return 0
+	}
+	n := 0
+	for i, w := range e.row(e.cmTTP, e.cmTTPOff(cm), e.wTTP) {
+		n += bits.OnesCount64(w &^ row[i])
+	}
+	return n
+}
+
+// CountermeasuresForObserved writes the countermeasures of any observed
+// technique: the union of the selected ttpCM rows, i.e. the mitigation set for
+// the current state of an intrusion. observed is over techniques.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
+func (e *Engine) CountermeasuresForObserved(observed Selection, scratch []uint64, dst []Countermeasure) int {
+	e.checkSelection(observed, KindTTP)
+	e.checkScratch(scratch, KindCountermeasure)
+	row := scratch[:e.wCM]
+	clear(row)
+	orSelectedRowsInto(row, observed, e.ttpCM, e.wCM)
+	return enumerate(row, dst)
 }
 
 // --- hot path: attributes, data components and groups ---

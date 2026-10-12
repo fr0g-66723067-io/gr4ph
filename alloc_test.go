@@ -30,6 +30,10 @@ func TestZeroAllocSynthetic(t *testing.T) {
 	dstG := make([]Group, e.GroupCount())
 	arts := []Artifact{0, 1, 2, 3}
 	ttps := []TTP{0, 1, 2, 3, 4, 5}
+	selC := make([]uint64, e.WordsPerRow(KindCountermeasure))
+	setBit(selC, 0)
+	selT := make([]uint64, e.WordsPerRow(KindTTP))
+	setBit(selT, 1)
 
 	cases := []struct {
 		name string
@@ -78,6 +82,11 @@ func TestZeroAllocSynthetic(t *testing.T) {
 			sink += e.TTPsForCountermeasureRollup(0, scratchT, dstT)
 		}},
 		{"CountermeasureDegree", func() { sink += e.CountermeasureDegree(0) }},
+		{"TTPsMapped", func() { sink += e.TTPsMapped(scratchT, dstT) }},
+		{"TTPsCovered", func() { sink += e.TTPsCovered(selC, scratchT, dstT) }},
+		{"TTPsBlind", func() { sink += e.TTPsBlind(selT, selC, scratchT, dstT) }},
+		{"CoverageGain", func() { sink += e.CoverageGain(0, selC, scratchT) }},
+		{"CountermeasuresForObserved", func() { sink += e.CountermeasuresForObserved(selT, scratchC, dstC) }},
 		{"TTPTactics", func() { sink += int(e.TTPTactics(1)) }},
 		{"TTPPlatforms", func() { sink += int(e.TTPPlatforms(1)) }},
 		{"TTPFlags", func() { sink += int(e.TTPFlags(1)) }},

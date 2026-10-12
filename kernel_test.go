@@ -183,6 +183,78 @@ func TestKernelPartContract(t *testing.T) {
 	}
 }
 
+// TestKernelAndNotRows pins andNotRowInto over rows below one vector, a whole
+// vector, and a vector plus a one-word tail, with the canaries outside the row.
+// One bit is cleared in the first word and one in the last, so both the vector
+// loop and the tail loop have a difference to carry.
+func TestKernelAndNotRows(t *testing.T) {
+	lanes := simd.VectorBitSize() / 64
+	for _, words := range []int{1, 2, lanes, lanes + 1} {
+		srcBuf := make([]uint64, words+2)
+		src := rowOf(srcBuf, words)
+		for i := range src {
+			src[i] = 1 << uint(i%64)
+		}
+		dstBuf := make([]uint64, words+2)
+		dst := rowOf(dstBuf, words)
+		for i := range dst {
+			dst[i] = ^uint64(0)
+		}
+		src[0], src[words-1] = 0, ^uint64(0)
+
+		andNotRowInto(dst, src)
+		for i := range dst {
+			if want := ^uint64(0) &^ src[i]; dst[i] != want {
+				t.Fatalf("andNotRowInto words=%d: dst[%d]=%x want %x", words, i, dst[i], want)
+			}
+		}
+		checkCanaries(t, "andNotRowInto", words, srcBuf, dstBuf)
+	}
+}
+
+// TestKernelOrSelectedRows pins orSelectedRowsInto: the union of the selected
+// block rows, a selection bit whose row lies past the end of block (ignored), a
+// stride wider than dst and a stride of 0 (both no-ops). The selection spans
+// two words, so the set-bit scan itself has a word beyond the first.
+func TestKernelOrSelectedRows(t *testing.T) {
+	lanes := simd.VectorBitSize() / 64
+	selected := []int{0, 3, 65, 129, 130}
+	for _, stride := range []int{1, lanes, lanes + 1} {
+		const rows = 131 // two selection words: bits 0..130 live
+		block := make([]uint64, rows*stride)
+		for r := range rows {
+			block[r*stride+(r/64)%stride] |= 1 << uint(r%64)
+		}
+		sel := make([]uint64, 7)
+		for _, r := range selected {
+			setBit(sel, r)
+		}
+		setBit(sel, 400) // past the end of block: selects no row
+
+		dstBuf := make([]uint64, stride+2)
+		dst := rowOf(dstBuf, stride)
+		orSelectedRowsInto(dst, sel, block, stride)
+		for i := range dst {
+			want := uint64(0)
+			for _, r := range selected {
+				want |= block[r*stride+i]
+			}
+			if dst[i] != want {
+				t.Fatalf("orSelectedRowsInto stride=%d: dst[%d]=%x want %x", stride, i, dst[i], want)
+			}
+		}
+		checkCanaries(t, "orSelectedRowsInto", stride, dstBuf)
+	}
+
+	// An undersized dst and a zero stride both return without writing.
+	short := []uint64{1, 2, 3}
+	orSelectedRowsInto(short, []uint64{3}, []uint64{9, 9, 9, 9}, 4)
+	orSelectedRowsInto(short, []uint64{3}, []uint64{9, 9, 9, 9}, 0)
+	if short[0] != 1 || short[1] != 2 || short[2] != 3 {
+		t.Fatalf("orSelectedRowsInto wrote through a no-op call: %v", short)
+	}
+}
+
 func equalRows(a, b []uint64) bool {
 	if len(a) != len(b) {
 		return false
