@@ -606,12 +606,17 @@ func writeInts(b *bytes.Buffer, name, typ, doc string, vals []int, perLine int) 
 // repinFile rewrites this generator's own sourceKEV and pinnedShape literals in
 // place, so the next run is pinned to the catalog it just read.
 func repinFile(measured shape) error {
-	path, err := generatorPath()
+	path, err := repinTarget()
 	if err != nil {
 		return err
 	}
 	return repinPath(measured, path)
 }
+
+// repinTarget locates the file repinFile rewrites: this generator's own source.
+// It is a variable so a test can point a re-pin at a copy — driving the branch
+// against the real file would rewrite the checked-in generator.
+var repinTarget = generatorPath
 
 // repinPath rewrites the two literals in the generator source at path. Exactly
 // those two are replaced and format.Source normalises the result; the rest of
