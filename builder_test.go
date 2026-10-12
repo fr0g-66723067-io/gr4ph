@@ -805,10 +805,12 @@ func TestBuilderVocabularyCap(t *testing.T) {
 }
 
 // TestLayoutMatchesReadme pins the memory table the README publishes: with the
-// pinned node, predicate and vocabulary counts, every one of the seventeen frozen
-// arrays must be exactly as many words as the table says. It cannot import
-// ontology (which imports this package), so the pinned counts are reproduced
-// here. Bytes are not asserted: they are words * 8.
+// pinned node, predicate and vocabulary counts, every one of the twenty-one
+// frozen arrays must be exactly as many words as the table says. It cannot
+// import ontology (which imports this package), so the pinned counts are
+// reproduced here; ontology_test.go's TestOntologyLayoutArithmetic recomputes
+// the same numbers from the generated constants. Bytes are not asserted: they
+// are words * 8.
 func TestLayoutMatchesReadme(t *testing.T) {
 	b := NewBuilder()
 	for i := range 1186 {

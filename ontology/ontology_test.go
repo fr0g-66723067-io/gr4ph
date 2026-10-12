@@ -372,6 +372,76 @@ func TestOntologySizes(t *testing.T) {
 	}
 }
 
+// TestOntologyLayoutArithmetic recomputes the README's block table from the
+// tables themselves — the generated counts and the engine's own strides — so a
+// re-pin that moves a count cannot leave the published arithmetic green.
+// builder_test.go's TestLayoutMatchesReadme reads the same numbers off a
+// registered builder, which is what pins the table's shape; this test pins the
+// arithmetic the row widths and plane counts imply.
+func TestOntologyLayoutArithmetic(t *testing.T) {
+	e := build(t)
+
+	wTTP := e.WordsPerRow(gr4ph.KindTTP)
+	wArt := e.WordsPerRow(gr4ph.KindArtifact)
+	wCM := e.WordsPerRow(gr4ph.KindCountermeasure)
+	wDC := e.WordsPerRow(gr4ph.KindDataComponent)
+	wKEV := e.WordsPerRow(gr4ph.KindKEV)
+	wCWE := e.WordsPerRow(gr4ph.KindCWE)
+	wProduct := e.WordsPerRow(gr4ph.KindProduct)
+	// The grouping partition has no Kind, so its row width is the one stride
+	// WordsPerRow does not publish.
+	wGrp := (NGroup + 63) / 64
+	offPlanes, defPlanes := NRel+1, NDefRel+1 // plane 0 of each family is the union
+	wTactic, wPlatform := 1, 1                // one uint64 mask per technique
+
+	blocks := []struct {
+		name  string
+		words int
+	}{
+		{"ttpArt", offPlanes * NTTP * wArt},
+		{"artTTP", offPlanes * NArtifact * wTTP},
+		{"cmArt", defPlanes * NCountermeasure * wArt},
+		{"artCM", defPlanes * NArtifact * wCM},
+		{"cmTTP", NCountermeasure * wTTP},
+		{"ttpCM", NTTP * wCM},
+		{"tacticTTP", NTactic * wTTP},
+		{"ttpTactic", NTTP * wTactic},
+		{"platformTTP", NPlatform * wTTP},
+		{"ttpPlatform", NTTP * wPlatform},
+		{"ttpFlags", NTTP},
+		{"dcTTP", NDataComponent * wTTP},
+		{"ttpDC", NTTP * wDC},
+		{"grpTTP", NGroup * wTTP},
+		{"ttpGrp", NTTP * wGrp},
+		{"grpSoftware", NGroup * wGrp},
+		{"softwareGrp", NGroup * wGrp},
+		{"kevCWE", NKEV * wCWE},
+		{"cweKEV", NCWE * wKEV},
+		{"kevProduct", NKEV * wProduct},
+		{"productKEV", NProduct * wKEV},
+	}
+	want := []int{
+		199248, 197106, 24492, 28899, 2983, 3558,
+		779, 1186, 285, 1186, 1186, 2337, 2372, 23028, 22534, 23028, 23028,
+		5217, 5292, 20868, 20216,
+	}
+	subtotal, newArrays := 0, 0
+	for i, bl := range blocks {
+		if bl.words != want[i] {
+			t.Errorf("%s = %d words, want %d (README block table)", bl.name, bl.words, want[i])
+		}
+		if i < 6 {
+			subtotal += bl.words
+		} else {
+			newArrays += bl.words
+		}
+	}
+	if subtotal != 456286 || newArrays != 152542 || subtotal+newArrays != 608828 {
+		t.Errorf("six-block subtotal %d, new arrays %d, total %d, want 456286/152542/608828",
+			subtotal, newArrays, subtotal+newArrays)
+	}
+}
+
 // TestOntologyRelationConstants pins every generated constant to its plane, so
 // a change in the naming rule or the sort order cannot pass unnoticed.
 func TestOntologyRelationConstants(t *testing.T) {
@@ -833,6 +903,46 @@ func TestOntologyLabelAmbiguity(t *testing.T) {
 	}
 	if sharedGroups != 12 {
 		t.Fatalf("group labels shared by two nodes = %d, want 12", sharedGroups)
+	}
+	// The resolver folds the label (trim + lower-case), so three case-variant
+	// pairs collapse into keys the raw sweep above cannot see. Two of them are
+	// within the software kind — the one case the "unique within a kind" rule
+	// does not hold for — so they are named as well as counted.
+	folded := map[string][]gr4ph.Group{}
+	for i := range e.GroupCount() {
+		g := gr4ph.Group(i)
+		key := strings.ToLower(strings.TrimSpace(e.GroupLabel(g)))
+		folded[key] = append(folded[key], g)
+	}
+	foldedShared, foldedSameKind := 0, 0
+	for _, carriers := range folded {
+		if len(carriers) == 1 {
+			continue
+		}
+		foldedShared++
+		kinds := map[gr4ph.GroupKind]bool{}
+		for _, carrier := range carriers {
+			if kinds[e.GroupKind(carrier)] {
+				foldedSameKind++
+				break
+			}
+			kinds[e.GroupKind(carrier)] = true
+		}
+	}
+	if foldedShared != 15 || foldedSameKind != 2 {
+		t.Fatalf("folded group keys shared by two nodes = %d (%d within one kind), want 15 (2)",
+			foldedShared, foldedSameKind)
+	}
+	for _, key := range []string{"ngrok", "triton"} {
+		carriers := folded[key]
+		if len(carriers) != 2 {
+			t.Fatalf("folded key %q has %d carriers, want 2", key, len(carriers))
+		}
+		for _, carrier := range carriers {
+			if kind := e.GroupKind(carrier); kind != gr4ph.GroupSoftware {
+				t.Errorf("folded key %q carries kind %d (%q), want two software nodes", key, kind, e.GroupID(carrier))
+			}
+		}
 	}
 	// The two hard cases: the byte-smallest id wins, so a campaign beats the
 	// actor that shares its label, and an actor beats software.
