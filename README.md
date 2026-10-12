@@ -261,9 +261,9 @@ $ ./gr4ph -json rel blocks
 {"query":"blocks","kind":"rel","name":"blocks","planes":[{"family":"offensive","id":4,"count":41,"edges":2,"sources":2},{"family":"defensive","id":3,"count":38,"edges":6,"sources":6}]}
 ```
 
-`examples/scenarios.sh` is a plain list of `gr4ph` commands — all eleven commands, the relation and family
-filters, several queries per call, `-json`, the failures and `help` — grouped into defence and attack
-scenarios, each scenario under a banner heading and each command labelled with the invocation that
+`examples/scenarios.sh` is a plain list of `gr4ph` commands — all fourteen commands, the relation and
+family filters, several queries per call, `-json`, the failures and `help` — grouped into defence and
+attack scenarios, each scenario under a banner heading and each command labelled with the invocation that
 produced the block below it. Nothing is checked and nothing is trimmed: it prints each answer in full, so
 run it after `make build` and read the output.
 
@@ -519,7 +519,7 @@ Builder (cold path; the builder is single-use and then frozen by `Build`):
 | `AddKEV(id, name, added, ransomware)` | idempotent on the normalised CVE id, which is the only key: a second call with the same id ignores its other arguments |
 | `AddCWE(id, label)` `AddProduct(vendor, name)` | the weakness and product vocabularies, dense ids in registration order |
 | `AddEdge(t, a, r)` `AddDefEdge(cm, a, dr)` `AddDefendsEdge(cm, t)` `AddTacticEdge(t, ta)` `AddPlatformEdge(t, p)` `AddDetectsEdge(dc, t)` `AddGroupUsesEdge(g, t)` `AddGroupSoftwareEdge(from, to)` `AddKEVWeaknessEdge(k, c)` `AddKEVProductEdge(k, p)` | edges are ORed into the planes; an unregistered endpoint is `ErrUnknownTTP` / `ErrUnknownArtifact` / `ErrUnknownCountermeasure` / `ErrUnknownTactic` / `ErrUnknownPlatform` / `ErrUnknownDataComponent` / `ErrUnknownGroup` / `ErrUnknownKEV` / `ErrUnknownCWE` / `ErrUnknownProduct` |
-| `Built()` `Build()` | `Build` is single-use: `ErrBuilderUsed` afterwards |
+| `Built()` `Build()` | `Build` is single-use: `ErrBuilderUsed` afterwards; `ErrKEVWithoutProduct` / `ErrKEVMultipleProducts` when the graph breaks the one-product-per-entry invariant the KEV accessors read |
 
 ### Exact vs roll-up
 
@@ -654,17 +654,19 @@ KEV is a rolling feed, unlike the three versioned ATT&CK releases: CISA revises 
 bumps its `catalogVersion`. When the fetched version differs from the pinned one, `cmd/kevgen` re-pins
 its own `sourceKEV`/`pinnedShape` literals in place, emits with the freshly measured counts and prints
 `kevgen: re-pinned known_exploited_vulnerabilities.json@<old> -> @<new> (re-measure the count pins in
-ontology/ontology_test.go, cmd/gr4ph/main_test.go and README.md)` — the count pins in those three files
-then fail until they are re-measured, which is the forcing function. `-re-pin=false` turns the same
+ontology/ontology_test.go and cmd/gr4ph/main_test.go, and the README's numbers by hand)` — the two count
+pins then fail until they are re-measured, which is the forcing function. The README's own numbers are
+read by no test, so they are re-measured by hand in the same pass. `-re-pin=false` turns the same
 condition into a hard error instead (`KEV catalog <pinned> expected, got <fetched> (re-run without
 -re-pin to re-pin in place)`), and a count change under an *unchanged* version is always an error: the
 version is the contract, the counts are the measurement that keeps the emitted tables honest.
 
-Two ingestion rules keep the emitted dense ids equal to the ones the builder assigns: entries are sorted
-by CVE id (the feed's own order is neither sorted nor stable) and every ingested string is trimmed and
-lower-cased — the feed carries surrounding whitespace on 27 names, 6 vendors and 13 products, three
+Three ingestion rules keep the emitted dense ids equal to the ones the builder assigns: entries are sorted
+by normalised CVE id (the feed's own order is neither sorted nor stable), every ingested string is trimmed
+and lower-cased — the feed carries surrounding whitespace on 27 names, 6 vendors and 13 products, three
 product names differ only in case, and the ten product pairs that collapse are why the pinned product
-count is 722 rather than the 732 raw spellings.
+count is 722 rather than the 732 raw spellings — and every vocabulary and per-entry reference list is
+deduped on that normalised key, one element per node the builder registers.
 
 Registration order is load-bearing (`ontology.Register`): relations first (so `RelNames[i]` becomes
 plane `i+1`, matching the generated constants) and then the tactic and platform vocabularies (so
@@ -709,9 +711,13 @@ weakness edges and one product edge per entry):
 | `TTPsBlind` (1200 active, 20 of 160 deployed) | synthetic | 1823 |
 | `CoverageGain` (20-countermeasure selection) | synthetic | 636 |
 | `CountermeasuresForObserved` (50-bit observed set) | synthetic | 495 |
+| `TTPsMapped` (all 157 countermeasures) | synthetic | 4740 |
 | `KEVsForProducts` (50 of 722 products) | synthetic | 2305 |
 | `KEVsForCWEs` (all 189 weaknesses) | synthetic | 9340 |
 | `CWEsForKEV` (one entry) | synthetic | 14 |
+| `KEVCWEDegree` (one entry) | synthetic | 4 |
+| `KEVsForCWE` (one class) | synthetic | 72 |
+| `ProductsForKEV` (one entry) | synthetic | 23 |
 
 The eleven round-1 arrays (ten blocks plus the `ttpFlags` column) and the four KEV blocks sit after the
 six existing blocks, so
@@ -740,6 +746,19 @@ rows — sequential runs, not a cost of this change: the same rows read 1.002–
 are interleaved, which is why the gate uses the interleaved protocol. The three new rows are dominated by
 their memory traffic: `CWEsForKEV` is one 3-word row, `KEVsForProducts` unions 50 28-word rows, and
 `KEVsForCWEs` unions all 189 of them.
+
+Round 3 (the hardening round) changes the hot path by one masked AND — `TTPsBlind` now clears the tail of
+its active row against the live technique range — and adds a `Build` cardinality check that is cold and
+runs once per process, so it appears in no benchmark. Against a worktree at `19ccf2a` (the round-2 merge;
+same host, `-benchtime=1s -count=1` interleaved ten times per tree, medians) all 22 pre-existing
+benchmarks are still present, all 26 report 0 `B/op` and 0 `allocs/op`, and every pre-existing median is
+within 1.02× — `BenchmarkTTPsBlind`, the method that gained the work, reads 0.989× (1591.5 → 1573.5 ns)
+and the worst row is `BenchmarkAdjacentRel` at 1.020× (5.8 → 5.9 ns, a single row fetch).
+`BenchmarkOntologyTTPsRel` reads 0.615×, the test-binary layout effect round 1 documented in the other
+direction. The four new rows are medians of the filtered
+`-bench 'BenchmarkTTPsMapped|BenchmarkKEVCWEDegree|BenchmarkKEVsForCWE|BenchmarkProductsForKEV'`
+`-benchmem -benchtime=1s -count=10` run, so they are measured without a preceding benchmark's cache
+state.
 
 ## License
 

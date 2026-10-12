@@ -817,18 +817,23 @@ func TestJSONFixture(t *testing.T) {
 }
 
 // TestOntologyValues runs the pinned numbers of the committed tables through the
-// CLI. Every literal here is derived from ontology/attack_gen.go, so a change in
-// the tables must fail this test rather than silently reflow the output.
+// CLI. Every literal here is derived from ontology/attack_gen.go and
+// ontology/kev_gen.go, so a change in the tables must fail this test rather than
+// silently reflow the output — including the three KEV counts, which is what
+// makes a catalog re-pin fail here and not only in ontology/ontology_test.go.
 func TestOntologyValues(t *testing.T) {
 	e, err := buildEngine()
 	if err != nil {
 		t.Fatalf("buildEngine: %v", err)
 	}
 	if e.TTPCount() != ontology.NTTP || e.ArtifactCount() != ontology.NArtifact ||
-		e.CountermeasureCount() != ontology.NCountermeasure {
-		t.Fatalf("engine holds %d/%d/%d nodes, want %d/%d/%d",
+		e.CountermeasureCount() != ontology.NCountermeasure ||
+		e.KEVCount() != ontology.NKEV || e.CWECount() != ontology.NCWE || e.ProductCount() != ontology.NProduct {
+		t.Fatalf("engine holds %d/%d/%d/%d/%d/%d nodes, want %d/%d/%d/%d/%d/%d",
 			e.TTPCount(), e.ArtifactCount(), e.CountermeasureCount(),
-			ontology.NTTP, ontology.NArtifact, ontology.NCountermeasure)
+			e.KEVCount(), e.CWECount(), e.ProductCount(),
+			ontology.NTTP, ontology.NArtifact, ontology.NCountermeasure,
+			ontology.NKEV, ontology.NCWE, ontology.NProduct)
 	}
 
 	out, stderr, status := runCase(t, e, "ttp", "T1003.001")
@@ -1106,25 +1111,40 @@ func TestOntologyValues(t *testing.T) {
 		count  int
 		first  string
 		last   string
+		// entries marks the rows whose nodes are KEV entries: their labels are
+		// CVE titles, which contain commas and quoted names, so the rows pin
+		// the first node and that every node is an entry.
+		entries bool
 	}{
 		{
 			"KEV entry with three weakness classes",
 			[]string{"kev", "CVE-2021-44228"},
 			`kev CVE-2021-44228 "Apache Log4j2 Remote Code Execution Vulnerability" added=2021-12-10 ransomware=true vendor="Apache" product="Log4j2"`,
-			"out weaknesses", 3, "CWE-20", "CWE-502",
+			"out weaknesses", 3, "CWE-20", "CWE-502", false,
 		},
 		{
 			"KEV entry with no weakness class",
 			[]string{"kev", "CVE-2002-0367"},
 			`kev CVE-2002-0367 "Microsoft Windows Privilege Escalation Vulnerability" added=2022-03-03 ransomware=false vendor="Microsoft" product="Windows"`,
-			"out weaknesses", 0, "", "",
+			"out weaknesses", 0, "", "", false,
 		},
-		{"weakness class", []string{"cwe", "CWE-78"}, "cwe CWE-78", "in entries", 110, "", ""},
-		{"one product", []string{"product", "Apache/Log4j2"}, "product Apache/Log4j2", "out entries", 2, "", ""},
+		{
+			"weakness class",
+			[]string{"cwe", "CWE-78"},
+			"cwe CWE-78", "in entries", 110,
+			`CVE-2014-6271 "GNU Bourne-Again Shell (Bash) Arbitrary Code Execution Vulnerability"`, "", true,
+		},
+		{
+			"one product",
+			[]string{"product", "Apache/Log4j2"},
+			"product Apache/Log4j2", "out entries", 2,
+			`CVE-2021-44228 "Apache Log4j2 Remote Code Execution Vulnerability"`, "", true,
+		},
 		{
 			"two products in one selection",
 			[]string{"product", "Apache/Log4j2", "Apache/Struts"},
-			"product Apache/Log4j2 Apache/Struts", "out entries", 8, "", "",
+			"product Apache/Log4j2 Apache/Struts", "out entries", 8,
+			`CVE-2013-2251 "Apache Struts Improper Input Validation Vulnerability"`, "", true,
 		},
 	}
 	for _, tt := range kevCommands {
@@ -1137,24 +1157,21 @@ func TestOntologyValues(t *testing.T) {
 				t.Errorf("header = %q, want %q", got, tt.header)
 			}
 			count, nodes := setLine(t, out, tt.set)
-			if count != tt.count {
-				t.Errorf("%s count = %d, want %d", tt.set, count, tt.count)
+			if count != tt.count || len(nodes) != tt.count {
+				t.Fatalf("%s = %d nodes/%d count, want %d", tt.set, len(nodes), count, tt.count)
 			}
-			// Only the weakness set is a list of bare ids: a CVE title may
-			// itself contain ", ", which setLine's comma split cannot tell from
-			// a node separator, so the entry lists are pinned by the fixture
-			// blocks (TestTextFixture) instead.
-			if tt.first == "" && tt.last == "" {
-				return
-			}
-			if len(nodes) != tt.count {
-				t.Fatalf("%s lists %d nodes, want %d", tt.set, len(nodes), tt.count)
-			}
-			if nodes[0] != tt.first {
+			if tt.first != "" && nodes[0] != tt.first {
 				t.Errorf("%s first = %q, want %q", tt.set, nodes[0], tt.first)
 			}
-			if nodes[len(nodes)-1] != tt.last {
+			if tt.last != "" && nodes[len(nodes)-1] != tt.last {
 				t.Errorf("%s last = %q, want %q", tt.set, nodes[len(nodes)-1], tt.last)
+			}
+			if tt.entries {
+				for _, node := range nodes {
+					if !strings.HasPrefix(node, "CVE-") {
+						t.Errorf("%s node %q is not a CVE id", tt.set, node)
+					}
+				}
 			}
 		})
 	}
@@ -1376,6 +1393,21 @@ func TestJSONWriteError(t *testing.T) {
 	e := fixtureEngine(t)
 	var stderr bytes.Buffer
 	status := run(e, []string{"-json", "ttp", "T1059"}, errWriter{}, &stderr)
+	if status != 1 {
+		t.Fatalf("status = %d, want 1", status)
+	}
+	if want := "gr4ph: " + errClosed.Error() + "\n"; stderr.String() != want {
+		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+	}
+}
+
+// TestTextWriteError pins the text branch of the same contract: writeText's
+// first error is reported verbatim on stderr and the status is 1, instead of a
+// full disk or a closed pipe exiting 0 silently.
+func TestTextWriteError(t *testing.T) {
+	e := fixtureEngine(t)
+	var stderr bytes.Buffer
+	status := run(e, []string{"ttp", "T1059"}, errWriter{}, &stderr)
 	if status != 1 {
 		t.Fatalf("status = %d, want 1", status)
 	}
@@ -1629,7 +1661,8 @@ func TestHelp(t *testing.T) {
 			for _, want := range []string{
 				"usage: gr4ph", "ttp <query>", "artifact <query>", "cm <query>",
 				"dc <query>", "group <query>", "tactic <ta-id>", "platform <name>", "rel <name>", "exit status: 0",
-				"coverage <cm>", "gain <cm>", "contain <ttp>",
+				"kev <query>", "cwe <query>", "product <v>/<name>",
+				"coverage [<cm>", "gain [<cm>", "contain <ttp>",
 			} {
 				if !strings.Contains(out, want) {
 					t.Errorf("usage does not mention %q", want)
@@ -1700,8 +1733,28 @@ func setLine(t *testing.T, out, want string) (int, []string) {
 		if list == "-" {
 			return count, nil
 		}
-		return count, strings.Split(list, ", ")
+		return count, splitNodes(list)
 	}
 	t.Fatalf("setLine: no %q line in output:\n%s", want, out)
 	return 0, nil
+}
+
+// splitNodes splits a node list on ", " outside quotes. A node label is quoted
+// and may itself contain ", " — CVE titles do ("Foo, Bar Vulnerability") — so a
+// plain comma split would report more nodes than the count says.
+func splitNodes(list string) []string {
+	var nodes []string
+	start, inQuote := 0, false
+	for i := range list {
+		switch list[i] {
+		case '"':
+			inQuote = !inQuote
+		case ',':
+			if !inQuote && i+1 < len(list) && list[i+1] == ' ' {
+				nodes = append(nodes, list[start:i])
+				start = i + 2
+			}
+		}
+	}
+	return append(nodes, list[start:])
 }

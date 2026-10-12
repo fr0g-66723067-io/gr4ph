@@ -183,35 +183,6 @@ func TestKernelPartContract(t *testing.T) {
 	}
 }
 
-// TestKernelAndNotRows pins andNotRowInto over rows below one vector, a whole
-// vector, and a vector plus a one-word tail, with the canaries outside the row.
-// One bit is cleared in the first word and one in the last, so both the vector
-// loop and the tail loop have a difference to carry.
-func TestKernelAndNotRows(t *testing.T) {
-	lanes := simd.VectorBitSize() / 64
-	for _, words := range []int{1, 2, lanes, lanes + 1} {
-		srcBuf := make([]uint64, words+2)
-		src := rowOf(srcBuf, words)
-		for i := range src {
-			src[i] = 1 << uint(i%64)
-		}
-		dstBuf := make([]uint64, words+2)
-		dst := rowOf(dstBuf, words)
-		for i := range dst {
-			dst[i] = ^uint64(0)
-		}
-		src[0], src[words-1] = 0, ^uint64(0)
-
-		andNotRowInto(dst, src)
-		for i := range dst {
-			if want := ^uint64(0) &^ src[i]; dst[i] != want {
-				t.Fatalf("andNotRowInto words=%d: dst[%d]=%x want %x", words, i, dst[i], want)
-			}
-		}
-		checkCanaries(t, "andNotRowInto", words, srcBuf, dstBuf)
-	}
-}
-
 // TestKernelOrSelectedRows pins orSelectedRowsInto: the union of the selected
 // block rows, a selection bit whose row lies past the end of block (ignored), a
 // stride wider than dst and a stride of 0 (both no-ops). The selection spans

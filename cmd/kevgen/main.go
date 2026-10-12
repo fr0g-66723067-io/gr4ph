@@ -11,18 +11,22 @@
 // When the fetched version differs from the pinned one this generator re-pins
 // its own sourceKEV and pinnedShape literals in place, emits with the freshly
 // measured counts and prints the one line that says so — the count pins in
-// ontology/ontology_test.go, cmd/gr4ph/main_test.go and README.md then fail
-// until they are re-measured, which is the forcing function. `-re-pin=false`
-// turns that into a hard error instead, and a count change under an unchanged
-// version is always an error: the version is the contract, the counts are the
+// ontology/ontology_test.go and cmd/gr4ph/main_test.go then fail until they are
+// re-measured, which is the forcing function. The README's own numbers are read
+// by no test: re-measure them by hand in the same pass. `-re-pin=false` turns
+// that into a hard error instead, and a count change under an unchanged version
+// is always an error: the version is the contract, the counts are the
 // measurement that keeps the emitted tables honest.
 //
-// Two ingestion rules keep the emitted dense ids equal to the ones the builder
-// assigns: entries are sorted by CVE id (the feed's own order is neither sorted
-// nor stable) and every ingested string is trimmed and lower-cased (the feed
-// carries surrounding whitespace on 27 names, 6 vendors and 13 products, and
-// three product names differ only in case; the ten product pairs that collapse
-// are why the pinned product count is 722 rather than the 732 raw spellings).
+// Three ingestion rules keep the emitted dense ids equal to the ones the builder
+// assigns: entries are sorted by normalised CVE id (the feed's own order is
+// neither sorted nor stable), every ingested string is trimmed and lower-cased
+// (the feed carries surrounding whitespace on 27 names, 6 vendors and 13
+// products, and three product names differ only in case; the ten product pairs
+// that collapse are why the pinned product count is 722 rather than the 732 raw
+// spellings), and every vocabulary and per-entry reference list is deduped on
+// that normalised key — one element per node the builder registers, so the
+// emitted arrays and the engine's partitions stay index for index.
 //
 //	go run ./cmd/kevgen -out ontology/kev_gen.go
 //	go run ./cmd/kevgen -kev /tmp/kev.json -out /tmp/kev_gen.go
@@ -61,6 +65,15 @@ func sourceFile() string {
 	name, _, _ := strings.Cut(sourceKEV, "@")
 	return name
 }
+
+// The two anchors re-pin rewrites, assembled rather than written out whole:
+// this file is the one it rewrites, so a marker written as a single literal
+// would occur twice in it (once at this definition, once at the anchor) and the
+// uniqueness check would refuse the generator's own source.
+const (
+	srcMarker   = "sourceKEV" + ` = "`
+	shapeMarker = "var pinnedShape" + " = shape{"
+)
 
 // maxNodes mirrors gr4ph.MaxNodes (the uint16 id space) without importing this
 // module: this package stays dependency-free, like cmd/d3fendgen.
@@ -125,7 +138,7 @@ func run(kevSrc, out string, w io.Writer, want shape, repin bool) error {
 		if err := repinFile(measured); err != nil {
 			return err
 		}
-		fmt.Fprintf(w, "kevgen: re-pinned %s@%s -> @%s (re-measure the count pins in ontology/ontology_test.go, cmd/gr4ph/main_test.go and README.md)\n",
+		fmt.Fprintf(w, "kevgen: re-pinned %s@%s -> @%s (re-measure the count pins in ontology/ontology_test.go and cmd/gr4ph/main_test.go, and the README's numbers by hand)\n",
 			sourceFile(), want.catalog, measured.catalog)
 		// The literals just became the measurement, so there is nothing left to
 		// compare the counts against: the suite's own pins are the gate.
@@ -202,7 +215,8 @@ type catalog struct {
 // indexes a key the way it looks it up (trimmed and lower-cased), so the raw
 // form would make a stored label render differently from the way it resolves —
 // and, for products, would give the generator ten more indices than the builder
-// has nodes (732 raw spellings, 722 keys).
+// has nodes (732 raw spellings, 722 keys). cwes holds the normalised keys of the
+// entry's references, deduped, which is what the builder resolves.
 type entry struct {
 	id, name, added string
 	ransom          bool
@@ -211,8 +225,8 @@ type entry struct {
 }
 
 // model is the parsed catalog as the dense ids the ontology registers: entries
-// sorted by CVE id, the CWE and product vocabularies sorted byte-wise, and the
-// weakness family as parallel index slices.
+// sorted by normalised CVE id, the CWE and product vocabularies sorted by
+// normalised key, and the weakness family as parallel index slices.
 type model struct {
 	catalog string
 
@@ -235,6 +249,9 @@ type model struct {
 // stable (it starts at CVE-2015-5477 while the sorted first id is CVE-2002-0367),
 // so sorting is what keeps `make gen` byte-identical across fetches, and the
 // sort order is the dense id order the emitted arrays and the builder share.
+// Every key is the builder's key — the id, the weakness and the product pair are
+// all sorted and deduped on the normalised (trimmed, lower-cased) form, so the
+// emitted arrays have one element per node the builder registers.
 func parse(data []byte) (*model, error) {
 	var c catalog
 	if err := json.Unmarshal(data, &c); err != nil {
@@ -248,6 +265,7 @@ func parse(data []byte) (*model, error) {
 	}
 
 	entries := make([]entry, 0, len(c.Vulnerabilities))
+	var cweSpellings []string
 	for i, v := range c.Vulnerabilities {
 		id := strings.TrimSpace(v.CVEID)
 		if id == "" {
@@ -257,31 +275,40 @@ func parse(data []byte) (*model, error) {
 		if vendor == "" || product == "" {
 			return nil, fmt.Errorf("entry %s has an empty vendor or product (%q/%q)", id, vendor, product)
 		}
+		cweSpellings = append(cweSpellings, trimmed(v.CWEs)...)
 		entries = append(entries, entry{
 			id:   id,
 			name: strings.TrimSpace(v.VulnerabilityName), added: strings.TrimSpace(v.DateAdded),
 			ransom: v.KnownRansomwareCampaignUse == "Known",
 			vendor: vendor, product: product,
-			cwes: sortedDedup(v.CWEs),
+			cwes: normalizedDedup(v.CWEs),
 		})
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].id < entries[j].id })
+	// The sort key is the normalised id, which is the key the builder registers:
+	// two spellings of one CVE are one node there, so they must be one entry
+	// here. The raw id breaks a tie, so the order is deterministic either way.
+	sort.Slice(entries, func(i, j int) bool {
+		ki, kj := normalize(entries[i].id), normalize(entries[j].id)
+		if ki != kj {
+			return ki < kj
+		}
+		return entries[i].id < entries[j].id
+	})
 	for i := 1; i < len(entries); i++ {
-		if entries[i].id == entries[i-1].id {
-			return nil, fmt.Errorf("duplicate cveID %s", entries[i].id)
+		if normalize(entries[i].id) == normalize(entries[i-1].id) {
+			return nil, fmt.Errorf("duplicate cveID %s (same normalised key as %s)", entries[i].id, entries[i-1].id)
 		}
 	}
 
-	// The weakness vocabulary, then the product vocabulary: both sorted, and
-	// both the dense id space the builder will assign in registration order.
-	var cwes []string
-	for _, e := range entries {
-		cwes = append(cwes, e.cwes...)
-	}
-	cweIDs := compactSorted(cwes)
+	// The weakness vocabulary, then the product vocabulary: both keyed the way
+	// the builder keys them (trim + lower), so each holds one element per node
+	// the builder registers and the dense ids line up. A vocabulary holding two
+	// spellings of one key would be one element longer than the engine's
+	// partition and shift every index after it.
+	cweIDs := compactKeys(cweSpellings)
 	cweIndex := make(map[string]int, len(cweIDs))
 	for i, w := range cweIDs {
-		cweIndex[w] = i
+		cweIndex[normalize(w)] = i
 	}
 
 	type product struct {
@@ -347,12 +374,26 @@ func normalize(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
 }
 
-// sortedDedup trims, drops the empty strings, sorts and dedups a vocabulary
-// slice, so one entry cannot claim the same weakness twice.
-func sortedDedup(vals []string) []string {
+// trimmed returns the trimmed non-empty values of vals, in order: the raw
+// spellings a vocabulary is built from.
+func trimmed(vals []string) []string {
 	out := make([]string, 0, len(vals))
 	for _, v := range vals {
 		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// normalizedDedup maps each value through normalize, drops the empty strings,
+// sorts and dedups, so one entry cannot emit two edges for one weakness class:
+// the builder registers one node per key, and two edges into one node would make
+// the emitted pair count exceed the matrix's popcount sum.
+func normalizedDedup(vals []string) []string {
+	out := make([]string, 0, len(vals))
+	for _, v := range vals {
+		if v = normalize(v); v != "" {
 			out = append(out, v)
 		}
 	}
@@ -360,10 +401,26 @@ func sortedDedup(vals []string) []string {
 	return slicesCompact(out)
 }
 
-// compactSorted dedups an already sorted slice in place.
-func compactSorted(vals []string) []string {
-	sort.Strings(vals)
-	return slicesCompact(vals)
+// compactKeys sorts vals in place by normalised key (the raw spelling as
+// tie-break) and keeps the byte-smallest raw spelling of each key: one element
+// per node the builder registers, holding the label that node stores, because
+// the first registration of a key is the one that names it.
+func compactKeys(vals []string) []string {
+	sort.Slice(vals, func(i, j int) bool {
+		ki, kj := normalize(vals[i]), normalize(vals[j])
+		if ki != kj {
+			return ki < kj
+		}
+		return vals[i] < vals[j]
+	})
+	out := make([]string, 0, len(vals))
+	for _, v := range vals {
+		if n := len(out); n > 0 && normalize(out[n-1]) == normalize(v) {
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
 }
 
 func slicesCompact(vals []string) []string {
@@ -558,7 +615,8 @@ func repinFile(measured shape) error {
 
 // repinPath rewrites the two literals in the generator source at path. Exactly
 // those two are replaced and format.Source normalises the result; the rest of
-// the file is untouched.
+// the file is untouched. Each anchor must occur exactly once, so a comment that
+// happens to carry a marker can never be rewritten instead of the literal.
 func repinPath(measured shape, path string) error {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -566,10 +624,9 @@ func repinPath(measured shape, path string) error {
 	}
 	s := string(raw)
 
-	srcMarker := `sourceKEV = "`
-	i := strings.Index(s, srcMarker)
-	if i < 0 {
-		return fmt.Errorf("re-pin: %q not found in %s", srcMarker, path)
+	i, err := uniqueIndex(s, srcMarker, path)
+	if err != nil {
+		return err
 	}
 	rest := s[i+len(srcMarker):]
 	end := strings.IndexByte(rest, '"')
@@ -578,10 +635,9 @@ func repinPath(measured shape, path string) error {
 	}
 	s = s[:i+len(srcMarker)] + sourceFile() + "@" + measured.catalog + rest[end:]
 
-	const shapeMarker = "var pinnedShape = shape{"
-	si := strings.Index(s, shapeMarker)
-	if si < 0 {
-		return fmt.Errorf("re-pin: %q not found in %s", shapeMarker, path)
+	si, err := uniqueIndex(s, shapeMarker, path)
+	if err != nil {
+		return err
 	}
 	se := strings.Index(s[si:], "\n}")
 	if se < 0 {
@@ -599,10 +655,24 @@ func repinPath(measured shape, path string) error {
 	return nil
 }
 
+// uniqueIndex returns the offset of the single occurrence of marker in s. A
+// missing marker and an ambiguous one are both errors: rewriting the wrong
+// occurrence would silently re-pin a comment instead of the literal.
+func uniqueIndex(s, marker, path string) (int, error) {
+	switch n := strings.Count(s, marker); {
+	case n == 0:
+		return 0, fmt.Errorf("re-pin: %q not found in %s", marker, path)
+	case n > 1:
+		return 0, fmt.Errorf("re-pin: %d occurrences of %q in %s, want exactly 1", n, marker, path)
+	}
+	return strings.Index(s, marker), nil
+}
+
 // renderShape renders the pinnedShape literal the re-pin writes, in the same
-// layout as the literal it replaces.
+// layout as the literal it replaces. It builds the literal from shapeMarker so
+// the anchor stays one occurrence in this file.
 func renderShape(sh shape) string {
-	return fmt.Sprintf("var pinnedShape = shape{\n\tcatalog: %q,\n\tentries: %d, cweEdges: %d, entriesWithCWE: %d, cwes: %d, products: %d, ransomware: %d,\n}",
+	return fmt.Sprintf(shapeMarker+"\n\tcatalog: %q,\n\tentries: %d, cweEdges: %d, entriesWithCWE: %d, cwes: %d, products: %d, ransomware: %d,\n}",
 		sh.catalog, sh.entries, sh.cweEdges, sh.entriesWithCWE, sh.cwes, sh.products, sh.ransomware)
 }
 

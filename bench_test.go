@@ -258,6 +258,20 @@ func BenchmarkCountermeasuresForObserved(b *testing.B) {
 	}
 }
 
+// BenchmarkTTPsMapped is the mapping range every coverage state is measured
+// against: the union of all 157 countermeasure rows, computed per call. There is
+// no input selection, so the cost is the whole block.
+func BenchmarkTTPsMapped(b *testing.B) {
+	e := benchEngine(b)
+	scratch := make([]uint64, e.WordsPerRow(KindTTP))
+	dst := make([]TTP, e.TTPCount())
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		sink += e.TTPsMapped(scratch, dst)
+	}
+}
+
 // kevEngine is a standalone KEV fixture, kept separate from the ATT&CK
 // fixtures so their stride contracts stay untouched. It registers the pinned
 // catalog's shape — 1739 entries, 189 weaknesses, 722 products (the 732 raw
@@ -355,6 +369,41 @@ func BenchmarkCWEsForKEV(b *testing.B) {
 	b.ResetTimer()
 	for i := range b.N {
 		sink += e.CWEsForKEV(KEV(i%1739), dst)
+	}
+}
+
+// BenchmarkKEVCWEDegree is the degree of one entry: a popcount over its 3-word
+// kevCWE row, with no destination to write.
+func BenchmarkKEVCWEDegree(b *testing.B) {
+	e := kevEngine(b)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := range b.N {
+		sink += e.KEVCWEDegree(KEV(i % 1739))
+	}
+}
+
+// BenchmarkKEVsForCWE is the single-class read: the entries of one weakness,
+// i.e. one 28-word cweKEV row enumerated. It is the sibling of CWEsForKEV.
+func BenchmarkKEVsForCWE(b *testing.B) {
+	e := kevEngine(b)
+	dst := make([]KEV, e.KEVCount())
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := range b.N {
+		sink += e.KEVsForCWE(CWE(i%189), dst)
+	}
+}
+
+// BenchmarkProductsForKEV is the product read of one entry: one 12-word
+// kevProduct row enumerated.
+func BenchmarkProductsForKEV(b *testing.B) {
+	e := kevEngine(b)
+	dst := make([]Product, e.ProductCount())
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := range b.N {
+		sink += e.ProductsForKEV(KEV(i%1739), dst)
 	}
 }
 

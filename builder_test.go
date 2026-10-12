@@ -745,6 +745,14 @@ func TestLayoutMatchesReadme(t *testing.T) {
 			t.Fatalf("AddKEV #%d: %v", i, err)
 		}
 	}
+	// Every entry names exactly one product: Build rejects a graph that leaves
+	// one without (ErrKEVWithoutProduct). The edges only set bits, so every
+	// word count pinned below is unchanged.
+	for i := range 1739 {
+		if err := b.AddKEVProductEdge(KEV(i), Product(i%722)); err != nil {
+			t.Fatalf("AddKEVProductEdge #%d: %v", i, err)
+		}
+	}
 	if err := b.AddEdge(TTP(0), Artifact(0), Rel(1)); err != nil {
 		t.Fatalf("AddEdge: %v", err)
 	}

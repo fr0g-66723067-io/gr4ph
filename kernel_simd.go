@@ -18,12 +18,12 @@ var wordsPerVector = simd.VectorBitSize() / 64
 // else goes through these three kernels, so a portable scalar fallback would be
 // a drop-in replacement (see README "Build requirement").
 //
-// The four row kernels — orRowInto, andRowInto, andNotRowInto and copyRow —
-// require len(dst) == len(src) and operate on whole rows; orSelectedRowsInto
-// slices rows out of a block by stride and delegates each one to orRowInto.
-// Rows are exact-length (stride words, no padding), so the loops below are
-// uniform for every row length: whole vectors go through LoadUint64s/Store and
-// the tail (up to wordsPerVector-1 words) is handled scalar.
+// The three row kernels — orRowInto, andRowInto and copyRow — require
+// len(dst) == len(src) and operate on whole rows; orSelectedRowsInto slices
+// rows out of a block by stride and delegates each one to orRowInto. Rows are
+// exact-length (stride words, no padding), so the loops below are uniform for
+// every row length: whole vectors go through LoadUint64s/Store and the tail
+// (up to wordsPerVector-1 words) is handled scalar.
 //
 // The partial helpers LoadUint64sPart/StorePart are deliberately not used. The
 // count LoadUint64sPart reports differs between implementations —
@@ -66,19 +66,6 @@ func copyRow(dst, src []uint64) {
 	}
 	for ; pos < len(dst); pos++ {
 		dst[pos] = src[pos]
-	}
-}
-
-// andNotRowInto computes dst[i] &^= src[i] for every i.
-func andNotRowInto(dst, src []uint64) {
-	pos := 0
-	for ; pos+wordsPerVector <= len(dst); pos += wordsPerVector {
-		a := simd.LoadUint64s(dst[pos:])
-		b := simd.LoadUint64s(src[pos:])
-		a.AndNot(b).Store(dst[pos:])
-	}
-	for ; pos < len(dst); pos++ {
-		dst[pos] &^= src[pos]
 	}
 }
 

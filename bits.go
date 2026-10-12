@@ -37,6 +37,16 @@ func eachBit(row []uint64, f func(i int) bool) {
 	}
 }
 
+// maskTail clears the bits at and beyond n in the last word of row, which is
+// where a row sized for n can hold them. A selection may be wider than the live
+// range (checkSelection only sets a lower bound), and an out-of-range bit must
+// select nothing rather than enumerate a phantom id.
+func maskTail(row []uint64, n int) {
+	if rem := n & 63; rem != 0 && len(row) > 0 {
+		row[len(row)-1] &= 1<<uint(rem) - 1
+	}
+}
+
 // popcountRow returns the number of set bits in row.
 func popcountRow(row []uint64) int {
 	n := 0

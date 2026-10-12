@@ -44,29 +44,25 @@ const usage = `usage: gr4ph <command> [flags] <query> [<query>...]
   product <v>/<name> resolve a vendor/product pair; list the entries filed under it
   rel <name>         resolve a relation name; report its plane, edge count and source
                      count in each family it belongs to
-  coverage <cm>...   resolve countermeasures as the deployed set; classify every technique as
+  coverage [<cm>...] resolve countermeasures as the deployed set; classify every technique as
                      defended, undefended (mapped but uncovered) or unmapped
-  gain <cm>...       resolve countermeasures as the deployed set; rank candidates by the techniques
+  gain [<cm>...]     resolve countermeasures as the deployed set; rank candidates by the techniques
                      they would newly cover
   contain <ttp>...   resolve techniques as the observed set; list the countermeasures that touch any
                      of them
   help               print this message
 
-flags (before or after the queries; -json may also precede the command):
+flags (before or after the queries; -json may also precede the command, and every
+command accepts it):
   -json              emit one JSON object per resolved query instead of text
   ttp:      -rel <name>        offensive relation plane (default any)
   artifact: -rel <name>        offensive relation plane for the technique sets (default any)
             -defrel <name>     defensive relation plane for the countermeasure set (default any)
   cm:       -defrel <name>     defensive relation plane for the artifact set (default any)
   rel:      -family <off|def>  restrict the family (default: both)
-  kev:      (no flags)
-  cwe:      (no flags)
-  product:  (no flags)
-  coverage: (no flags)
   gain:     -top <n>           how many candidates to rank (default 10)
             -all               every candidate with a non-zero gain
             -greedy            the successive maximum-gain sequence instead of a ranking
-  contain:  (no flags)
 
 examples:
   gr4ph ttp 'lsass memory'                 an alert string, not an id
@@ -1156,9 +1152,15 @@ func finish(stdout, stderr io.Writer, results []result, failures []string, asJSO
 		}
 	} else {
 		for i, res := range results {
-			writeText(stdout, res)
+			if err := writeText(stdout, res); err != nil {
+				fmt.Fprintf(stderr, "gr4ph: %v\n", err)
+				return 1
+			}
 			if i < len(results)-1 {
-				fmt.Fprintln(stdout)
+				if _, err := fmt.Fprintln(stdout); err != nil {
+					fmt.Fprintf(stderr, "gr4ph: %v\n", err)
+					return 1
+				}
 			}
 		}
 	}
@@ -1171,49 +1173,72 @@ func finish(stdout, stderr io.Writer, results []result, failures []string, asJSO
 	return status
 }
 
+// errRecorder passes writes through and keeps the first error, so writeText's
+// block of formatted lines needs one check instead of one per line. After an
+// error it reports success, so a dead stream is not written to again.
+type errRecorder struct {
+	w   io.Writer
+	err error
+}
+
+func (r *errRecorder) Write(p []byte) (int, error) {
+	if r.err != nil {
+		return len(p), nil
+	}
+	n, err := r.w.Write(p)
+	if err != nil {
+		r.err = err
+	}
+	return n, err
+}
+
 // writeText writes one block: a header line, then one line per set or plane.
-func writeText(w io.Writer, res result) {
+// It returns the first write error, so a full disk or a closed pipe is not
+// reported as success.
+func writeText(w io.Writer, res result) error {
+	rec := &errRecorder{w: w}
 	switch res.Kind {
 	case "ttp":
-		fmt.Fprintf(w, "ttp %s%s domain=%s%s children=%d%s%s%s%s\n",
+		fmt.Fprintf(rec, "ttp %s%s domain=%s%s children=%d%s%s%s%s\n",
 			res.Name, quoted(res.Label), res.Domain, parentPart(res.Parent), *res.Children,
 			revokedPart(res.Revoked), subTechniquePart(res.SubTechnique),
 			tacticsPart(res.Tactics), platformsPart(res.Platforms))
 	case "group":
-		fmt.Fprintf(w, "group %s%s kind=%s\n", res.Name, quoted(res.Label), res.GroupKind)
+		fmt.Fprintf(rec, "group %s%s kind=%s\n", res.Name, quoted(res.Label), res.GroupKind)
 	case "kev":
-		fmt.Fprintf(w, "kev %s%s added=%s ransomware=%t vendor=%q product=%q\n",
+		fmt.Fprintf(rec, "kev %s%s added=%s ransomware=%t vendor=%q product=%q\n",
 			res.Name, quoted(res.Label), res.Added, res.Ransomware, res.Vendor, res.Product)
 	case "coverage":
-		fmt.Fprintf(w, "coverage deployed=%d mapped=%d\n", *res.Deployed, *res.Mapped)
+		fmt.Fprintf(rec, "coverage deployed=%d mapped=%d\n", *res.Deployed, *res.Mapped)
 	case "gain":
 		if res.Greedy != nil {
-			fmt.Fprintf(w, "gain deployed=%d greedy=%d\n", *res.Deployed, *res.Greedy)
+			fmt.Fprintf(rec, "gain deployed=%d greedy=%d\n", *res.Deployed, *res.Greedy)
 		} else {
-			fmt.Fprintf(w, "gain deployed=%d candidates=%d shown=%d\n", *res.Deployed, *res.Candidates, len(res.Gains))
+			fmt.Fprintf(rec, "gain deployed=%d candidates=%d shown=%d\n", *res.Deployed, *res.Candidates, len(res.Gains))
 		}
 		for _, g := range res.Gains {
-			fmt.Fprintf(w, "  %d  %s%s\n", g.Gain, g.Name, quoted(g.Label))
+			fmt.Fprintf(rec, "  %d  %s%s\n", g.Gain, g.Name, quoted(g.Label))
 		}
-		return
+		return rec.err
 	case "contain":
-		fmt.Fprintf(w, "contain observed=%d\n", *res.Observed)
+		fmt.Fprintf(rec, "contain observed=%d\n", *res.Observed)
 	case "rel":
 		for _, p := range res.Planes {
 			from, to := "technique", "artifact"
 			if p.Family == "defensive" {
 				from, to = "countermeasure", "artifact"
 			}
-			fmt.Fprintf(w, "rel %s %s %splane %d/%d (%s -> %s): edges=%d sources=%d\n",
+			fmt.Fprintf(rec, "rel %s %s %splane %d/%d (%s -> %s): edges=%d sources=%d\n",
 				res.Name, p.Family, unionPart(p.ID), p.ID, p.Count, from, to, p.Edges, p.Sources)
 		}
-		return
+		return rec.err
 	default:
-		fmt.Fprintf(w, "%s %s%s\n", res.Kind, res.Name, quoted(res.Label))
+		fmt.Fprintf(rec, "%s %s%s\n", res.Kind, res.Name, quoted(res.Label))
 	}
 	for _, s := range res.Sets {
-		fmt.Fprintf(w, "  %-4s%s (%d): %s\n", s.Dir, s.Name, s.Count, nodeList(s.Nodes))
+		fmt.Fprintf(rec, "  %-4s%s (%d): %s\n", s.Dir, s.Name, s.Count, nodeList(s.Nodes))
 	}
+	return rec.err
 }
 
 // writeJSON writes res as one JSON object on one line.

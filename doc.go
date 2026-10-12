@@ -3,9 +3,10 @@
 // Package gr4ph is a SIMD bitmatrix engine over MITRE ATT&CK (enterprise, ICS,
 // mobile) and D3FEND.
 //
-// It flattens five node partitions — techniques (TTPs, including every
-// sub-technique), artifacts, countermeasures, data components (DC) and grouping
-// nodes (actors G, software S, campaigns C) — into a frozen set of
+// It flattens seven node partitions — techniques (TTPs, including every
+// sub-technique), artifacts, countermeasures, data components (DC), grouping
+// nodes (actors G, software S, campaigns C), KEV entries (CVE ids) and the
+// weakness and product vocabularies the catalog names — into a frozen set of
 // structure-of-arrays bitmatrix planes, plus the per-technique ATT&CK attribute
 // masks (tactics, platforms, sub-technique flag). Every directed relation is
 // materialised in both directions, so a traversal is a row fetch plus vector
@@ -16,10 +17,11 @@
 //
 // The engine is built on Go 1.27's experimental simd package, whose files are
 // all gated behind the goexperiment.simd build tag. Every file in this module
-// (except cmd/d3fendgen, internal/simdcheck and internal/hotmethods) carries the
-// same tag, so a stock build fails with the explicit constraint error rather
-// than undefined-symbol noise; internal/simdcheck makes that true for ./... too,
-// which would otherwise skip every gated package and report success:
+// (except cmd/d3fendgen, cmd/kevgen, internal/simdcheck and internal/hotmethods)
+// carries the same tag, so a stock build fails with the explicit constraint
+// error rather than undefined-symbol noise; internal/simdcheck makes that true
+// for ./... too, which would otherwise skip every gated package and report
+// success:
 //
 //	GOEXPERIMENT=simd go build ./...
 //
@@ -29,11 +31,11 @@
 // # Hot path vs cold path
 //
 // Hot-path methods take and return only uint16-derived ids (TTP, Artifact,
-// Countermeasure, DataComponent, Group) or one-word attribute masks, and never
-// allocate: callers supply dst slices for results and a scratch row for
-// set/roll-up operations. Strings appear only in the cold path — building the
-// graph, and formatting ids back into log lines (Incident, TTPName, TTPLabel,
-// Response, ...).
+// Countermeasure, DataComponent, Group, KEV, CWE, Product) or one-word attribute
+// masks, and never allocate: callers supply dst slices for results and a scratch
+// row for set/roll-up operations. Strings appear only in the cold path —
+// building the graph, and formatting ids back into log lines (Incident, TTPName,
+// TTPLabel, Response, ...).
 //
 // # Relations
 //
@@ -52,6 +54,8 @@
 //	dcTTP  / ttpDC         data component -> technique   (detects)
 //	grpTTP / ttpGrp        grouping node -> technique    (uses)
 //	grpSoftware / softwareGrp  grouping node -> software (uses)
+//	kevCWE / cweKEV        KEV entry -> weakness         (the catalog's cwes)
+//	kevProduct / productKEV  KEV entry -> product        (the entry's vendor/product)
 //
 // ttpFlags is the per-technique attribute column; Build derives the
 // sub-technique bit from the hierarchy, so it cannot disagree with it.

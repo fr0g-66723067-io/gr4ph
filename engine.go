@@ -576,15 +576,11 @@ func (e *Engine) KEVProduct(k KEV) string {
 	return e.productNames[e.kevProductID(k)]
 }
 
-// kevProductID returns the product id of entry k. Every entry names exactly one
-// product, so the row holds one set bit; a builder that registered an entry
-// without a product edge would read product 0, which the ontology's generator
-// cannot produce.
+// kevProductID returns the product id of entry k, which Build guarantees to
+// exist: every entry names exactly one product (ErrKEVWithoutProduct), so the
+// row holds exactly one set bit.
 func (e *Engine) kevProductID(k KEV) Product {
 	p := Product(0)
-	if e.wProduct == 0 {
-		return 0
-	}
 	eachBit(e.row(e.kevProduct, e.kevProductOff(k), e.wProduct), func(i int) bool {
 		p = Product(i)
 		return false
@@ -1076,7 +1072,9 @@ func (e *Engine) TTPsCovered(sel Selection, scratch []uint64, dst []TTP) int {
 
 // TTPsBlind writes the techniques that are active and not covered: active &^
 // covered, i.e. the blind spots of a deployed set. Both selections are
-// caller-owned; active is over techniques, sel over countermeasures.
+// caller-owned; active is over techniques, sel over countermeasures. active is
+// a selection like any other, so a bit past the technique range selects nothing
+// rather than inventing an id.
 // Results are truncated to len(dst) and the return value is the total number
 // of matches.
 func (e *Engine) TTPsBlind(active Selection, sel Selection, scratch []uint64, dst []TTP) int {
@@ -1092,6 +1090,10 @@ func (e *Engine) TTPsBlind(active Selection, sel Selection, scratch []uint64, ds
 	for i := range row {
 		row[i] = active[i] &^ row[i]
 	}
+	// The active side is the only direct-enumeration path in the overlay, so it
+	// is the one that must mask its own tail: the covered side is a selection
+	// walked through orSelectedRowsInto, which ignores a row past the block.
+	maskTail(row, e.nTTP)
 	return enumerate(row, dst)
 }
 

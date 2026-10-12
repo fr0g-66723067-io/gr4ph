@@ -185,6 +185,13 @@ var (
 	ErrUnknownCWE = errors.New("gr4ph: unknown cwe id")
 	// ErrUnknownProduct: the product id was never registered.
 	ErrUnknownProduct = errors.New("gr4ph: unknown product id")
+	// ErrKEVWithoutProduct: a KEV entry names no product. Every entry names
+	// exactly one, which is what KEVVendor and KEVProduct read.
+	ErrKEVWithoutProduct = errors.New("gr4ph: kev entry without a product")
+	// ErrKEVMultipleProducts: a KEV entry names more than one product, so
+	// KEVVendor/KEVProduct (the lowest bit) and ProductsForKEV (every bit)
+	// would disagree.
+	ErrKEVMultipleProducts = errors.New("gr4ph: kev entry with multiple products")
 )
 
 // Builder accumulates the cold-path graph: node keys (id, label, aliases),
@@ -1066,6 +1073,18 @@ func (b *Builder) Build() (*Engine, error) {
 		k, p := KEV(b.kevProductKEV[i]), Product(b.kevProduct[i])
 		setBit(e.kevProduct[e.kevProductOff(k):], int(p))
 		setBit(e.productKEV[e.productKEVOff(p):], int(k))
+	}
+
+	// The one-product-per-entry invariant the KEV accessors read: an entry with
+	// no product (or more than one) is rejected here rather than answered
+	// wrongly.
+	for k := range e.nKEV {
+		switch n := popcountRow(e.row(e.kevProduct, e.kevProductOff(KEV(k)), e.wProduct)); {
+		case n == 0:
+			return nil, ErrKEVWithoutProduct
+		case n > 1:
+			return nil, ErrKEVMultipleProducts
+		}
 	}
 
 	// The sub-technique flag is derived from the hierarchy, the only source of

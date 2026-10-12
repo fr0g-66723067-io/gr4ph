@@ -214,7 +214,7 @@ echo '--- ./gr4ph contain T1003.001'
 
 echo
 echo '==============================================================================='
-echo 'Vulnerability — an exploited CVE and the weakness class it belongs to'
+echo 'Vulnerability — an exploited CVE, its weakness class and its product'
 echo '==============================================================================='
 
 echo
@@ -224,3 +224,7 @@ echo '--- ./gr4ph kev CVE-2021-44228'
 echo
 echo '--- ./gr4ph cwe CWE-78'
 ./gr4ph cwe CWE-78                    # the entries filed under one weakness class
+
+echo
+echo '--- ./gr4ph product Apache/Log4j2'
+./gr4ph product Apache/Log4j2          # the entries filed under one vendor product

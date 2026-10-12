@@ -2,7 +2,10 @@
 
 package gr4ph
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 // The KEV partition on the synthetic fixture (engine_test.go): entry 0
 // (CVE-2099-0001) names CWE-20 and CWE-502 and is about Avendor/Alpha, entry 1
@@ -304,4 +307,65 @@ func TestKEVGuards(t *testing.T) {
 	mustPanic(t, "KEVVendor out of range", "gr4ph: kev out of range", func() {
 		e.KEVVendor(KEV(99))
 	})
+}
+
+// TestBuildRejectsKEVProductCardinality pins the one-product-per-entry
+// invariant: KEVVendor and KEVProduct read a single bit, so a graph that leaves
+// an entry without a product (or gives it two) is rejected at build time
+// instead of answered wrongly.
+func TestBuildRejectsKEVProductCardinality(t *testing.T) {
+	addKEV := func(t *testing.T, b *Builder) KEV {
+		t.Helper()
+		k, err := b.AddKEV("CVE-2099-0001", "Alpha Flaw", "2099-01-01", false)
+		if err != nil {
+			t.Fatalf("AddKEV: %v", err)
+		}
+		return k
+	}
+	addProduct := func(t *testing.T, b *Builder, vendor, name string) Product {
+		t.Helper()
+		p, err := b.AddProduct(vendor, name)
+		if err != nil {
+			t.Fatalf("AddProduct(%s/%s): %v", vendor, name, err)
+		}
+		return p
+	}
+
+	for _, c := range []struct {
+		name string
+		add  func(t *testing.T, b *Builder)
+		want error
+	}{
+		{"entry with no product registered", func(t *testing.T, b *Builder) {
+			addKEV(t, b)
+		}, ErrKEVWithoutProduct},
+		{"entry whose product row is empty", func(t *testing.T, b *Builder) {
+			addKEV(t, b)
+			addProduct(t, b, "Avendor", "Alpha")
+		}, ErrKEVWithoutProduct},
+		{"entry with two products", func(t *testing.T, b *Builder) {
+			k := addKEV(t, b)
+			for _, p := range []Product{
+				addProduct(t, b, "Avendor", "Alpha"),
+				addProduct(t, b, "Bvendor", "Beta"),
+			} {
+				if err := b.AddKEVProductEdge(k, p); err != nil {
+					t.Fatalf("AddKEVProductEdge: %v", err)
+				}
+			}
+		}, ErrKEVMultipleProducts},
+	} {
+		b := NewBuilder()
+		c.add(t, b)
+		if _, err := b.Build(); !errors.Is(err, c.want) {
+			t.Errorf("%s: Build error = %v, want %v", c.name, err, c.want)
+		}
+	}
+
+	// Positive control: the fixture gives every entry exactly one product, so it
+	// builds and the accessor answers with that product's vendor.
+	e := buildSynthetic(t)
+	if got := e.KEVVendor(0); got != "Avendor" {
+		t.Errorf("KEVVendor(0) = %q, want %q", got, "Avendor")
+	}
 }
