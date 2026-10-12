@@ -211,3 +211,16 @@ echo '--- ./gr4ph gain -greedy ContentQuarantine'
 echo
 echo '--- ./gr4ph contain T1003.001'
 ./gr4ph contain T1003.001              # the countermeasures that touch an observed technique
+
+echo
+echo '==============================================================================='
+echo 'Vulnerability — an exploited CVE and the weakness class it belongs to'
+echo '==============================================================================='
+
+echo
+echo '--- ./gr4ph kev CVE-2021-44228'
+./gr4ph kev CVE-2021-44228            # the catalog's own columns, and the weakness classes it names
+
+echo
+echo '--- ./gr4ph cwe CWE-78'
+./gr4ph cwe CWE-78                    # the entries filed under one weakness class

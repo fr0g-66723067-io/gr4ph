@@ -1,8 +1,10 @@
 # gr4ph
 
-A SIMD bitmatrix engine over **MITRE ATT&CK** (enterprise, ICS, mobile) crossed with **D3FEND**:
-five node partitions — techniques (TTPs, sub-techniques included), artifacts, countermeasures, data
-components (DC) and grouping nodes (actors G, software S, campaigns C) — flattened into a frozen set of
+A SIMD bitmatrix engine over **MITRE ATT&CK** (enterprise, ICS, mobile) crossed with **D3FEND** and the
+**CISA Known Exploited Vulnerabilities** catalog: seven node partitions — techniques (TTPs,
+sub-techniques included), artifacts, countermeasures, data components (DC), grouping nodes (actors G,
+software S, campaigns C), KEV entries (CVE ids) and the weakness and product vocabularies the catalog
+names — flattened into a frozen set of
 structure-of-arrays bitmatrix planes, plus the per-technique ATT&CK attribute masks (tactics, platforms,
 sub-technique flag).
 
@@ -15,19 +17,21 @@ techniques that touch it".
 
 * Go 1.27, **standard library only** (no third-party dependencies).
 * Hot path takes and returns `uint16`-derived ids (`TTP`, `Artifact`, `Countermeasure`, `DataComponent`,
-  `Group`) or one-word attribute masks, and allocates **nothing** — callers own `dst` and `scratch`.
+  `Group`, `KEV`, `CWE`, `Product`) or one-word attribute masks, and allocates **nothing** — callers own
+  `dst` and `scratch`.
 * Strings live only in the cold path: building the graph and formatting ids back into log lines.
 
 ## Build requirement
 
 The engine is built on Go 1.27's experimental `simd` package, whose files are all gated behind the
-`goexperiment.simd` build tag. Every file here (except `cmd/d3fendgen`, `internal/simdcheck` and
-`internal/hotmethods`) carries the same tag, so `GOEXPERIMENT=simd` is required for the library. On a
+`goexperiment.simd` build tag. Every file here (except `cmd/d3fendgen`, `cmd/kevgen`,
+`internal/simdcheck` and `internal/hotmethods`) carries the same tag, so `GOEXPERIMENT=simd` is required
+for the library. On a
 stock toolchain
 `go build .` fails with `build constraints exclude all Go files`, and `internal/simdcheck` makes
 `go build ./...` / `go test ./...` fail the same way — without it they would silently skip every gated
-package and report success while testing nothing. `go test ./cmd/d3fendgen` works without the
-experiment.
+package and report success while testing nothing. `go test ./cmd/d3fendgen ./cmd/kevgen` works without
+the experiment.
 
 ```sh
 GOEXPERIMENT=simd go build ./...     # the Makefile exports this for every target except `make stock`, which unsets it
@@ -81,8 +85,9 @@ runs both flows against the real tables.
 
 `cmd/gr4ph` answers lookup questions over the frozen tables from a shell: a cold key — technique
 id, label or alias; artifact name or label; countermeasure id, label or alias; data component id or
-label; grouping-node id or label; ATT&CK tactic id; platform name; relation name — resolves to its
-dense id, and every relation of that node is printed in both directions. A grouping label shared by
+label; grouping-node id or label; ATT&CK tactic id; platform name; CVE id; weakness id; vendor/product
+pair; relation name — resolves to its dense id, and every relation of that node is printed in both
+directions. A grouping label shared by
 two nodes (12 in 19.2, always across kinds: `Frankenstein` is the campaign `C0001` and the actor
 `G0101`) resolves to the byte-smallest id, and the printed header names the node that resolved.
 
@@ -104,6 +109,9 @@ for the library. Flags may precede or follow the queries (`-json` may also prece
 | `group` | grouping-node id (`G0007`, `S0002`, `C0001`) or label | `-json` | `out techniques`, `out software`, `in groups` |
 | `tactic` | ATT&CK tactic id (`TA0005`) | `-json` | `out techniques` |
 | `platform` | platform name (`Windows`) | `-json` | `out techniques` |
+| `kev` | CVE id (`CVE-2021-44228`) | `-json` | `out weaknesses` |
+| `cwe` | weakness id (`CWE-78`) | `-json` | `in entries` |
+| `product` | vendor/product pair (`Apache/Log4j2`) | `-json` | `out entries` |
 | `rel` | relation name | `-family <off\|def>`, `-json` | one line per family the name is registered in: plane id, distinct edges, sources |
 | `coverage` | countermeasure id, label or alias, or none (`coverage`) | `-json` | `in defended`, `in undefended`, `in unmapped` |
 | `gain` | countermeasure id, label or alias, or none (`gain`) | `-top <n>`, `-all`, `-greedy`, `-json` | one line per candidate: its gain, id and label |
@@ -115,7 +123,12 @@ direct sub-techniques). `artifact` prints the techniques that touch it and the c
 it, directly and via those techniques. `cm` prints the artifacts and techniques a countermeasure covers.
 `dc`, `group`, `tactic` and `platform` answer the two new partitions and the attribute vocabularies in
 the reverse direction: the techniques a data component detects, the techniques and software a grouping
-node uses plus who uses it, and the techniques of one tactic or platform. `rel` walks a plane instead of
+node uses plus who uses it, and the techniques of one tactic or platform. `kev`, `cwe` and `product`
+answer the vulnerability family: one catalog entry with its own columns and the weakness classes it
+names, the entries of one weakness class, and — like `coverage` and `gain`, which turn several
+countermeasures into one deployment — the union of the entries filed under any of the products a
+selection names, so `product Apache/Log4j2 Apache/Struts` is the inventory question "which exploited
+vulnerabilities are in the software we run?". `rel` walks a plane instead of
 a node. `-rel` (default `any`, the union plane) picks the offensive plane of `ttp`'s `out
 artifacts` and `artifact`'s `in techniques`; `-defrel` picks the defensive plane of `artifact`'s
 `in countermeasures` and `cm`'s `out artifacts`. Every set whose label carries no `(rel
@@ -123,7 +136,7 @@ artifacts` and `artifact`'s `in techniques`; `-defrel` picks the defensive plane
 rollup`, `in data components`, `in data components rollup` and `in groups`; on `artifact`: `in
 countermeasures viaTTPs` (the direct links unioned with the links of the techniques touching the
 artifact); on `cm`: `out techniques` and `out techniques rollup`. The four new commands take no
-relation flag, so every set they print is unfiltered. Relations exist in the two families
+relation flag, so every set they print is unfiltered, and neither do `kev`, `cwe` and `product`. Relations exist in the two families
 independently — 11 names, `blocks` among them, are registered in both — so `rel` prints one line
 per family and `-family` narrows it. A technique ATT&CK has revoked or deprecated prints `
 revoked=true` in
@@ -317,10 +330,32 @@ contain observed=1
   out countermeasures (12): Application-basedProcessIsolation "Application-based Process Isolation", Hardware-basedProcessIsolation "Hardware-based Process Isolation", HostReboot "Host Reboot", HostShutdown "Host Shutdown", Kernel-basedProcessIsolation "Kernel-based Process Isolation", ProcessLineageAnalysis "Process Lineage Analysis", ProcessSelf-ModificationDetection "Process Self-Modification Detection", ProcessSpawnAnalysis "Process Spawn Analysis", ProcessSuspension "Process Suspension", ProcessTermination "Process Termination", SystemCallFiltering "System Call Filtering", WebSessionAccessMediation "Web Session Access Mediation"
 ```
 
+### KEV, weaknesses and products
+
+The three vulnerability commands answer from the CISA Known Exploited Vulnerabilities catalog the
+engine carries beside ATT&CK and D3FEND: `kev` prints one entry's own columns — the date CISA added it
+and whether it is linked to a ransomware campaign — plus the weakness classes it is filed under, `cwe`
+the entries of one class, and `product` the union of the entries filed under any of the products a
+selection names. The two families are the `kevCWE`/`cweKEV` matrix and the `kevProduct`/`productKEV`
+one, which holds exactly one edge per entry; the CVE id is the only key, because vulnerability titles
+repeat across entries, so a title never resolves.
+
+```sh
+$ ./gr4ph kev CVE-2021-44228
+kev CVE-2021-44228 "Apache Log4j2 Remote Code Execution Vulnerability" added=2021-12-10 ransomware=true vendor="Apache" product="Log4j2"
+  out weaknesses (3): CWE-20, CWE-400, CWE-502
+$ ./gr4ph cwe CWE-78
+cwe CWE-78
+  in  entries (110): CVE-2014-6271 "GNU Bourne-Again Shell (Bash) Arbitrary Code Execution Vulnerability", CVE-2014-6278 "GNU Bash OS Command Injection Vulnerability", CVE-2014-7169 "GNU Bourne-Again Shell (Bash) Arbitrary Code Execution Vulnerability", CVE-2016-11021 "D-Link DCS-930L Devices OS Command Injection Vulnerability", CVE-2017-18368 "Zyxel P660HN-T1A Routers Command Injection Vulnerability", CVE-2017-3506 "Oracle WebLogic Server OS Command Injection Vulnerability", CVE-2017-6077 "NETGEAR DGN2200 Remote Code Execution Vulnerability", CVE-2017-6334 "NETGEAR DGN2200 Devices OS Command Injection Vulnerability", CVE-2017-6884 "Zyxel EMG2926 Routers Command Injection Vulnerability", CVE-2018-10562 "Dasan GPON Routers Command Injection Vulnerability", CVE-2018-11138 "Quest KACE System Management Appliance Remote Command Execution Vulnerability", CVE-2018-14558 "Tenda AC7, AC9, and AC10 Routers Command Injection Vulnerability", CVE-2018-14839 "LG N1A1 NAS Remote Command Execution Vulnerability", CVE-2018-14933 "NUUO NVRmini Devices OS Command Injection Vulnerability", CVE-2018-19949 "QNAP NAS File Station Command Injection Vulnerability", CVE-2018-6530 "D-Link Multiple Routers OS Command Injection Vulnerability", CVE-2018-6961 "VMware SD-WAN Edge by VeloCloud Command Injection Vulnerability", CVE-2018-9276 "Paessler PRTG Network Monitor OS Command Injection Vulnerability", CVE-2019-10149 "Exim Mail Transfer Agent (MTA) Improper Input Validation", CVE-2019-11001 "Reolink Multiple IP Cameras OS Command Injection Vulnerability", CVE-2019-11539 "Ivanti Pulse Connect Secure and Policy Secure Command Injection Vulnerability", CVE-2019-12991 "Citrix SD-WAN and NetScaler Command Injection Vulnerability", CVE-2019-15107 "Webmin Command Injection Vulnerability", CVE-2019-15949 "Nagios XI Remote Code Execution Vulnerability", CVE-2019-16057 "D-Link DNS-320 Remote Code Execution Vulnerability", CVE-2019-16920 "D-Link Multiple Routers Command Injection Vulnerability", CVE-2019-17621 "D-Link DIR-859 Router Command Execution Vulnerability", CVE-2019-19356 "Netis WF2419 Devices Remote Code Execution Vulnerability", CVE-2019-20500 "D-Link DWL-2600AP Access Point Command Injection Vulnerability", CVE-2019-7256 "Nice Linear eMerge E3-Series OS Command Injection Vulnerability", CVE-2020-10221 "rConfig OS Command Injection Vulnerability", CVE-2020-10987 "Tenda AC1900 Router AC15 Model Remote Code Execution Vulnerability", CVE-2020-11978 "Apache Airflow Command Injection", CVE-2020-12641 "Roundcube Webmail Remote Code Execution Vulnerability", CVE-2020-15415 "DrayTek Multiple Vigor Routers OS Command Injection Vulnerability", CVE-2020-16846 "SaltStack Salt Shell Injection Vulnerability", CVE-2020-1956 "Apache Kylin OS Command Injection Vulnerability", CVE-2020-2509 "QNAP Network-Attached Storage (NAS) Command Injection Vulnerability", CVE-2020-25223 "Sophos SG UTM Remote Code Execution Vulnerability", CVE-2020-25506 "D-Link DNS-320 Device Command Injection Vulnerability", CVE-2020-4006 "Multiple VMware Products Command Injection Vulnerability", CVE-2020-4428 "IBM Data Risk Manager Remote Code Execution Vulnerability", CVE-2020-7247 "OpenSMTPD Remote Code Execution Vulnerability", CVE-2020-8515 "Multiple DrayTek Vigor Routers Web Management Page Vulnerability", CVE-2020-8816 "Pi-Hole AdminLTE Remote Code Execution Vulnerability", CVE-2020-9054 "Zyxel Multiple NAS Devices OS Command Injection Vulnerability", CVE-2020-9377 "D-Link DIR-610 Devices Remote Command Execution", CVE-2021-1497 "Cisco HyperFlex HX Installer Virtual Machine Command Injection Vulnerability", CVE-2021-1498 "Cisco HyperFlex HX Data Platform Command Injection Vulnerability", CVE-2021-20035 "SonicWall SMA100 Appliances OS Command Injection Vulnerability", CVE-2021-21315 "System Information Library for Node.JS Command Injection", CVE-2021-22502 "Micro Focus Operation Bridge Report (OBR) Remote Code Execution Vulnerability", CVE-2021-25296 "Nagios XI OS Command Injection", CVE-2021-25297 "Nagios XI OS Command Injection", CVE-2021-25298 "Nagios XI OS Command Injection", CVE-2021-27102 "Accellion FTA OS Command Injection Vulnerability", CVE-2021-27104 "Accellion FTA OS Command Injection Vulnerability", CVE-2021-27561 "Yealink Device Management Server-Side Request Forgery (SSRF) Vulnerability", CVE-2021-35394 "Realtek Jungle SDK Remote Code Execution Vulnerability", CVE-2021-36260 "Hikvision Improper Input Validation", CVE-2021-36380 "Sunhillo SureLine OS Command Injection Vulnerablity", CVE-2021-40407 "Reolink RLC-410W IP Camera OS Command Injection Vulnerability", CVE-2021-45382 "D-Link Multiple Routers Remote Code Execution Vulnerability", CVE-2022-26258 "D-Link DIR-820L Remote Code Execution Vulnerability", CVE-2022-28810 "Zoho ManageEngine ADSelfService Plus Remote Code Execution Vulnerability", CVE-2022-29303 "SolarView Compact Command Injection Vulnerability", CVE-2022-30525 "Zyxel Multiple Firewalls OS Command Injection Vulnerability", CVE-2022-33891 "Apache Spark Command Injection Vulnerability", CVE-2022-36804 "Atlassian Bitbucket Server and Data Center Command Injection Vulnerability", CVE-2022-44877 "CWP Control Web Panel OS Command Injection Vulnerability", CVE-2023-20273 "Cisco IOS XE Web UI Command Injection Vulnerability", CVE-2023-25280 "D-Link DIR-820 Router OS Command Injection Vulnerability", CVE-2023-27992 "Zyxel Multiple NAS Devices Command Injection Vulnerability", CVE-2023-28771 "Zyxel Multiple Firewalls OS Command Injection Vulnerability", CVE-2023-39780 "ASUS RT-AX55 Routers OS Command Injection Vulnerability", CVE-2023-44221 "SonicWall SMA100 Appliances OS Command Injection Vulnerability", CVE-2023-47565 "QNAP VioStor NVR OS Command Injection Vulnerability", CVE-2023-49897 "FXC AE1021, AE1021PE OS Command Injection Vulnerability", CVE-2024-11120 "GeoVision Devices OS Command Injection Vulnerability", CVE-2024-1212 "Progress Kemp LoadMaster OS Command Injection Vulnerability", CVE-2024-12686 "BeyondTrust Privileged Remote Access (PRA) and Remote Support (RS) OS Command Injection Vulnerability", CVE-2024-12987 "DrayTek Vigor Routers OS Command Injection Vulnerability", CVE-2024-20399 "Cisco NX-OS Command Injection Vulnerability", CVE-2024-40890 "Zyxel DSL CPE OS Command Injection Vulnerability", CVE-2024-40891 "Zyxel DSL CPE OS Command Injection Vulnerability", CVE-2024-4577 "PHP-CGI OS Command Injection Vulnerability", CVE-2024-50603 "Aviatrix Controllers OS Command Injection Vulnerability", CVE-2024-6047 "GeoVision Devices OS Command Injection Vulnerability", CVE-2024-8190 "Ivanti Cloud Services Appliance OS Command Injection Vulnerability", CVE-2024-8957 "PTZOptics PT30X-SDI/NDI Cameras OS Command Injection Vulnerability", CVE-2024-9463 "Palo Alto Networks Expedition OS Command Injection Vulnerability", CVE-2025-11953 "React Native Community CLI OS Command Injection Vulnerability", CVE-2025-1316 "Edimax IC-7100 IP Camera OS Command Injection Vulnerability", CVE-2025-48703 "CWP Control Web Panel OS Command Injection Vulnerability", CVE-2025-54948 "Trend Micro Apex One OS Command Injection Vulnerability", CVE-2025-58034 "Fortinet FortiWeb OS Command Injection Vulnerability", CVE-2025-64328 "Sangoma FreePBX OS Command Injection Vulnerability", CVE-2025-66644 "Array Networks ArrayOS AG OS Command Injection Vulnerability", CVE-2025-67038 "Lantronix EDS5000 Code Injection Vulnerability", CVE-2025-9377 "TP-Link Archer C7(EU) and TL-WR841N/ND(MS) OS Command Injection Vulnerability", CVE-2026-10520 "Ivanti Sentry OS Command Injection Vulnerability", CVE-2026-16812 "Arista VeloCloud Orchestrator On-Prem OS Command Injection Vulnerability", CVE-2026-1731 "BeyondTrust Remote Support (RS) and Privileged Remote Access (PRA) OS Command Injection Vulnerability", CVE-2026-25089 "Fortinet FortiSandbox OS Command Injection Vulnerability", CVE-2026-25108 "Soliton Systems K.K FileZen OS Command Injection Vulnerability", CVE-2026-39808 "Fortinet FortiSandbox OS Command Injection Vulnerability", CVE-2026-42271 "BerriAI LiteLLM Command Injection Vulnerability", CVE-2026-49869 "Kestra OSS OS Command Injection Vulnerability", CVE-2026-73570 "Zimbra Collaboration Suite (ZCS) OS Command Injection Vulnerability", CVE-2026-83549 "SonicWall SMA1000 Appliances OS Command Injection Vulnerability"
+$ ./gr4ph product Apache/Log4j2
+product Apache/Log4j2
+  out entries (2): CVE-2021-44228 "Apache Log4j2 Remote Code Execution Vulnerability", CVE-2021-45046 "Apache Log4j2 Deserialization of Untrusted Data Vulnerability"
+```
+
 ## Data model
 
-Five partitions, seventeen frozen arrays: four multi-plane bitmatrix blocks (`ttpArt`/`artTTP` over
-`nRel` planes, `cmArt`/`artCM` over `nDefRel`), twelve single-plane blocks and one per-technique flag
+Seven partitions, twenty-one frozen arrays: four multi-plane bitmatrix blocks (`ttpArt`/`artTTP` over
+`nRel` planes, `cmArt`/`artCM` over `nDefRel`), sixteen single-plane blocks and one per-technique flag
 column. Plane 0 of each multi-plane family is the union of all its predicates (`RelAny` / `DefRelAny`);
 every other family is one inferred predicate and needs no plane index. The attribute columns are one `uint64` per technique (a 41-tactic and a 15-platform mask, so bits
 above the vocabulary are always zero) plus the derived sub-technique flag.
@@ -344,10 +379,14 @@ above the vocabulary are always zero) plus the derived sub-technique flag.
 | `ttpGrp` | `[nTTP][wGrp]` | technique → group (transpose) |
 | `grpSoftware` | `[nGrp][wGrp]` | group → software (uses) |
 | `softwareGrp` | `[nGrp][wGrp]` | software → group (transpose) |
+| `kevCWE` | `[nKEV][wCWE]` | KEV entry → weakness (filed under) |
+| `cweKEV` | `[nCWE][wKEV]` | weakness → KEV entry (transpose) |
+| `kevProduct` | `[nKEV][wProduct]` | KEV entry → product (about) |
+| `productKEV` | `[nProduct][wKEV]` | product → KEV entry (transpose) |
 
 Rows are exact-length (no padding), LSB-first within each `uint64`. For the pinned dataset
-(1186 techniques, 247 artifacts, 157 countermeasures, 123 data components, 1212 groups, 41 tactics,
-15 platforms, 41 + 38 predicates):
+(1186 techniques, 247 artifacts, 157 countermeasures, 123 data components, 1212 groups, 1739 KEV
+entries, 189 weaknesses, 722 products, 41 tactics, 15 platforms, 41 + 38 predicates):
 
 | block | planes | words | bytes |
 |---|---|---|---|
@@ -369,18 +408,49 @@ Rows are exact-length (no padding), LSB-first within each `uint64`. For the pinn
 | `ttpGrp` | 1 | 22,534 | 180,272 |
 | `grpSoftware` | 1 | 23,028 | 184,224 |
 | `softwareGrp` | 1 | 23,028 | 184,224 |
-| **total** | | **557,235** | **4,457,880 (4.25 MiB)** |
+| `kevCWE` | 1 | 5,217 | 41,736 |
+| `cweKEV` | 1 | 5,292 | 42,336 |
+| `kevProduct` | 1 | 20,868 | 166,944 |
+| `productKEV` | 1 | 20,216 | 161,728 |
+| **total** | | **608,828** | **4,870,624 (4.645 MiB)** |
 | hierarchy (`ttpParents` + `ttpChildCount`) | | | 4,744 |
 | revoked flag (`ttpRevoked`) | | | 1,186 |
 | tactic vocabulary (`tacticIDs` + `tacticLabels` + `tacticIndex`) | | | cold |
 | platform vocabulary (`platformNames` + `platformIndex`) | | | cold |
 | data components (`dcIDs` + `dcLabels` + `dcIndex`) | | | cold |
 | grouping nodes (`groupIDs` + `groupLabels` + `groupKinds` + `groupIndex`) | | | cold |
+| KEV entries (`kevIDs` + `kevNames` + `kevAdded` + `kevRansomware` + `kevIndex`) | | | cold |
+| weakness vocabulary (`cweIDs` + `cweIndex`) | | | cold |
+| product vocabulary (`productVendors` + `productNames` + `productIndex`) | | | cold |
 
 Strides: `WordsPerRow(KindTTP)` = 19, `KindArtifact` = 4, `KindCountermeasure` = 3,
-`KindDataComponent` = 2; the attribute masks are one word per technique (`wTactic` = `wPlatform` = 1).
+`KindDataComponent` = 2, `KindKEV` = 28, `KindCWE` = 3, `KindProduct` = 12; the attribute masks are one
+word per technique (`wTactic` = `wPlatform` = 1).
 A single plane is 37 KiB (technique) / 37 KiB (artifact) — L1/L2 resident; the six existing blocks keep
 their address range, and the new arrays follow them, so the hot six are unchanged.
+
+### KEV and the product partition
+
+The vulnerability family is two joins over the same entries: **KEV → CWE** (1679 edges over 189
+weaknesses, reaching 1564 of the 1739 entries — 175 catalogued vulnerabilities carry no weakness class at
+all) and **KEV → product** (exactly one edge per entry, over 722 vendor products; the 732 raw product
+spellings of the feed collapse to those 722 keys). Both are stored in both directions, because both are
+asked: `cwe CWE-78` walks `cweKEV` (110 entries) while `kev CVE-2021-44228` walks `kevCWE` (3 classes),
+and `product Apache/Log4j2` walks `productKEV` (2 entries). An entry row is one word wide over each
+vocabulary (`kevCWE` 3 words, `kevProduct` 12), while a vocabulary row is 28 words wide over the entries
+(`cweKEV`, `productKEV`), so the four blocks cost 403 KiB. There is no
+roll-up variant of any of these queries: neither the weakness vocabulary nor the product vocabulary is
+hierarchical, so every one of them follows edges exactly.
+
+There is deliberately **no KEV ↔ ATT&CK `software` block**, because the two name different things: the
+catalog names the victim-side products that were exploited (`Microsoft Windows`, `Apache Log4j2`, `Cisco
+IOS`), while ATT&CK's 957 malware and tool nodes name attacker tooling (`Mimikatz`, `Cobalt Strike`). The
+measurement over the pinned sources: normalising the 957 software node names and their aliases (1254
+distinct keys) and comparing them with the 722 product names matches 3 — `Spark`, `Cobalt Strike` and
+`ScreenConnect`, the last through its `ConnectWise` alias — which is 0.4%, and a token-set comparison
+that ignores word order matches the same 3. A join on that overlap would be a three-row lookup table that
+is wrong for the other 719 products, so `kev` prints the catalog's own vendor and product strings and
+nothing maps them onto the ATT&CK software partition.
 
 ## API
 
@@ -388,10 +458,11 @@ Sizes and cold path:
 
 | method | work | alloc |
 |---|---|---|
-| `TTPCount` `ArtifactCount` `CountermeasureCount` `DataComponentCount` `GroupCount` `TacticCount` `PlatformCount` `RelCount` `DefRelCount` `WordsPerRow` | O(1) | 0 |
+| `TTPCount` `ArtifactCount` `CountermeasureCount` `DataComponentCount` `GroupCount` `KEVCount` `CWECount` `ProductCount` `TacticCount` `PlatformCount` `RelCount` `DefRelCount` `WordsPerRow` | O(1) | 0 |
 | `Incident(alert) (TTP, bool)`, `Artifact(s)`, `Countermeasure(s)`, `DataComponent(s)`, `Group(s)` | map lookup (trim + lower); a shared technique label resolves to its live carrier, or to the lowest-index match when every carrier is revoked; a shared grouping label resolves to the earliest registration | cold |
 | `Tactic(id) (Tactic, bool)`, `Platform(name) (Platform, bool)` | map lookup (trim + lower); only the `TA` id keys a tactic — 11 tactic labels name two or three tactics across the three domains | cold |
-| `TTPName` `TTPLabel` `ArtifactName` `ArtifactLabel` `CountermeasureName` `CountermeasureLabel` `DataComponentID` `DataComponentLabel` `GroupID` `GroupLabel` `GroupKind` `TacticID` `TacticLabel` `PlatformName` `TTPDomain` `TTPRevoked` | O(1) | 0 |
+| `KEV(id) (KEV, bool)`, `CWE(id) (CWE, bool)`, `Product(vendor, name) (Product, bool)` | map lookup (trim + lower); the CVE id is the only key of an entry (titles repeat), a weakness keys on its id and a product on the vendor/name pair | cold |
+| `TTPName` `TTPLabel` `ArtifactName` `ArtifactLabel` `CountermeasureName` `CountermeasureLabel` `DataComponentID` `DataComponentLabel` `GroupID` `GroupLabel` `GroupKind` `TacticID` `TacticLabel` `PlatformName` `TTPDomain` `TTPRevoked` `KEVID` `KEVName` `KEVAdded` `KEVRansomware` `CWEID` `KEVProductVendor` `KEVProductName` `KEVVendor` `KEVProduct` | O(1) | 0 |
 | `Rel` `DefRel` | map lookup (trim + lower), `"any"` is the union plane and cannot be registered (`ErrReservedName`) | cold |
 | `RelName` `DefRelName` | O(1) | 0 |
 | `TTPTactics` `TTPPlatforms` `TTPFlags` `TTPSubTechnique` | one attribute load / one shift+compare | 0 |
@@ -427,9 +498,13 @@ Traversals (all take/return ids, all allocate nothing):
 | `DataComponentDegree` `SoftwareDegree` | popcount of one row |
 | `DataComponentsForTTPRollup` | (1 + children) × 2 words, vector OR |
 | `TTPsForGroupRollup` | 19-word row scan + parent map + 19-word bitset |
+| `CWEsForKEV` `ProductsForKEV` | 1 row (1 word over each vocabulary) |
+| `KEVCWEDegree` | popcount of one row |
+| `KEVsForCWE` | 1 row (28 words) |
 | `TTPsAny` `TTPsAll` `ArtifactsAny` `ArtifactsAll` | k × row words, vector OR/AND |
 | `TTPsMapped` | every countermeasure row: 157 × 19 words, vector OR |
 | `TTPsCovered` `TTPsBlind` `CoverageGain` `CountermeasuresForObserved` | selected-row union over the caller's `Selection` (k × 19 words for `cmTTP`, k × 3 for `ttpCM`) + a 19-word difference or popcount |
+| `KEVsForProducts` `KEVsForCWEs` | selected-row union over the caller's `Selection` (k × 28 words over `productKEV`/`cweKEV`) |
 
 Builder (cold path; the builder is single-use and then frozen by `Build`):
 
@@ -441,7 +516,9 @@ Builder (cold path; the builder is single-use and then frozen by `Build`):
 | `AddArtifact(name, label)` `AddCountermeasure(id, label, aliases…)` | |
 | `AddDataComponent(id, label)` `AddGroup(id, label, kind)` | `ErrUnknownGroupKind` on a kind outside the three constants |
 | `AddTactic(id, label)` `AddPlatform(name)` | dense ids in registration order (≤ 64: `ErrTooManyTactics` / `ErrTooManyPlatforms`, the width of the `uint64` mask each technique carries) |
-| `AddEdge(t, a, r)` `AddDefEdge(cm, a, dr)` `AddDefendsEdge(cm, t)` `AddTacticEdge(t, ta)` `AddPlatformEdge(t, p)` `AddDetectsEdge(dc, t)` `AddGroupUsesEdge(g, t)` `AddGroupSoftwareEdge(from, to)` | edges are ORed into the planes; an unregistered endpoint is `ErrUnknownTTP` / `ErrUnknownArtifact` / `ErrUnknownCountermeasure` / `ErrUnknownTactic` / `ErrUnknownPlatform` / `ErrUnknownDataComponent` / `ErrUnknownGroup` |
+| `AddKEV(id, name, added, ransomware)` | idempotent on the normalised CVE id, which is the only key: a second call with the same id ignores its other arguments |
+| `AddCWE(id, label)` `AddProduct(vendor, name)` | the weakness and product vocabularies, dense ids in registration order |
+| `AddEdge(t, a, r)` `AddDefEdge(cm, a, dr)` `AddDefendsEdge(cm, t)` `AddTacticEdge(t, ta)` `AddPlatformEdge(t, p)` `AddDetectsEdge(dc, t)` `AddGroupUsesEdge(g, t)` `AddGroupSoftwareEdge(from, to)` `AddKEVWeaknessEdge(k, c)` `AddKEVProductEdge(k, p)` | edges are ORed into the planes; an unregistered endpoint is `ErrUnknownTTP` / `ErrUnknownArtifact` / `ErrUnknownCountermeasure` / `ErrUnknownTactic` / `ErrUnknownPlatform` / `ErrUnknownDataComponent` / `ErrUnknownGroup` / `ErrUnknownKEV` / `ErrUnknownCWE` / `ErrUnknownProduct` |
 | `Built()` `Build()` | `Build` is single-use: `ErrBuilderUsed` afterwards |
 
 ### Exact vs roll-up
@@ -464,7 +541,8 @@ Set and roll-up operations write their intermediate bitset into a caller-owned `
 
 > `len(scratch) >= e.WordsPerRow(kind)` where `kind` is the partition of the **returned** ids —
 > 19 words for TTP-returning methods, 4 for artifact-returning, 3 for countermeasure-returning,
-> 2 for `KindDataComponent` (the `DataComponentsForTTPRollup` scratch).
+> 2 for `KindDataComponent` (the `DataComponentsForTTPRollup` scratch) and 28 for `KindKEV`
+> (`KEVsForCWE`, `KEVsForProducts`, `KEVsForCWEs`).
 
 Shorter `scratch` panics (`gr4ph: scratch too small`).
 
@@ -472,7 +550,8 @@ The overlay queries take a **selection** — a caller-owned bitset over one part
 of an id list, with the same sizing rule:
 
 > `len(sel) >= e.WordsPerRow(kind)` where `kind` is the partition the selection indexes —
-> 3 words to select countermeasures, 19 words to select techniques.
+> 3 words to select countermeasures, 19 words to select techniques, 3 to select weaknesses
+> (`KindCWE`, `KEVsForCWEs`) and 12 to select products (`KindProduct`, `KEVsForProducts`).
 
 Shorter `sel` panics (`gr4ph: selection too small`). Bits past the live range select nothing, so a stale
 inventory is never an error.
@@ -487,15 +566,16 @@ inventory is never an error.
   (`0`/`false`). A stale or foreign id set can never crash a traversal, and an empty engine answers
   every query with 0/false.
 * Engine-dimension misuse panics, because there is no sensible fallback: an offensive relation id
-  `>= RelCount()+1`, a defensive relation id `>= DefRelCount()+1`, a `Kind` outside the four
+  `>= RelCount()+1`, a defensive relation id `>= DefRelCount()+1`, a `Kind` outside the seven
   partitions with a row stride (`WordsPerRow`), an undersized `scratch`, or an undersized `selection`
   (`gr4ph: selection too small`). The scratch check runs before the id bounds
   check, so an undersized `scratch` panics even when the id is out of range.
 * The overlay queries read the caller's selection and never retain it, so a caller may flip bits
   between calls — an alert stream becomes the observed set, a tool inventory the deployed one.
-* The cold string accessors (`TTPName`, `TTPLabel`, `TTPDomain`, `ArtifactName`, …) panic on an
-  out-of-range id. `Response` / `CountermeasureResponse` are the total boundary formatters: they
-  render `<invalid ttp N>` / `<invalid cm N>` and still count the entry.
+* The cold string accessors (`TTPName`, `TTPLabel`, `TTPDomain`, `ArtifactName`, `KEVID`, `KEVName`,
+  `KEVAdded`, `KEVRansomware`, `CWEID`, `KEVProductVendor`, `KEVProductName`, `KEVVendor`, `KEVProduct`,
+  …) panic on an out-of-range id. `Response` / `CountermeasureResponse` are the total boundary
+  formatters: they render `<invalid ttp N>` / `<invalid cm N>` and still count the entry.
 
 ## Hierarchy
 
@@ -527,8 +607,8 @@ children — passing it as a parent reads as "no parent".
 
 ## Regenerating the tables
 
-`ontology/attack_gen.go` is generated and committed; the runtime never touches the network. Sources
-are pinned by version:
+`ontology/attack_gen.go` and `ontology/kev_gen.go` are generated and committed; the runtime never
+touches the network. Sources are pinned by version:
 
 | source | value |
 |---|---|
@@ -536,15 +616,17 @@ are pinned by version:
 | ATT&CK ICS | `ics-attack-19.2.json` |
 | ATT&CK mobile | `mobile-attack-19.2.json` |
 | D3FEND | `d3fend-full-mappings.csv@1.6.0` |
+| CISA KEV | `known_exploited_vulnerabilities.json@2026.10.08` |
 
 ```sh
 make gen        # go run ./cmd/d3fendgen -out ontology/attack_gen.go   (network once)
+                # go run ./cmd/kevgen    -out ontology/kev_gen.go      (network once)
 ```
 
-`cmd/d3fendgen` is untagged and imports nothing from this module, so it regenerates on a stock
-toolchain; `-enterprise`/`-ics`/`-mobile`/`-d3fend` accept local paths for an offline rerun, and the
-output is byte-identical either way. The generated shape is asserted, not assumed, and a run reports
-exactly what it measured (this is `make gen`'s stdout on the pinned sources, byte for byte):
+`cmd/d3fendgen` and `cmd/kevgen` are untagged and import nothing from this module, so they regenerate on
+a stock toolchain; `-enterprise`/`-ics`/`-mobile`/`-d3fend` and `-kev` accept local paths for an offline
+rerun, and the output is byte-identical either way. The generated shape is asserted, not assumed, and a
+run reports exactly what it measured (this is `make gen`'s stdout on the pinned sources, byte for byte):
 
 ```
 d3fendgen: wrote ontology/attack_gen.go
@@ -558,17 +640,39 @@ d3fendgen: wrote ontology/attack_gen.go
   tactics        41, platforms 15, assignments 1431/2527
   data components 123, detects edges 3263
   groups         1212 (195 actors, 957 software, 60 campaigns), uses edges 18885 technique, 1339 software
+kevgen: wrote ontology/kev_gen.go
+  catalog        known_exploited_vulnerabilities.json@2026.10.08
+  entries        1739 (361 ransomware)
+  weaknesses     1679 references over 189 CWEs, 1564 entries with at least one
+  products       722 (one per entry)
 ```
 
 If a future upstream release changes any of those, the generator fails with the actual counts instead
 of emitting tables whose indices no longer match — re-pin the sources and re-derive the expectations.
 
+KEV is a rolling feed, unlike the three versioned ATT&CK releases: CISA revises the catalog in place and
+bumps its `catalogVersion`. When the fetched version differs from the pinned one, `cmd/kevgen` re-pins
+its own `sourceKEV`/`pinnedShape` literals in place, emits with the freshly measured counts and prints
+`kevgen: re-pinned known_exploited_vulnerabilities.json@<old> -> @<new> (re-measure the count pins in
+ontology/ontology_test.go, cmd/gr4ph/main_test.go and README.md)` — the count pins in those three files
+then fail until they are re-measured, which is the forcing function. `-re-pin=false` turns the same
+condition into a hard error instead (`KEV catalog <pinned> expected, got <fetched> (re-run without
+-re-pin to re-pin in place)`), and a count change under an *unchanged* version is always an error: the
+version is the contract, the counts are the measurement that keeps the emitted tables honest.
+
+Two ingestion rules keep the emitted dense ids equal to the ones the builder assigns: entries are sorted
+by CVE id (the feed's own order is neither sorted nor stable) and every ingested string is trimmed and
+lower-cased — the feed carries surrounding whitespace on 27 names, 6 vendors and 13 products, three
+product names differ only in case, and the ten product pairs that collapse are why the pinned product
+count is 722 rather than the 732 raw spellings.
+
 Registration order is load-bearing (`ontology.Register`): relations first (so `RelNames[i]` becomes
 plane `i+1`, matching the generated constants) and then the tactic and platform vocabularies (so
 `TacticIDs[i]` becomes attribute bit `i`, matching the emitted `TacticTTP`/`PlatformTTP` rows), then
-techniques depth-first with their parents, then artifacts, countermeasures, data components and grouping
-nodes, and finally the edge families (offensive, defensive, defends-against, tactic and platform
-assignments, `detects`, `uses` and software-use).
+techniques depth-first with their parents, then artifacts, countermeasures, data components, grouping
+nodes and the KEV entries with their two vocabularies, and finally the edge families (offensive,
+defensive, defends-against, tactic and platform assignments, `detects`, `uses`, software-use, and the
+KEV weakness and product edges).
 
 ## Concurrency
 
@@ -585,10 +689,11 @@ builder.
 `GOEXPERIMENT=simd go test -bench . -benchmem -benchtime=1s -count=10 ./...` on the development
 host (i5-10310U, 128-bit vectors); ns/op below is the median of 10 runs, and every benchmark
 reports 0 B/op and 0 allocs/op. The real-table rows run against `ontology.Register`'s 1186-node
-engine; the synthetic rows run against two root-package fixtures — `benchEngine`'s generated graph
-(1200 techniques, 250 artifacts, 160 countermeasures) and `attributedEngine` (1200 techniques with
+engine; the synthetic rows run against three root-package fixtures — `benchEngine`'s generated graph
+(1200 techniques, 250 artifacts, 160 countermeasures), `attributedEngine` (1200 techniques with
 41 tactics, 15 platforms and 1212 grouping nodes, and no artifacts, countermeasures or data
-components):
+components) and `kevEngine` (the catalog's shape: 1739 KEV entries, 189 weaknesses, 722 products, 1679
+weakness edges and one product edge per entry):
 
 | benchmark | fixture | ns/op |
 |---|---|---|
@@ -604,8 +709,12 @@ components):
 | `TTPsBlind` (1200 active, 20 of 160 deployed) | synthetic | 1823 |
 | `CoverageGain` (20-countermeasure selection) | synthetic | 636 |
 | `CountermeasuresForObserved` (50-bit observed set) | synthetic | 495 |
+| `KEVsForProducts` (50 of 722 products) | synthetic | 2305 |
+| `KEVsForCWEs` (all 189 weaknesses) | synthetic | 9340 |
+| `CWEsForKEV` (one entry) | synthetic | 14 |
 
-The eleven new arrays (ten blocks plus the `ttpFlags` column) sit after the six existing blocks, so
+The eleven round-1 arrays (ten blocks plus the `ttpFlags` column) and the four KEV blocks sit after the
+six existing blocks, so
 those keep their address range, and the overlay kernels add no array at all. Against a worktree of `main`
 at `4b9cf7b` (same host, `-benchtime=1s -count=1` interleaved ten times per tree, medians): every one of
 the 15 pre-existing benchmarks is still present, all 19 report 0 `B/op` and 0 `allocs/op`, and 14 of the
@@ -619,8 +728,18 @@ overlay rows are a selected-row union (20 rows of the countermeasure block, or e
 `TTPsBlind`'s active set) plus one 19-word difference or popcount.
 
 The zero-allocation contract is enforced by tests, not by convention: `AllocsPerRun` must be 0 for
-every method in the pinned list (`internal/hotmethods`), on both a synthetic graph and the 1186-node
-engine.
+every method in the pinned list (`internal/hotmethods`), on a synthetic graph, the 1186-node engine
+and the KEV fixture.
+
+Round 2 (the KEV family) adds four arrays and no change to any existing block: against a worktree at
+`60f68a3` (the round-1 merge; same host, `-benchtime=1s -count=1` interleaved ten times per tree,
+medians) all 19 pre-existing benchmarks are still present, all 22 report 0 `B/op` and 0 `allocs/op`, and
+the worst pre-existing median ratio is 1.039× (`BenchmarkTTPsAnyProcessFile`; the other five re-measured
+rows are 0.999–1.02×). The full-suite `-count=10` medians of the two trees drifted up to 1.14× on some
+rows — sequential runs, not a cost of this change: the same rows read 1.002–1.004× when the two trees
+are interleaved, which is why the gate uses the interleaved protocol. The three new rows are dominated by
+their memory traffic: `CWEsForKEV` is one 3-word row, `KEVsForProducts` unions 50 28-word rows, and
+`KEVsForCWEs` unions all 189 of them.
 
 ## License
 
@@ -636,6 +755,12 @@ D3FEND's mapping table carries, all under the upstream terms of use:
 * ATT&CK: <https://attack.mitre.org/resources/legal-and-branding/terms-of-use/>
 * D3FEND: <https://d3fend.mitre.org/tou/>
 * SPARTA: <https://sparta.aerospace.org/terms-of-service>
+
+`ontology/kev_gen.go` reproduces the CISA Known Exploited Vulnerabilities catalog — CVE ids,
+vulnerability names, the dates CISA added them, the ransomware flag and the vendor/product and CWE
+references — a work of the U.S. Cybersecurity and Infrastructure Security Agency (public domain):
+
+* CISA KEV: <https://www.cisa.gov/known-exploited-vulnerabilities-catalog>
 
 The two designations the terms require are reproduced in `NOTICE`, the canonical attribution file:
 

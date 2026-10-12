@@ -36,19 +36,24 @@ test:
 	$(GO) test -race ./...          # README "Concurrency": concurrent queries share the engine
 	GODEBUG=simd=0 $(GO) test ./...
 
-# Regenerates ontology/attack_gen.go from the pinned upstream sources (network).
+# Regenerates ontology/attack_gen.go and ontology/kev_gen.go from the pinned
+# upstream sources (network): the ATT&CK 19.2 x D3FEND 1.6.0 release and the
+# CISA Known Exploited Vulnerabilities catalog.
 gen:
 	$(GO) run ./cmd/d3fendgen -out ontology/attack_gen.go
+	$(GO) run ./cmd/kevgen -out ontology/kev_gen.go
 
 bench:
 	$(GO) test -bench . -benchmem ./...
 
-# Verifies the stock-toolchain contract: the generator builds and tests without
+# Verifies the stock-toolchain contract: the generators build and test without
 # the experiment, and the module as a whole fails loudly (internal/simdcheck)
 # instead of silently skipping the gated packages.
 stock:
 	env -u GOEXPERIMENT $(GO) test ./cmd/d3fendgen
 	env -u GOEXPERIMENT $(GO) build -o /dev/null ./cmd/d3fendgen
+	env -u GOEXPERIMENT $(GO) test ./cmd/kevgen
+	env -u GOEXPERIMENT $(GO) build -o /dev/null ./cmd/kevgen
 	! env -u GOEXPERIMENT $(GO) build ./...
 
 fmt:
