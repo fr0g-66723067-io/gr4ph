@@ -1421,6 +1421,41 @@ type errWriter struct{}
 
 func (errWriter) Write([]byte) (int, error) { return 0, errClosed }
 
+// TestTextSeparatorWriteError pins finish's third write: the newline that
+// separates two result blocks. errWriter fails every write, so writeText
+// reported the error first and the separator's check was unreachable — a
+// regression there would have exited 0 on a half-written stream.
+func TestTextSeparatorWriteError(t *testing.T) {
+	e := fixtureEngine(t)
+	out := &newlineErrWriter{}
+	var stderr bytes.Buffer
+	status := run(e, []string{"ttp", "T1059", "T1003.001"}, out, &stderr)
+	if status != 1 {
+		t.Fatalf("status = %d, want 1", status)
+	}
+	if want := "gr4ph: " + errClosed.Error() + "\n"; stderr.String() != want {
+		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+	}
+	// The first block is complete and the second never began: the failure is
+	// the separator, not a write inside a block.
+	if got := out.buf.String(); !strings.HasPrefix(got, "ttp T1059 ") || strings.Contains(got, "T1003.001") {
+		t.Fatalf("stdout = %q, want the first block alone", got)
+	}
+}
+
+// newlineErrWriter fails a write whose payload is exactly the inter-block
+// separator and passes everything else to its buffer, so the first block
+// reaches stdout and the second query is reachable only through the failed
+// separator.
+type newlineErrWriter struct{ buf bytes.Buffer }
+
+func (w *newlineErrWriter) Write(p []byte) (int, error) {
+	if len(p) == 1 && p[0] == '\n' {
+		return 0, errClosed
+	}
+	return w.buf.Write(p)
+}
+
 // errClosed is the write error errWriter reports.
 var errClosed = fmt.Errorf("write: closed pipe")
 
