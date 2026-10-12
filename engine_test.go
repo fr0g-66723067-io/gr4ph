@@ -1060,6 +1060,12 @@ func TestEngineAttributes(t *testing.T) {
 	if got := e.TTPFlags(TTP(99)); got != 0 {
 		t.Errorf("TTPFlags(out of range) = %#b, want 0", got)
 	}
+	if got := e.TTPPlatforms(TTP(99)); got != 0 {
+		t.Errorf("TTPPlatforms(out of range) = %#b, want 0", got)
+	}
+	if e.TTPSubTechnique(TTP(99)) {
+		t.Error("TTPSubTechnique(out of range) = true, want false")
+	}
 	if n := e.TTPsForTactic(Tactic(99), dst); n != 0 {
 		t.Errorf("TTPsForTactic(99) = %d, want 0", n)
 	}
@@ -1109,11 +1115,17 @@ func TestEngineDataComponents(t *testing.T) {
 	}
 
 	// Totality.
+	if n := e.DataComponentsForTTP(TTP(99), dstDC); n != 0 {
+		t.Errorf("DataComponentsForTTP(out of range) = %d, want 0", n)
+	}
 	if n := e.DataComponentsForTTPRollup(TTP(99), scratch, dstDC); n != 0 {
 		t.Errorf("DataComponentsForTTPRollup(out of range) = %d, want 0", n)
 	}
 	if n := e.TTPsForDataComponent(DataComponent(99), dstTTP); n != 0 {
 		t.Errorf("TTPsForDataComponent(out of range) = %d, want 0", n)
+	}
+	if got := e.DataComponentDegree(DataComponent(99)); got != 0 {
+		t.Errorf("DataComponentDegree(out of range) = %d, want 0", got)
 	}
 }
 
@@ -1184,10 +1196,19 @@ func TestEngineGroups(t *testing.T) {
 	if n := e.TTPsForGroup(Group(99), dstTTP); n != 0 {
 		t.Errorf("TTPsForGroup(out of range) = %d, want 0", n)
 	}
+	if n := e.TTPsForGroupRollup(Group(99), scratch, dstTTP); n != 0 {
+		t.Errorf("TTPsForGroupRollup(out of range) = %d, want 0", n)
+	}
 	if n := e.GroupsForTTP(TTP(99), dstG); n != 0 {
 		t.Errorf("GroupsForTTP(out of range) = %d, want 0", n)
 	}
 	if n := e.SoftwareForGroup(Group(99), dstG); n != 0 {
 		t.Errorf("SoftwareForGroup(out of range) = %d, want 0", n)
+	}
+	if n := e.GroupsForSoftware(Group(99), dstG); n != 0 {
+		t.Errorf("GroupsForSoftware(out of range) = %d, want 0", n)
+	}
+	if got := e.SoftwareDegree(Group(99)); got != 0 {
+		t.Errorf("SoftwareDegree(out of range) = %d, want 0", got)
 	}
 }
