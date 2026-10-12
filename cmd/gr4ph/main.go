@@ -44,29 +44,25 @@ const usage = `usage: gr4ph <command> [flags] <query> [<query>...]
   product <v>/<name> resolve a vendor/product pair; list the entries filed under it
   rel <name>         resolve a relation name; report its plane, edge count and source
                      count in each family it belongs to
-  coverage <cm>...   resolve countermeasures as the deployed set; classify every technique as
+  coverage [<cm>...] resolve countermeasures as the deployed set; classify every technique as
                      defended, undefended (mapped but uncovered) or unmapped
-  gain <cm>...       resolve countermeasures as the deployed set; rank candidates by the techniques
+  gain [<cm>...]     resolve countermeasures as the deployed set; rank candidates by the techniques
                      they would newly cover
   contain <ttp>...   resolve techniques as the observed set; list the countermeasures that touch any
                      of them
   help               print this message
 
-flags (before or after the queries; -json may also precede the command):
+flags (before or after the queries; -json may also precede the command, and every
+command accepts it):
   -json              emit one JSON object per resolved query instead of text
   ttp:      -rel <name>        offensive relation plane (default any)
   artifact: -rel <name>        offensive relation plane for the technique sets (default any)
             -defrel <name>     defensive relation plane for the countermeasure set (default any)
   cm:       -defrel <name>     defensive relation plane for the artifact set (default any)
   rel:      -family <off|def>  restrict the family (default: both)
-  kev:      (no flags)
-  cwe:      (no flags)
-  product:  (no flags)
-  coverage: (no flags)
   gain:     -top <n>           how many candidates to rank (default 10)
             -all               every candidate with a non-zero gain
             -greedy            the successive maximum-gain sequence instead of a ranking
-  contain:  (no flags)
 
 examples:
   gr4ph ttp 'lsass memory'                 an alert string, not an id

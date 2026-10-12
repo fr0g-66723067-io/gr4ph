@@ -1644,7 +1644,8 @@ func TestHelp(t *testing.T) {
 			for _, want := range []string{
 				"usage: gr4ph", "ttp <query>", "artifact <query>", "cm <query>",
 				"dc <query>", "group <query>", "tactic <ta-id>", "platform <name>", "rel <name>", "exit status: 0",
-				"coverage <cm>", "gain <cm>", "contain <ttp>",
+				"kev <query>", "cwe <query>", "product <v>/<name>",
+				"coverage [<cm>", "gain [<cm>", "contain <ttp>",
 			} {
 				if !strings.Contains(out, want) {
 					t.Errorf("usage does not mention %q", want)
