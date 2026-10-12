@@ -11,10 +11,11 @@
 // When the fetched version differs from the pinned one this generator re-pins
 // its own sourceKEV and pinnedShape literals in place, emits with the freshly
 // measured counts and prints the one line that says so — the count pins in
-// ontology/ontology_test.go, cmd/gr4ph/main_test.go and README.md then fail
-// until they are re-measured, which is the forcing function. `-re-pin=false`
-// turns that into a hard error instead, and a count change under an unchanged
-// version is always an error: the version is the contract, the counts are the
+// ontology/ontology_test.go and cmd/gr4ph/main_test.go then fail until they are
+// re-measured, which is the forcing function. The README's own numbers are read
+// by no test: re-measure them by hand in the same pass. `-re-pin=false` turns
+// that into a hard error instead, and a count change under an unchanged version
+// is always an error: the version is the contract, the counts are the
 // measurement that keeps the emitted tables honest.
 //
 // Three ingestion rules keep the emitted dense ids equal to the ones the builder
@@ -137,7 +138,7 @@ func run(kevSrc, out string, w io.Writer, want shape, repin bool) error {
 		if err := repinFile(measured); err != nil {
 			return err
 		}
-		fmt.Fprintf(w, "kevgen: re-pinned %s@%s -> @%s (re-measure the count pins in ontology/ontology_test.go, cmd/gr4ph/main_test.go and README.md)\n",
+		fmt.Fprintf(w, "kevgen: re-pinned %s@%s -> @%s (re-measure the count pins in ontology/ontology_test.go and cmd/gr4ph/main_test.go, and the README's numbers by hand)\n",
 			sourceFile(), want.catalog, measured.catalog)
 		// The literals just became the measurement, so there is nothing left to
 		// compare the counts against: the suite's own pins are the gate.

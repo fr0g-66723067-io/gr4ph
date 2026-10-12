@@ -1,10 +1,10 @@
-# gr4ph — SIMD bitmatrix engine for MITRE ATT&CK x D3FEND.
+# gr4ph — SIMD bitmatrix engine for MITRE ATT&CK x D3FEND x CISA KEV.
 #
-# Every library file is gated behind `goexperiment.simd` (only `cmd/d3fendgen`,
-# `internal/simdcheck` and `internal/hotmethods` are outside the tag), so
-# GOEXPERIMENT=simd is required for build, vet and test. The generator
-# (cmd/d3fendgen) is untagged so that it can regenerate the ontology tables on a
-# stock toolchain.
+# Every library file is gated behind `goexperiment.simd` (only the two
+# generators `cmd/d3fendgen` and `cmd/kevgen`, `internal/simdcheck` and
+# `internal/hotmethods` are outside the tag), so GOEXPERIMENT=simd is required
+# for build, vet and test. The generators are untagged so that they can
+# regenerate the ontology tables on a stock toolchain.
 
 export GOEXPERIMENT=simd
 

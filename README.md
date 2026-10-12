@@ -261,9 +261,9 @@ $ ./gr4ph -json rel blocks
 {"query":"blocks","kind":"rel","name":"blocks","planes":[{"family":"offensive","id":4,"count":41,"edges":2,"sources":2},{"family":"defensive","id":3,"count":38,"edges":6,"sources":6}]}
 ```
 
-`examples/scenarios.sh` is a plain list of `gr4ph` commands — all eleven commands, the relation and family
-filters, several queries per call, `-json`, the failures and `help` — grouped into defence and attack
-scenarios, each scenario under a banner heading and each command labelled with the invocation that
+`examples/scenarios.sh` is a plain list of `gr4ph` commands — all fourteen commands, the relation and
+family filters, several queries per call, `-json`, the failures and `help` — grouped into defence and
+attack scenarios, each scenario under a banner heading and each command labelled with the invocation that
 produced the block below it. Nothing is checked and nothing is trimmed: it prints each answer in full, so
 run it after `make build` and read the output.
 
@@ -654,17 +654,19 @@ KEV is a rolling feed, unlike the three versioned ATT&CK releases: CISA revises 
 bumps its `catalogVersion`. When the fetched version differs from the pinned one, `cmd/kevgen` re-pins
 its own `sourceKEV`/`pinnedShape` literals in place, emits with the freshly measured counts and prints
 `kevgen: re-pinned known_exploited_vulnerabilities.json@<old> -> @<new> (re-measure the count pins in
-ontology/ontology_test.go, cmd/gr4ph/main_test.go and README.md)` — the count pins in those three files
-then fail until they are re-measured, which is the forcing function. `-re-pin=false` turns the same
+ontology/ontology_test.go and cmd/gr4ph/main_test.go, and the README's numbers by hand)` — the two count
+pins then fail until they are re-measured, which is the forcing function. The README's own numbers are
+read by no test, so they are re-measured by hand in the same pass. `-re-pin=false` turns the same
 condition into a hard error instead (`KEV catalog <pinned> expected, got <fetched> (re-run without
 -re-pin to re-pin in place)`), and a count change under an *unchanged* version is always an error: the
 version is the contract, the counts are the measurement that keeps the emitted tables honest.
 
-Two ingestion rules keep the emitted dense ids equal to the ones the builder assigns: entries are sorted
-by CVE id (the feed's own order is neither sorted nor stable) and every ingested string is trimmed and
-lower-cased — the feed carries surrounding whitespace on 27 names, 6 vendors and 13 products, three
+Three ingestion rules keep the emitted dense ids equal to the ones the builder assigns: entries are sorted
+by normalised CVE id (the feed's own order is neither sorted nor stable), every ingested string is trimmed
+and lower-cased — the feed carries surrounding whitespace on 27 names, 6 vendors and 13 products, three
 product names differ only in case, and the ten product pairs that collapse are why the pinned product
-count is 722 rather than the 732 raw spellings.
+count is 722 rather than the 732 raw spellings — and every vocabulary and per-entry reference list is
+deduped on that normalised key, one element per node the builder registers.
 
 Registration order is load-bearing (`ontology.Register`): relations first (so `RelNames[i]` becomes
 plane `i+1`, matching the generated constants) and then the tactic and platform vocabularies (so
