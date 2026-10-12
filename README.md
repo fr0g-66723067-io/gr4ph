@@ -709,9 +709,13 @@ weakness edges and one product edge per entry):
 | `TTPsBlind` (1200 active, 20 of 160 deployed) | synthetic | 1823 |
 | `CoverageGain` (20-countermeasure selection) | synthetic | 636 |
 | `CountermeasuresForObserved` (50-bit observed set) | synthetic | 495 |
+| `TTPsMapped` (all 157 countermeasures) | synthetic | 4740 |
 | `KEVsForProducts` (50 of 722 products) | synthetic | 2305 |
 | `KEVsForCWEs` (all 189 weaknesses) | synthetic | 9340 |
 | `CWEsForKEV` (one entry) | synthetic | 14 |
+| `KEVCWEDegree` (one entry) | synthetic | 4 |
+| `KEVsForCWE` (one class) | synthetic | 72 |
+| `ProductsForKEV` (one entry) | synthetic | 23 |
 
 The eleven round-1 arrays (ten blocks plus the `ttpFlags` column) and the four KEV blocks sit after the
 six existing blocks, so
@@ -740,6 +744,19 @@ rows — sequential runs, not a cost of this change: the same rows read 1.002–
 are interleaved, which is why the gate uses the interleaved protocol. The three new rows are dominated by
 their memory traffic: `CWEsForKEV` is one 3-word row, `KEVsForProducts` unions 50 28-word rows, and
 `KEVsForCWEs` unions all 189 of them.
+
+Round 3 (the hardening round) changes the hot path by one masked AND — `TTPsBlind` now clears the tail of
+its active row against the live technique range — and adds a `Build` cardinality check that is cold and
+runs once per process, so it appears in no benchmark. Against a worktree at `19ccf2a` (the round-2 merge;
+same host, `-benchtime=1s -count=1` interleaved ten times per tree, medians) all 22 pre-existing
+benchmarks are still present, all 26 report 0 `B/op` and 0 `allocs/op`, and every pre-existing median is
+within 1.02× — `BenchmarkTTPsBlind`, the method that gained the work, reads 0.989× (1591.5 → 1573.5 ns)
+and the worst row is `BenchmarkAdjacentRel` at 1.020× (5.8 → 5.9 ns, a single row fetch).
+`BenchmarkOntologyTTPsRel` reads 0.615×, the test-binary layout effect round 1 documented in the other
+direction. The four new rows are medians of the filtered
+`-bench 'BenchmarkTTPsMapped|BenchmarkKEVCWEDegree|BenchmarkKEVsForCWE|BenchmarkProductsForKEV'`
+`-benchmem -benchtime=1s -count=10` run, so they are measured without a preceding benchmark's cache
+state.
 
 ## License
 
