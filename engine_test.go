@@ -955,6 +955,12 @@ func TestSyntheticPanics(t *testing.T) {
 	mustPanic(t, "cold defrel name out of range", "gr4ph: defensive relation out of range", func() {
 		e.DefRelName(DefRel(9))
 	})
+	mustPanic(t, "cold data component id out of range", "gr4ph: data component out of range", func() {
+		e.DataComponentID(DataComponent(99))
+	})
+	mustPanic(t, "cold group kind out of range", "gr4ph: group out of range", func() { e.GroupKind(Group(99)) })
+	mustPanic(t, "cold tactic id out of range", "gr4ph: tactic out of range", func() { e.TacticID(Tactic(99)) })
+	mustPanic(t, "cold platform name out of range", "gr4ph: platform out of range", func() { e.PlatformName(Platform(99)) })
 	mustPanic(t, "defrel out of range (artifact-major)", "gr4ph: defensive relation out of range", func() {
 		e.ArtifactsForCountermeasure(0, DefRel(9), nil)
 	})
