@@ -12,10 +12,10 @@ import (
 	"testing"
 )
 
-// testKEV is the offline fixture: three entries in a deliberately unsorted
-// order, one with a duplicated and unsorted CWE list, one with no CWE at all,
-// one ransomware entry, surrounding whitespace on a name and a vendor, and three
-// distinct products.
+// testKEV is the offline fixture: four entries in a deliberately unsorted order,
+// one with a duplicated and unsorted CWE list, one with no CWE at all, one
+// ransomware entry, surrounding whitespace on a name and a vendor, and two
+// entries whose product pairs differ only in case.
 const testKEV = `{
   "catalogVersion": "2099.01.01",
   "vulnerabilities": [
@@ -25,16 +25,19 @@ const testKEV = `{
     {"cveID": "CVE-2099-0001", "vendorProject": "  Avendor  ", "product": "Alpha",
      "vulnerabilityName": " Alpha Flaw ", "dateAdded": "2099-01-01",
      "knownRansomwareCampaignUse": "Known", "cwes": ["CWE-502", "CWE-20", "CWE-20"]},
-    {"cveID": "CVE-2099-0002", "vendorProject": "Bvendor", "product": "Beta",
+    {"cveID": "CVE-2099-0002", "vendorProject": "bvendor", "product": "beta",
      "vulnerabilityName": "Beta Flaw", "dateAdded": "2099-01-02",
-     "knownRansomwareCampaignUse": "Unknown", "cwes": []}
+     "knownRansomwareCampaignUse": "Unknown", "cwes": []},
+    {"cveID": "CVE-2099-0004", "vendorProject": "Bvendor", "product": "Beta",
+     "vulnerabilityName": "Beta Flaw Again", "dateAdded": "2099-01-04",
+     "knownRansomwareCampaignUse": "Unknown", "cwes": ["CWE-79"]}
   ]
 }`
 
 // testShape is the fixture's own measurement, not the pinned release's.
 var testShape = shape{
 	catalog: "2099.01.01",
-	entries: 3, cweEdges: 3, entriesWithCWE: 2, cwes: 3, products: 3, ransomware: 1,
+	entries: 4, cweEdges: 4, entriesWithCWE: 3, cwes: 3, products: 3, ransomware: 1,
 }
 
 // TestParseSortsAndTrims pins the parsing rules: entries sorted by CVE id, the
@@ -49,16 +52,16 @@ func TestParseSortsAndTrims(t *testing.T) {
 	if m.catalog != "2099.01.01" {
 		t.Errorf("catalog = %q", m.catalog)
 	}
-	if got := strings.Join(m.kevIDs, ","); got != "CVE-2099-0001,CVE-2099-0002,CVE-2099-0003" {
+	if got := strings.Join(m.kevIDs, ","); got != "CVE-2099-0001,CVE-2099-0002,CVE-2099-0003,CVE-2099-0004" {
 		t.Errorf("kevIDs = %s, want the sorted order", got)
 	}
-	if got := strings.Join(m.kevNames, "|"); got != "Alpha Flaw|Beta Flaw|Zed Flaw" {
+	if got := strings.Join(m.kevNames, "|"); got != "Alpha Flaw|Beta Flaw|Zed Flaw|Beta Flaw Again" {
 		t.Errorf("kevNames = %q, want trimmed names in id order", got)
 	}
-	if got := strings.Join(m.kevAdded, ","); got != "2099-01-01,2099-01-02,2099-01-03" {
+	if got := strings.Join(m.kevAdded, ","); got != "2099-01-01,2099-01-02,2099-01-03,2099-01-04" {
 		t.Errorf("kevAdded = %s", got)
 	}
-	if !m.kevRansom[0] || m.kevRansom[1] || m.kevRansom[2] {
+	if !m.kevRansom[0] || m.kevRansom[1] || m.kevRansom[2] || m.kevRansom[3] {
 		t.Errorf("kevRansom = %v, want only the Known entry", m.kevRansom)
 	}
 	if got := strings.Join(m.cweIDs, ","); got != "CWE-20,CWE-502,CWE-79" {
@@ -66,11 +69,11 @@ func TestParseSortsAndTrims(t *testing.T) {
 	}
 	// The duplicated CWE-20 of entry 0 collapses to one pair, and the pairs stay
 	// sorted by (entry, cwe).
-	if got := toInts(m.weakKEV); got != "0,0,2" {
-		t.Errorf("weakKEV = %s, want 0,0,2", got)
+	if got := toInts(m.weakKEV); got != "0,0,2,3" {
+		t.Errorf("weakKEV = %s, want 0,0,2,3", got)
 	}
-	if got := toInts(m.weakCWE); got != "0,1,2" {
-		t.Errorf("weakCWE = %s, want 0,1,2", got)
+	if got := toInts(m.weakCWE); got != "0,1,2,2" {
+		t.Errorf("weakCWE = %s, want 0,1,2,2", got)
 	}
 	if got := strings.Join(m.productVendors, ","); got != "Avendor,Bvendor,Zvendor" {
 		t.Errorf("productVendors = %s, want (vendor, product) order", got)
@@ -78,7 +81,9 @@ func TestParseSortsAndTrims(t *testing.T) {
 	if got := strings.Join(m.productNames, ","); got != "Alpha,Beta,Zed" {
 		t.Errorf("productNames = %s", got)
 	}
-	if got := toInts(m.kevProduct); got != "0,1,2" {
+	// The fourth entry's pair ("Bvendor", "Beta") is the key of the third's
+	// ("bvendor", "beta"), so both map to the same product: one node, two edges.
+	if got := toInts(m.kevProduct); got != "0,1,2,1" {
 		t.Errorf("kevProduct = %s, want one dense product index per entry", got)
 	}
 	if got := m.shape(); got != testShape {
@@ -111,9 +116,9 @@ func TestRunEndToEnd(t *testing.T) {
 
 	// gofmt aligns the `=` inside a const block, so match values with regexps.
 	for _, want := range []*regexp.Regexp{
-		regexp.MustCompile(`\bNKEV\s+= 3\b`),
-		regexp.MustCompile(`\bNKEVCWE\s+= 3\b`),
-		regexp.MustCompile(`\bNKEVWithCWE\s+= 2\b`),
+		regexp.MustCompile(`\bNKEV\s+= 4\b`),
+		regexp.MustCompile(`\bNKEVCWE\s+= 4\b`),
+		regexp.MustCompile(`\bNKEVWithCWE\s+= 3\b`),
 		regexp.MustCompile(`\bNCWE\s+= 3\b`),
 		regexp.MustCompile(`\bNProduct\s+= 3\b`),
 		regexp.MustCompile(`\bNKEVRansomware\s+= 1\b`),
@@ -129,7 +134,9 @@ func TestRunEndToEnd(t *testing.T) {
 		"package ontology",
 		`const SourceKEV = "known_exploited_vulnerabilities.json@2099.01.01"`,
 		`"CVE-2099-0001",`,
+		`"CVE-2099-0004",`,
 		`"Alpha Flaw",`,
+		`"Beta Flaw Again",`,
 		`"2099-01-02",`,
 		"var KEVRansomware = [...]bool{",
 		"var KEVProductIndex = [...]uint16{",
@@ -144,13 +151,13 @@ func TestRunEndToEnd(t *testing.T) {
 	}
 	// The two weakness arrays are parallel and neither is nested.
 	weakKEV := tableBody(t, text, "KEVWeaknessKEV")
-	if weakKEV != "0, 0, 2," {
+	if weakKEV != "0, 0, 2, 3," {
 		t.Errorf("KEVWeaknessKEV = %q, want the parallel entry indices", weakKEV)
 	}
-	if got := tableBody(t, text, "KEVWeaknessCWE"); got != "0, 1, 2," {
+	if got := tableBody(t, text, "KEVWeaknessCWE"); got != "0, 1, 2, 2," {
 		t.Errorf("KEVWeaknessCWE = %q, want the parallel CWE indices", got)
 	}
-	if got := tableBody(t, text, "KEVProductIndex"); got != "0," && got != "0, 1, 2," {
+	if got := tableBody(t, text, "KEVProductIndex"); got != "0, 1, 2, 1," {
 		t.Errorf("KEVProductIndex = %q, want one index per entry", got)
 	}
 	if strings.Contains(text, "nil") || strings.Contains(text, "import") {
@@ -163,8 +170,8 @@ func TestRunEndToEnd(t *testing.T) {
 
 	wantSummary := "kevgen: wrote " + out + "\n" +
 		"  catalog        known_exploited_vulnerabilities.json@2099.01.01\n" +
-		"  entries        3 (1 ransomware)\n" +
-		"  weaknesses     3 references over 3 CWEs, 2 entries with at least one\n" +
+		"  entries        4 (1 ransomware)\n" +
+		"  weaknesses     4 references over 3 CWEs, 3 entries with at least one\n" +
 		"  products       3 (one per entry)\n"
 	if got := buf.String(); got != wantSummary {
 		t.Fatalf("summary mismatch\n--- got ---\n%s--- want ---\n%s", got, wantSummary)

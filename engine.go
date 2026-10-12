@@ -7,7 +7,7 @@ import (
 	"strconv"
 )
 
-// Engine is the frozen graph: four multi-plane bitmatrix blocks, twelve
+// Engine is the frozen graph: four multi-plane bitmatrix blocks, sixteen
 // single-plane blocks, the per-technique attribute columns and the
 // cold-path tables. It is immutable after Build, so any number of goroutines
 // may query it concurrently as long as each supplies its own dst and scratch
@@ -27,7 +27,7 @@ import (
 // set can never crash a traversal. Misuse of the *engine*'s own dimensions
 // still panics, because it is a programming error with no sensible fallback:
 // a relation id >= RelCount()+1 (or a defensive relation id >=
-// DefRelCount()+1), a Kind that is not one of the four partitions with a row
+// DefRelCount()+1), a Kind that is not one of the seven partitions with a row
 // stride (WordsPerRow panics "gr4ph: unknown kind"), or a scratch row shorter than
 // WordsPerRow(returned partition). The scratch check runs before the id bounds
 // check, so an undersized scratch panics even when the id is out of range.
@@ -47,12 +47,16 @@ import (
 type Engine struct {
 	nTTP, nArt, nCM int // partition sizes
 	nDC, nGrp       int
+	nKEV            int // KEV entries
+	nCWE, nProduct  int // the weakness and product vocabularies the KEV catalog names
 	nRel, nDefRel   int // planes per family, including the union plane 0
 	nTactic         int // tactic vocabulary size (TA ids)
 	nPlatform       int // platform vocabulary size
 
 	wTTP, wArt, wCM int // words per row for each partition
 	wDC, wGrp       int
+	wKEV            int // words per row over KEV entries (cweKEV, productKEV rows)
+	wCWE, wProduct  int // words per row over the two KEV vocabularies
 	wTactic         int // one word per technique (the tactic mask)
 	wPlatform       int // one word per technique (the platform mask)
 
@@ -80,6 +84,14 @@ type Engine struct {
 	grpSoftware []uint64 // [nGrp][wGrp]      group -> software
 	softwareGrp []uint64 // [nGrp][wGrp]      software -> groups
 
+	// The KEV catalog: the entry partition, the weakness vocabulary it names
+	// and the product vocabulary it is about. Both families are materialised in
+	// both directions, and every row is exactly one stride long.
+	kevCWE     []uint64 // [nKEV][wCWE]      entry -> weakness
+	cweKEV     []uint64 // [nCWE][wKEV]      weakness -> entry (transpose)
+	kevProduct []uint64 // [nKEV][wProduct]  entry -> product
+	productKEV []uint64 // [nProduct][wKEV]  product -> entry (transpose)
+
 	ttpIDs        []string // index-parallel cold tables
 	ttpLabels     []string
 	ttpDomains    []Domain
@@ -104,6 +116,14 @@ type Engine struct {
 	cmIDs    []string
 	cmLabels []string
 
+	kevIDs         []string // KEV entries (CVE ids), index-parallel
+	kevNames       []string
+	kevAdded       []string
+	kevRansomware  []bool
+	cweIDs         []string // weakness vocabulary, index-parallel
+	productVendors []string // product vocabulary, index-parallel
+	productNames   []string
+
 	relNames    []string // index 0 is "any"
 	defRelNames []string // index 0 is "any"
 
@@ -116,6 +136,9 @@ type Engine struct {
 	platformIndex map[string]uint16
 	relIndex      map[string]Rel
 	defRelIndex   map[string]DefRel
+	kevIndex      map[string]uint16
+	cweIndex      map[string]uint16
+	productIndex  map[[2]string]uint16
 }
 
 // --- row offsets (one formula per block row) ---
@@ -148,6 +171,14 @@ func (e *Engine) ttpGrpOff(t TTP) int           { return int(t) * e.wGrp }
 func (e *Engine) grpSoftwareOff(g Group) int    { return int(g) * e.wGrp }
 func (e *Engine) softwareGrpOff(g Group) int    { return int(g) * e.wGrp }
 
+// The KEV rows: kevCWE is entry-major over the weakness vocabulary, so a kevCWE
+// row is wCWE words, and cweKEV is its transpose with a wKEV-word row per
+// weakness. The product pair is laid out the same way.
+func (e *Engine) kevCWEOff(k KEV) int         { return int(k) * e.wCWE }
+func (e *Engine) cweKEVOff(c CWE) int         { return int(c) * e.wKEV }
+func (e *Engine) kevProductOff(k KEV) int     { return int(k) * e.wProduct }
+func (e *Engine) productKEVOff(p Product) int { return int(p) * e.wKEV }
+
 // row slices one block row. off must come from the matching offset helper and
 // the id must have passed its bounds predicate.
 func (e *Engine) row(block []uint64, off, stride int) []uint64 {
@@ -161,6 +192,9 @@ func (e *Engine) okArt(a Artifact) bool       { return int(a) < e.nArt }
 func (e *Engine) okCM(cm Countermeasure) bool { return int(cm) < e.nCM }
 func (e *Engine) okDC(dc DataComponent) bool  { return int(dc) < e.nDC }
 func (e *Engine) okGroup(g Group) bool        { return int(g) < e.nGrp }
+func (e *Engine) okKEV(k KEV) bool            { return int(k) < e.nKEV }
+func (e *Engine) okCWE(c CWE) bool            { return int(c) < e.nCWE }
+func (e *Engine) okProduct(p Product) bool    { return int(p) < e.nProduct }
 
 func (e *Engine) mustTTP(t TTP) {
 	if int(t) >= e.nTTP {
@@ -189,6 +223,24 @@ func (e *Engine) mustDC(dc DataComponent) {
 func (e *Engine) mustGroup(g Group) {
 	if int(g) >= e.nGrp {
 		panic("gr4ph: group out of range")
+	}
+}
+
+func (e *Engine) mustKEV(k KEV) {
+	if int(k) >= e.nKEV {
+		panic("gr4ph: kev out of range")
+	}
+}
+
+func (e *Engine) mustCWE(c CWE) {
+	if int(c) >= e.nCWE {
+		panic("gr4ph: cwe out of range")
+	}
+}
+
+func (e *Engine) mustProduct(p Product) {
+	if int(p) >= e.nProduct {
+		panic("gr4ph: product out of range")
 	}
 }
 
@@ -251,6 +303,15 @@ func (e *Engine) DataComponentCount() int { return e.nDC }
 // campaigns share one partition.
 func (e *Engine) GroupCount() int { return e.nGrp }
 
+// KEVCount returns the number of KEV entries (CVE ids).
+func (e *Engine) KEVCount() int { return e.nKEV }
+
+// CWECount returns the size of the weakness vocabulary the KEV catalog names.
+func (e *Engine) CWECount() int { return e.nCWE }
+
+// ProductCount returns the size of the KEV product vocabulary.
+func (e *Engine) ProductCount() int { return e.nProduct }
+
 // TacticCount returns the size of the tactic vocabulary (ATT&CK TA ids).
 func (e *Engine) TacticCount() int { return e.nTactic }
 
@@ -268,7 +329,9 @@ func (e *Engine) DefRelCount() int { return max(e.nDefRel-1, 0) }
 // WordsPerRow returns the number of uint64 words in one row over cols:
 // ceil(count(cols)/64), i.e. the minimum scratch length for a query returning
 // ids of that partition. KindDataComponent is the scratch kind of
-// DataComponentsForTTPRollup. A Kind outside these partitions panics.
+// DataComponentsForTTPRollup; KindKEV, KindCWE and KindProduct are the scratch
+// kinds of the KEV queries and the partition kinds their selections index. A
+// Kind outside these partitions panics.
 func (e *Engine) WordsPerRow(cols Kind) int {
 	switch cols {
 	case KindTTP:
@@ -279,6 +342,12 @@ func (e *Engine) WordsPerRow(cols Kind) int {
 		return e.wCM
 	case KindDataComponent:
 		return e.wDC
+	case KindKEV:
+		return e.wKEV
+	case KindCWE:
+		return e.wCWE
+	case KindProduct:
+		return e.wProduct
 	}
 	panic("gr4ph: unknown kind")
 }
@@ -338,6 +407,30 @@ func (e *Engine) Tactic(id string) (Tactic, bool) {
 func (e *Engine) Platform(name string) (Platform, bool) {
 	i, ok := e.platformIndex[normalize(name)]
 	return Platform(i), ok
+}
+
+// KEV resolves a CVE id ("CVE-2021-44228") to its dense index. The CVE id is
+// the only key: vulnerability names repeat across entries, so a name key would
+// be ambiguous.
+func (e *Engine) KEV(id string) (KEV, bool) {
+	i, ok := e.kevIndex[normalize(id)]
+	return KEV(i), ok
+}
+
+// CWE resolves a weakness id ("CWE-78") or its registered label to a dense
+// index. The KEV catalog carries no CWE name, so the two are the same string
+// for every table this module ships.
+func (e *Engine) CWE(s string) (CWE, bool) {
+	i, ok := e.cweIndex[normalize(s)]
+	return CWE(i), ok
+}
+
+// Product resolves a (vendor, product) pair ("Apache", "Log4j2") to its dense
+// index. Both halves must be non-empty; the pair is matched trimmed and
+// case-insensitively, like every other key.
+func (e *Engine) Product(vendor, name string) (Product, bool) {
+	p, ok := e.productIndex[[2]string{normalize(vendor), normalize(name)}]
+	return Product(p), ok
 }
 
 // TacticID returns the tactic id string, e.g. "TA0005".
@@ -425,6 +518,78 @@ func (e *Engine) CountermeasureName(cm Countermeasure) string {
 func (e *Engine) CountermeasureLabel(cm Countermeasure) string {
 	e.mustCM(cm)
 	return e.cmLabels[cm]
+}
+
+// KEVID returns the CVE id of a KEV entry, e.g. "CVE-2021-44228".
+func (e *Engine) KEVID(k KEV) string {
+	e.mustKEV(k)
+	return e.kevIDs[k]
+}
+
+// KEVName returns the vulnerability name of a KEV entry.
+func (e *Engine) KEVName(k KEV) string {
+	e.mustKEV(k)
+	return e.kevNames[k]
+}
+
+// KEVAdded returns the date the entry was added to the catalog, e.g.
+// "2021-12-10".
+func (e *Engine) KEVAdded(k KEV) string {
+	e.mustKEV(k)
+	return e.kevAdded[k]
+}
+
+// KEVRansomware reports whether CISA links the entry to a known ransomware
+// campaign.
+func (e *Engine) KEVRansomware(k KEV) bool {
+	e.mustKEV(k)
+	return e.kevRansomware[k]
+}
+
+// CWEID returns the weakness id of a CWE, e.g. "CWE-78".
+func (e *Engine) CWEID(c CWE) string {
+	e.mustCWE(c)
+	return e.cweIDs[c]
+}
+
+// KEVProductVendor returns the vendor of a product, e.g. "Apache".
+func (e *Engine) KEVProductVendor(p Product) string {
+	e.mustProduct(p)
+	return e.productVendors[p]
+}
+
+// KEVProductName returns the product name of a product, e.g. "Log4j2".
+func (e *Engine) KEVProductName(p Product) string {
+	e.mustProduct(p)
+	return e.productNames[p]
+}
+
+// KEVVendor returns the vendor of the product entry k is about.
+func (e *Engine) KEVVendor(k KEV) string {
+	e.mustKEV(k)
+	return e.productVendors[e.kevProductID(k)]
+}
+
+// KEVProduct returns the product name entry k is about, e.g. "Log4j2".
+func (e *Engine) KEVProduct(k KEV) string {
+	e.mustKEV(k)
+	return e.productNames[e.kevProductID(k)]
+}
+
+// kevProductID returns the product id of entry k. Every entry names exactly one
+// product, so the row holds one set bit; a builder that registered an entry
+// without a product edge would read product 0, which the ontology's generator
+// cannot produce.
+func (e *Engine) kevProductID(k KEV) Product {
+	p := Product(0)
+	if e.wProduct == 0 {
+		return 0
+	}
+	eachBit(e.row(e.kevProduct, e.kevProductOff(k), e.wProduct), func(i int) bool {
+		p = Product(i)
+		return false
+	})
+	return p
 }
 
 // TTPDomain returns the ATT&CK domain a technique came from.
@@ -1139,6 +1304,75 @@ func (e *Engine) SoftwareDegree(g Group) int {
 		return 0
 	}
 	return popcountRow(e.row(e.grpSoftware, e.grpSoftwareOff(g), e.wGrp))
+}
+
+// --- hot path: KEV, weakness and product queries ---
+
+// KEVCWEDegree returns the number of weaknesses entry k names (0 for an
+// out-of-range id).
+func (e *Engine) KEVCWEDegree(k KEV) int {
+	if !e.okKEV(k) {
+		return 0
+	}
+	return popcountRow(e.row(e.kevCWE, e.kevCWEOff(k), e.wCWE))
+}
+
+// CWEsForKEV writes the weaknesses entry k names.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
+func (e *Engine) CWEsForKEV(k KEV, dst []CWE) int {
+	if !e.okKEV(k) {
+		return 0
+	}
+	return enumerate(e.row(e.kevCWE, e.kevCWEOff(k), e.wCWE), dst)
+}
+
+// KEVsForCWE writes the entries naming weakness c.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
+func (e *Engine) KEVsForCWE(c CWE, dst []KEV) int {
+	if !e.okCWE(c) {
+		return 0
+	}
+	return enumerate(e.row(e.cweKEV, e.cweKEVOff(c), e.wKEV), dst)
+}
+
+// ProductsForKEV writes the product of entry k: exactly one id for a catalog
+// entry, none for an out-of-range id.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
+func (e *Engine) ProductsForKEV(k KEV, dst []Product) int {
+	if !e.okKEV(k) {
+		return 0
+	}
+	return enumerate(e.row(e.kevProduct, e.kevProductOff(k), e.wProduct), dst)
+}
+
+// KEVsForProducts writes the union of the selected productKEV rows: the entries
+// that apply to any of the products an asset inventory names. sel is over
+// products; a bit past the live range selects no row.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
+func (e *Engine) KEVsForProducts(sel Selection, scratch []uint64, dst []KEV) int {
+	e.checkSelection(sel, KindProduct)
+	e.checkScratch(scratch, KindKEV)
+	row := scratch[:e.wKEV]
+	clear(row)
+	orSelectedRowsInto(row, sel, e.productKEV, e.wKEV)
+	return enumerate(row, dst)
+}
+
+// KEVsForCWEs writes the union of the selected cweKEV rows: the entries in any
+// of the named weakness classes. sel is over weaknesses.
+// Results are truncated to len(dst) and the return value is the total number
+// of matches.
+func (e *Engine) KEVsForCWEs(sel Selection, scratch []uint64, dst []KEV) int {
+	e.checkSelection(sel, KindCWE)
+	e.checkScratch(scratch, KindKEV)
+	row := scratch[:e.wKEV]
+	clear(row)
+	orSelectedRowsInto(row, sel, e.cweKEV, e.wKEV)
+	return enumerate(row, dst)
 }
 
 // enumerate writes the set bits of row into dst as ascending ids of type T

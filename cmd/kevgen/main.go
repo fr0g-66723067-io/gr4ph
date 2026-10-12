@@ -19,10 +19,10 @@
 //
 // Two ingestion rules keep the emitted dense ids equal to the ones the builder
 // assigns: entries are sorted by CVE id (the feed's own order is neither sorted
-// nor stable) and every ingested string is trimmed of surrounding whitespace
-// (the feed carries it on 27 names, 6 vendors and 13 products; the seven
-// product pairs that collapse under trimming are why the pinned product count is
-// 725 rather than the 732 raw pairs).
+// nor stable) and every ingested string is trimmed and lower-cased (the feed
+// carries surrounding whitespace on 27 names, 6 vendors and 13 products, and
+// three product names differ only in case; the ten product pairs that collapse
+// are why the pinned product count is 722 rather than the 732 raw spellings).
 //
 //	go run ./cmd/kevgen -out ontology/kev_gen.go
 //	go run ./cmd/kevgen -kev /tmp/kev.json -out /tmp/kev_gen.go
@@ -78,14 +78,17 @@ type shape struct {
 	ransomware               int
 }
 
-// products is 725, not the 732 *raw* (vendor, product) pairs the feed carries:
-// seven pairs differ only in surrounding whitespace ("Microsoft"/"Windows " and
-// "Microsoft"/"Windows", 174 entries; six more like it), and the builder indexes
-// a product by its trimmed key, so the raw form would make the generator's 732
-// indices disagree with the 725 nodes the builder assigns.
+// products is 722, not the 732 distinct spellings the feed carries: trimming
+// merges seven pairs that differ only in surrounding whitespace
+// ("Microsoft"/"Windows " against "Microsoft"/"Windows", 174 entries, six more
+// like it) and lower-casing merges three that differ only in the case of a
+// product name ("Cisco"/"IOS software" against "Cisco"/"IOS Software"). The
+// builder indexes a product by its key — trimmed, then lower-cased — so the raw
+// spellings would make the generator's indices disagree with the nodes the
+// builder assigns.
 var pinnedShape = shape{
 	catalog: "2026.10.08",
-	entries: 1739, cweEdges: 1679, entriesWithCWE: 1564, cwes: 189, products: 725, ransomware: 361,
+	entries: 1739, cweEdges: 1679, entriesWithCWE: 1564, cwes: 189, products: 722, ransomware: 361,
 }
 
 func main() {
@@ -198,8 +201,8 @@ type catalog struct {
 // surrounding whitespace on 27 names, 6 vendors and 13 products, and the engine
 // indexes a key the way it looks it up (trimmed and lower-cased), so the raw
 // form would make a stored label render differently from the way it resolves —
-// and, for products, would give the generator seven more indices than the
-// builder has nodes (732 raw pairs, 725 distinct keys).
+// and, for products, would give the generator ten more indices than the builder
+// has nodes (732 raw spellings, 722 keys).
 type entry struct {
 	id, name, added string
 	ransom          bool
@@ -281,24 +284,36 @@ func parse(data []byte) (*model, error) {
 		cweIndex[w] = i
 	}
 
-	type product struct{ vendor, name string }
+	type product struct {
+		key          [2]string // the engine's key: trimmed, then lower-cased
+		vendor, name string
+	}
 	var pairs []product
 	for _, e := range entries {
-		pairs = append(pairs, product{e.vendor, e.product})
+		pairs = append(pairs, product{
+			key:    [2]string{normalize(e.vendor), normalize(e.product)},
+			vendor: e.vendor, name: e.product,
+		})
 	}
 	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].key[0] != pairs[j].key[0] {
+			return pairs[i].key[0] < pairs[j].key[0]
+		}
+		if pairs[i].key[1] != pairs[j].key[1] {
+			return pairs[i].key[1] < pairs[j].key[1]
+		}
 		if pairs[i].vendor != pairs[j].vendor {
 			return pairs[i].vendor < pairs[j].vendor
 		}
 		return pairs[i].name < pairs[j].name
 	})
 	var productVendors, productNames []string
-	productIndex := map[product]int{}
+	productIndex := map[[2]string]int{}
 	for _, p := range pairs {
-		if _, ok := productIndex[p]; ok {
+		if _, ok := productIndex[p.key]; ok {
 			continue
 		}
-		productIndex[p] = len(productVendors)
+		productIndex[p.key] = len(productVendors)
 		productVendors = append(productVendors, p.vendor)
 		productNames = append(productNames, p.name)
 	}
@@ -314,13 +329,22 @@ func parse(data []byte) (*model, error) {
 		m.kevNames = append(m.kevNames, e.name)
 		m.kevAdded = append(m.kevAdded, e.added)
 		m.kevRansom = append(m.kevRansom, e.ransom)
-		m.kevProduct = append(m.kevProduct, productIndex[product{e.vendor, e.product}])
+		m.kevProduct = append(m.kevProduct, productIndex[[2]string{normalize(e.vendor), normalize(e.product)}])
 		for _, w := range e.cwes {
 			m.weakKEV = append(m.weakKEV, len(m.kevIDs)-1)
 			m.weakCWE = append(m.weakCWE, cweIndex[w])
 		}
 	}
 	return m, nil
+}
+
+// normalize is the engine's key rule: trim, then lower-case. The emitted product
+// vocabulary must be that *key* space rather than the feed's spelling space,
+// because the builder assigns one node per key: three pairs differ only in the
+// case of the product name ("Cisco"/"IOS Software" against "Cisco"/"IOS
+// software", two more like it), and 725 spellings are 722 keys.
+func normalize(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
 }
 
 // sortedDedup trims, drops the empty strings, sorts and dedups a vocabulary
