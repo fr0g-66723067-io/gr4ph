@@ -307,34 +307,36 @@ func boolFlag(f *flag.Flag) bool {
 // truncation at len(dst) never bites, and one allocation per partition serves
 // every query of the invocation.
 type buffers struct {
-	arts []gr4ph.Artifact
-	ttps []gr4ph.TTP
-	cms  []gr4ph.Countermeasure
-	dcs  []gr4ph.DataComponent
-	gs   []gr4ph.Group
-	kevs []gr4ph.KEV
-	cwes []gr4ph.CWE
-	scrA []uint64 // artifact partition: ArtifactsRollupRel
-	scrT []uint64 // technique partition: TTPsRollupRel, TTPsForCountermeasureRollup
-	scrC []uint64 // countermeasure partition: CountermeasuresForTTPRollup, ...ViaTTPs
-	scrD []uint64 // data-component partition: DataComponentsForTTPRollup
-	scrK []uint64 // KEV partition: KEVsForProducts, KEVsForCWEs
+	arts  []gr4ph.Artifact
+	ttps  []gr4ph.TTP
+	cms   []gr4ph.Countermeasure
+	dcs   []gr4ph.DataComponent
+	gs    []gr4ph.Group
+	kevs  []gr4ph.KEV
+	cwes  []gr4ph.CWE
+	gains []int    // countermeasure partition: one marginal gain per candidate
+	scrA  []uint64 // artifact partition: ArtifactsRollupRel
+	scrT  []uint64 // technique partition: TTPsRollupRel, TTPsForCountermeasureRollup
+	scrC  []uint64 // countermeasure partition: CountermeasuresForTTPRollup, ...ViaTTPs
+	scrD  []uint64 // data-component partition: DataComponentsForTTPRollup
+	scrK  []uint64 // KEV partition: KEVsForProducts, KEVsForCWEs
 }
 
 func newBuffers(e *gr4ph.Engine) *buffers {
 	return &buffers{
-		arts: make([]gr4ph.Artifact, e.ArtifactCount()),
-		ttps: make([]gr4ph.TTP, e.TTPCount()),
-		cms:  make([]gr4ph.Countermeasure, e.CountermeasureCount()),
-		dcs:  make([]gr4ph.DataComponent, e.DataComponentCount()),
-		gs:   make([]gr4ph.Group, e.GroupCount()),
-		kevs: make([]gr4ph.KEV, e.KEVCount()),
-		cwes: make([]gr4ph.CWE, e.CWECount()),
-		scrA: make([]uint64, e.WordsPerRow(gr4ph.KindArtifact)),
-		scrT: make([]uint64, e.WordsPerRow(gr4ph.KindTTP)),
-		scrC: make([]uint64, e.WordsPerRow(gr4ph.KindCountermeasure)),
-		scrD: make([]uint64, e.WordsPerRow(gr4ph.KindDataComponent)),
-		scrK: make([]uint64, e.WordsPerRow(gr4ph.KindKEV)),
+		arts:  make([]gr4ph.Artifact, e.ArtifactCount()),
+		ttps:  make([]gr4ph.TTP, e.TTPCount()),
+		cms:   make([]gr4ph.Countermeasure, e.CountermeasureCount()),
+		dcs:   make([]gr4ph.DataComponent, e.DataComponentCount()),
+		gs:    make([]gr4ph.Group, e.GroupCount()),
+		kevs:  make([]gr4ph.KEV, e.KEVCount()),
+		cwes:  make([]gr4ph.CWE, e.CWECount()),
+		gains: make([]int, e.CountermeasureCount()),
+		scrA:  make([]uint64, e.WordsPerRow(gr4ph.KindArtifact)),
+		scrT:  make([]uint64, e.WordsPerRow(gr4ph.KindTTP)),
+		scrC:  make([]uint64, e.WordsPerRow(gr4ph.KindCountermeasure)),
+		scrD:  make([]uint64, e.WordsPerRow(gr4ph.KindDataComponent)),
+		scrK:  make([]uint64, e.WordsPerRow(gr4ph.KindKEV)),
 	}
 }
 
@@ -981,9 +983,13 @@ func runGain(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
 		return finish(stdout, stderr, []result{res}, failures, *jsonOut)
 	}
 
+	// One union for the whole scan: the covered set of the deployment is the
+	// same for every candidate, so ranking walks the gains table instead of
+	// re-deriving the union 157 times.
 	candidates := make([]gain, 0, e.CountermeasureCount())
+	n := e.CoverageGains(deployed, buf.scrT, buf.gains)
 	for cm := range e.CountermeasureCount() {
-		g := e.CoverageGain(gr4ph.Countermeasure(cm), deployed, buf.scrT)
+		g := buf.gains[cm]
 		if g <= 0 {
 			continue
 		}
@@ -1007,7 +1013,7 @@ func runGain(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
 	if !*all && *top < len(shown) {
 		shown = shown[:*top]
 	}
-	res.Candidates = new(len(candidates))
+	res.Candidates = new(n)
 	res.Gains = shown
 	return finish(stdout, stderr, []result{res}, failures, *jsonOut)
 }
@@ -1021,13 +1027,17 @@ func runGain(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
 func greedyGain(e *gr4ph.Engine, deployed []uint64, scratch []uint64) ([]gain, int) {
 	sel := make([]uint64, len(deployed))
 	copy(sel, deployed)
+	gains := make([]int, e.CountermeasureCount())
 	var rows []gain
 	for {
+		// One union per round, not one per candidate: every candidate is
+		// ranked against the same accumulated selection.
+		e.CoverageGains(sel, scratch, gains)
 		best := -1
 		bestGain := 0
 		bestName := ""
 		for cm := range e.CountermeasureCount() {
-			g := e.CoverageGain(gr4ph.Countermeasure(cm), sel, scratch)
+			g := gains[cm]
 			if g <= 0 {
 				continue
 			}

@@ -203,6 +203,39 @@ func TestCoverageTruncation(t *testing.T) {
 	}
 }
 
+// TestCoverageGainsMatchesGain pins the bulk primitive against the
+// single-candidate one it was extracted from: a ranking walks the table
+// CoverageGains writes, so any disagreement would change what `gain` prints.
+func TestCoverageGainsMatchesGain(t *testing.T) {
+	e := buildSynthetic(t)
+	scratchT := make([]uint64, e.WordsPerRow(KindTTP))
+	gains := make([]int, e.CountermeasureCount())
+
+	for _, sel := range []Selection{selOf(1), selOf(1, 0), selOf(1, 1), selOf(1, 0, 1)} {
+		n := e.CoverageGains(sel, scratchT, gains)
+		positive := 0
+		for cm := range e.CountermeasureCount() {
+			want := e.CoverageGain(Countermeasure(cm), sel, scratchT)
+			if gains[cm] != want {
+				t.Errorf("CoverageGains[%d] over %v = %d, CoverageGain = %d", cm, sel, gains[cm], want)
+			}
+			if want > 0 {
+				positive++
+			}
+		}
+		if n != positive {
+			t.Errorf("CoverageGains over %v reported %d positive gains, want %d", sel, n, positive)
+		}
+	}
+
+	// A dst shorter than the partition counts every gain but writes only the
+	// entries it has room for.
+	short := []int{-1}
+	if n := e.CoverageGains(selOf(1), scratchT, short); n != 2 || short[0] != 2 {
+		t.Errorf("CoverageGains with a one-entry dst = %d %v, want 2 [2]", n, short)
+	}
+}
+
 func TestCoverageGuards(t *testing.T) {
 	e := buildSynthetic(t)
 	scratchT := make([]uint64, e.WordsPerRow(KindTTP))

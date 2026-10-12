@@ -1,6 +1,6 @@
-// Package hotmethods holds the canonical list of the engine's 57 allocation-free
+// Package hotmethods holds the canonical list of the engine's 58 allocation-free
 // query methods, so the root and ontology zero-allocation tests can prove they
-// cover the same set instead of each counting to 57 on its own.
+// cover the same set instead of each counting to 58 on its own.
 package hotmethods
 
 // Names is the canonical order of the hot-path methods: the exact traversals,
@@ -39,6 +39,7 @@ var Names = []string{
 	"TTPsCovered",
 	"TTPsBlind",
 	"CoverageGain",
+	"CoverageGains",
 	"CountermeasuresForObserved",
 	"KEVCWEDegree",
 	"CWEsForKEV",

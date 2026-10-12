@@ -280,7 +280,7 @@ resolved query instead of text.
 ### Coverage and containment
 
 The three overlay commands answer whole-set questions instead of one node's neighbourhood, over the same
-mask-driven kernel family (`TTPsCovered`, `TTPsBlind`, `TTPsMapped`, `CoverageGain`,
+mask-driven kernel family (`TTPsCovered`, `TTPsBlind`, `TTPsMapped`, `CoverageGain`, `CoverageGains`,
 `CountermeasuresForObserved`). `coverage` resolves its queries into a **deployed** set of
 countermeasures and classifies every technique of the tables: **defended** (a deployed countermeasure
 defends it), **undefended** (inside the D3FEND mapping but no deployed countermeasure covers it) and
@@ -511,6 +511,7 @@ Traversals (all take/return ids, all allocate nothing):
 | `TTPsAny` `TTPsAll` `ArtifactsAny` `ArtifactsAll` | k × row words, vector OR/AND |
 | `TTPsMapped` | every countermeasure row: 157 × 19 words, vector OR |
 | `TTPsCovered` `TTPsBlind` `CoverageGain` `CountermeasuresForObserved` | selected-row union over the caller's `Selection` (k × 19 words for `cmTTP`, k × 3 for `ttpCM`) + a 19-word difference or popcount |
+| `CoverageGains` | selected-row union over the caller's `Selection` once (k × 19 words for `cmTTP`) + one 19-word masked popcount per countermeasure |
 | `KEVsForProducts` `KEVsForCWEs` | selected-row union over the caller's `Selection` (k × 28 words over `productKEV`/`cweKEV`) |
 
 Builder (cold path; the builder is single-use and then frozen by `Build`):
@@ -700,7 +701,7 @@ builder.
 ## Measured performance
 
 `GOEXPERIMENT=simd go test -bench . -benchmem -benchtime=1s -count=10 ./...` on the development
-host (i5-10310U, 128-bit vectors); the table lists all 26 benchmarks, ns/op is the median of 10 runs,
+host (i5-10310U, 128-bit vectors); the table lists all 27 benchmarks, ns/op is the median of 10 runs,
 and every benchmark reports 0 B/op and 0 allocs/op. The real-table rows run against `ontology.Register`'s
 1186-node engine; the synthetic rows run against three root-package fixtures — `benchEngine`'s generated graph
 (1200 techniques, 250 artifacts, 160 countermeasures), `attributedEngine` (1200 techniques with
@@ -710,32 +711,33 @@ weakness edges and one product edge per entry):
 
 | benchmark | fixture | ns/op |
 |---|---|---|
-| `TTPsRel(Process, accesses)` | real tables | 14 |
-| `TTPsAny(Process, File)` | real tables | 91 |
-| `CountermeasuresForArtifactViaTTPs(Process)` | real tables | 105 |
-| `CountermeasuresForTTPRollup(T1546)` | real tables | 190 |
+| `TTPsRel(Process, accesses)` | real tables | 16 |
+| `TTPsAny(Process, File)` | real tables | 103 |
+| `CountermeasuresForArtifactViaTTPs(Process)` | real tables | 118 |
+| `CountermeasuresForTTPRollup(T1546)` | real tables | 215 |
 | `AdjacentRel` | synthetic | 6 |
 | `Artifacts` (one technique row) | synthetic | 12 |
-| `ArtifactsRollup` (one technique row + children) | synthetic | 32 |
+| `ArtifactsRollup` (one technique row + children) | synthetic | 31 |
 | `TTPTactics` | synthetic | 2 |
-| `TTPsForTactic` (212-technique row) | synthetic | 221 |
-| `TTPsForGroupRollup` | synthetic | 248 |
-| `TTPsCovered` (20-countermeasure selection) | synthetic | 661 |
-| `TTPsBlind` (1200 active, 20 of 160 deployed) | synthetic | 1714 |
-| `CoverageGain` (20-countermeasure selection) | synthetic | 635 |
-| `CountermeasuresForObserved` (50-bit observed set) | synthetic | 473 |
-| `CountermeasuresForArtifactViaTTPs` (one artifact) | synthetic | 83 |
+| `TTPsForTactic` (212-technique row) | synthetic | 218 |
+| `TTPsForGroupRollup` | synthetic | 280 |
+| `TTPsCovered` (20-countermeasure selection) | synthetic | 671 |
+| `TTPsBlind` (1200 active, 20 of 160 deployed) | synthetic | 1758 |
+| `CoverageGain` (20-countermeasure selection) | synthetic | 651 |
+| `CoverageGains` (all 160 countermeasures) | synthetic | 3803 |
+| `CountermeasuresForObserved` (50-bit observed set) | synthetic | 486 |
+| `CountermeasuresForArtifactViaTTPs` (one artifact) | synthetic | 82 |
 | `CountermeasuresForTTPRollup` (one technique row + children) | synthetic | 26 |
 | `TTPsRel` (one artifact plane) | synthetic | 22 |
 | `TTPsRollup` (one artifact row) | synthetic | 80 |
-| `TTPsAny` (RelAny, two artifacts) | synthetic | 92 |
-| `TTPsMapped` (all 157 countermeasures) | synthetic | 4960 |
-| `KEVsForProducts` (50 of 722 products) | synthetic | 2245 |
-| `KEVsForCWEs` (all 189 weaknesses) | synthetic | 9215 |
-| `CWEsForKEV` (one entry) | synthetic | 14 |
+| `TTPsAny` (RelAny, two artifacts) | synthetic | 89 |
+| `TTPsMapped` (all 160 countermeasures) | synthetic | 5077 |
+| `KEVsForProducts` (50 of 722 products) | synthetic | 2299 |
+| `KEVsForCWEs` (all 189 weaknesses) | synthetic | 9187 |
+| `CWEsForKEV` (one entry) | synthetic | 15 |
 | `KEVCWEDegree` (one entry) | synthetic | 5 |
-| `KEVsForCWE` (one class) | synthetic | 75 |
-| `ProductsForKEV` (one entry) | synthetic | 24 |
+| `KEVsForCWE` (one class) | synthetic | 72 |
+| `ProductsForKEV` (one entry) | synthetic | 25 |
 
 The eleven round-1 arrays (ten blocks plus the `ttpFlags` column) and the four KEV blocks sit after the
 six existing blocks, so
@@ -778,6 +780,22 @@ direction. The table above is one full-suite `-count=10` run of the declared com
 it — including the four methods this round added — is reproducible with that single command; the
 interleaved A/B medians quoted here are lower (1573.5 ns for `TTPsBlind`, for instance) because each
 sample starts a fresh process with a colder cache.
+
+Round 4 (the defects the documentation audit exposed) adds one method, `CoverageGains`, and no array: the
+`gain` verb ranked every candidate with its own `CoverageGain` call, so each of the 160 (synthetic) or 157
+(real) candidates re-derived the same covered union. `CoverageGains` derives it once and writes one
+marginal gain per countermeasure, which is what `gain -all` and every round of
+`gain -greedy ContentQuarantine` now walk; both print byte-identical output to the per-candidate loop.
+Against a worktree at `b49e2d3` (the round-3 merge; same host, `-benchtime=1s -count=1` interleaved ten
+times per tree, medians) `BenchmarkCoverageGain` reads 608.8 → 611.3 ns (1.004×, as it must: its own code
+did not move) while `BenchmarkCoverageGains` reads 3712.5 ns for the whole scan — 25.9× less than the
+157 × 611.3 ns = 96 µs of union work the old `gain -all` ran — and the other re-measured rows are
+`BenchmarkTTPsForGroupRollup` 1.024×, `BenchmarkTTPsMapped` 1.010×, `BenchmarkTTPsBlind` 1.008× and
+`BenchmarkOntologyTTPsRel` 1.018×. The table above is again one full-suite `-count=10` run of the declared
+command, so its pre-existing rows differ from the round-3 table by up to 1.13× (`TTPsForGroupRollup`
+248 → 280 ns) and by −0.3% on others (`KEVsForCWEs` 9215 → 9187 ns): the interleaved medians show that
+spread is the host and the test-binary layout this round's new tests and fixture changes bring, not the
+one added method, which is why the table is refreshed wholesale rather than row by row.
 
 ## License
 

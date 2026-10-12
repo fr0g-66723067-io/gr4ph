@@ -241,6 +241,24 @@ func BenchmarkCoverageGain(b *testing.B) {
 	}
 }
 
+// BenchmarkCoverageGains is the whole ranking: one selected-row union plus a
+// masked popcount per countermeasure, i.e. the scan `gain` runs once instead of
+// one CoverageGain call per candidate.
+func BenchmarkCoverageGains(b *testing.B) {
+	e := benchEngine(b)
+	sel := make([]uint64, e.WordsPerRow(KindCountermeasure))
+	for i := range 20 {
+		setBit(sel, i)
+	}
+	scratch := make([]uint64, e.WordsPerRow(KindTTP))
+	dst := make([]int, e.CountermeasureCount())
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		sink += e.CoverageGains(sel, scratch, dst)
+	}
+}
+
 // BenchmarkCountermeasuresForObserved is the containment query: the union of
 // the transposed rows of a 50-technique observed set.
 func BenchmarkCountermeasuresForObserved(b *testing.B) {
@@ -259,7 +277,7 @@ func BenchmarkCountermeasuresForObserved(b *testing.B) {
 }
 
 // BenchmarkTTPsMapped is the mapping range every coverage state is measured
-// against: the union of all 157 countermeasure rows, computed per call. There is
+// against: the union of all 160 countermeasure rows, computed per call. There is
 // no input selection, so the cost is the whole block.
 func BenchmarkTTPsMapped(b *testing.B) {
 	e := benchEngine(b)

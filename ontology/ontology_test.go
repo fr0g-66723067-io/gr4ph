@@ -1313,6 +1313,7 @@ func TestZeroAllocOntology(t *testing.T) {
 	ttps := []gr4ph.TTP{t1003, t1003a}
 	selC := make([]uint64, e.WordsPerRow(gr4ph.KindCountermeasure))
 	setSel(selC, int(cm0))
+	dstGains := make([]int, e.CountermeasureCount())
 	selT := make([]uint64, e.WordsPerRow(gr4ph.KindTTP))
 	setSel(selT, int(t1003a))
 	bufK := make([]gr4ph.KEV, e.KEVCount())
@@ -1386,6 +1387,7 @@ func TestZeroAllocOntology(t *testing.T) {
 		{"TTPsCovered", func() { ontologySink += e.TTPsCovered(selC, scratchT, bufT) }},
 		{"TTPsBlind", func() { ontologySink += e.TTPsBlind(selT, selC, scratchT, bufT) }},
 		{"CoverageGain", func() { ontologySink += e.CoverageGain(cm0, selC, scratchT) }},
+		{"CoverageGains", func() { ontologySink += e.CoverageGains(selC, scratchT, dstGains) }},
 		{"CountermeasuresForObserved", func() {
 			ontologySink += e.CountermeasuresForObserved(selT, scratchC, bufC)
 		}},
@@ -2051,6 +2053,31 @@ func TestOntologyCoverage(t *testing.T) {
 	setSel(quarantineSel, int(quarantine))
 	if got := e.CoverageGain(filtering, quarantineSel, scratchT); got != 107 {
 		t.Errorf("CoverageGain(NetworkTrafficFiltering, ContentQuarantine) = %d, want 107", got)
+	}
+	// The bulk scan agrees with the single-candidate primitive on every
+	// countermeasure, and reports the same best buy the documented `gain
+	// -greedy ContentQuarantine` example starts with.
+	gains := make([]int, e.CountermeasureCount())
+	n := e.CoverageGains(quarantineSel, scratchT, gains)
+	positive, best, bestGain := 0, -1, 0
+	for i := range e.CountermeasureCount() {
+		want := e.CoverageGain(gr4ph.Countermeasure(i), quarantineSel, scratchT)
+		if gains[i] != want {
+			t.Errorf("CoverageGains[%d] over ContentQuarantine = %d, CoverageGain = %d", i, gains[i], want)
+		}
+		if want > 0 {
+			positive++
+		}
+		if want > bestGain {
+			best, bestGain = i, want
+		}
+	}
+	if n != positive {
+		t.Errorf("CoverageGains reported %d positive gains, want %d", n, positive)
+	}
+	if gr4ph.Countermeasure(best) != filtering || bestGain != 107 {
+		t.Errorf("the best buy after ContentQuarantine is %s at %d, want NetworkTrafficFiltering at 107",
+			e.CountermeasureName(gr4ph.Countermeasure(best)), bestGain)
 	}
 
 	observed := make([]uint64, e.WordsPerRow(gr4ph.KindTTP))

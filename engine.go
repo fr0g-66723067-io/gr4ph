@@ -1117,6 +1117,35 @@ func (e *Engine) CoverageGain(cm Countermeasure, sel Selection, scratch []uint64
 	return n
 }
 
+// CoverageGains writes the marginal gain of every countermeasure against one
+// deployment: dst[cm] is what cm would newly cover on top of covered(sel), the
+// number CoverageGain returns for a single candidate. The covered union is
+// computed once for the whole scan, so ranking every countermeasure costs one
+// selected-row union instead of one union per candidate. Countermeasures at and
+// beyond len(dst) are counted but not written; the return value is the number of
+// countermeasures with a positive gain.
+func (e *Engine) CoverageGains(sel Selection, scratch []uint64, dst []int) int {
+	e.checkSelection(sel, KindCountermeasure)
+	e.checkScratch(scratch, KindTTP)
+	row := scratch[:e.wTTP]
+	clear(row)
+	orSelectedRowsInto(row, sel, e.cmTTP, e.wTTP)
+	n := 0
+	for cm := range e.nCM {
+		g := 0
+		for i, w := range e.row(e.cmTTP, e.cmTTPOff(Countermeasure(cm)), e.wTTP) {
+			g += bits.OnesCount64(w &^ row[i])
+		}
+		if g > 0 {
+			n++
+		}
+		if cm < len(dst) {
+			dst[cm] = g
+		}
+	}
+	return n
+}
+
 // CountermeasuresForObserved writes the countermeasures of any observed
 // technique: the union of the selected ttpCM rows, i.e. the mitigation set for
 // the current state of an intrusion. observed is over techniques.

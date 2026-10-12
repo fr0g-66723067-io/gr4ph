@@ -29,6 +29,7 @@ func TestZeroAllocSynthetic(t *testing.T) {
 	dstC := make([]Countermeasure, e.CountermeasureCount())
 	dstD := make([]DataComponent, e.DataComponentCount())
 	dstG := make([]Group, e.GroupCount())
+	dstGains := make([]int, e.CountermeasureCount())
 	arts := []Artifact{0, 1, 2, 3}
 	ttps := []TTP{0, 1, 2, 3, 4, 5}
 	selC := make([]uint64, e.WordsPerRow(KindCountermeasure))
@@ -95,6 +96,7 @@ func TestZeroAllocSynthetic(t *testing.T) {
 		{"TTPsCovered", func() { sink += e.TTPsCovered(selC, scratchT, dstT) }},
 		{"TTPsBlind", func() { sink += e.TTPsBlind(selT, selC, scratchT, dstT) }},
 		{"CoverageGain", func() { sink += e.CoverageGain(0, selC, scratchT) }},
+		{"CoverageGains", func() { sink += e.CoverageGains(selC, scratchT, dstGains) }},
 		{"CountermeasuresForObserved", func() { sink += e.CountermeasuresForObserved(selT, scratchC, dstC) }},
 		{"KEVCWEDegree", func() { sink += e.KEVCWEDegree(0) }},
 		{"CWEsForKEV", func() { sink += e.CWEsForKEV(0, dstCWE) }},
@@ -189,8 +191,8 @@ var coldNames = map[string]bool{
 // union of that registry and the cold list: a new query method in neither would
 // be a method whose allocation profile no test measures.
 func TestHotMethodRegistryCoversEngine(t *testing.T) {
-	if len(hotmethods.Names) != 57 {
-		t.Errorf("the hot registry holds %d names, want 57", len(hotmethods.Names))
+	if len(hotmethods.Names) != 58 {
+		t.Errorf("the hot registry holds %d names, want 58", len(hotmethods.Names))
 	}
 	hot := make(map[string]bool, len(hotmethods.Names))
 	for _, name := range hotmethods.Names {
