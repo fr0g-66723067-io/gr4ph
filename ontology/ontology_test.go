@@ -1236,13 +1236,46 @@ func TestOntologyCountermeasureGoldens(t *testing.T) {
 	}
 	// 759 of the 1186 techniques carry no offensive edge.
 	degreeZero := 0
+	// The audit's headline fact: ATT&CK moved most of its D3FEND mapping to
+	// the successor id, but some flagged techniques still carry offensive
+	// edges, which puts them inside the mapped range where coverage can offer
+	// them as targets. The mapped set is read once, below, so the walk is one.
+	revokedWithEdges := 0
 	for i := range e.TTPCount() {
-		if e.Degree(gr4ph.TTP(i), gr4ph.RelAny) == 0 {
+		tp := gr4ph.TTP(i)
+		if e.Degree(tp, gr4ph.RelAny) == 0 {
 			degreeZero++
+		}
+		if e.TTPRevoked(tp) && e.Degree(tp, gr4ph.RelAny) > 0 {
+			revokedWithEdges++
 		}
 	}
 	if degreeZero != 759 {
 		t.Fatalf("degree-0 techniques = %d, want 759", degreeZero)
+	}
+	if revokedWithEdges != 23 {
+		t.Fatalf("flagged techniques that still carry offensive edges = %d, want 23", revokedWithEdges)
+	}
+	mapped := make(map[gr4ph.TTP]bool, 427)
+	for _, tp := range bufT[:e.TTPsMapped(scratchT, bufT)] {
+		mapped[tp] = true
+	}
+	for i := range e.TTPCount() {
+		tp := gr4ph.TTP(i)
+		if e.TTPRevoked(tp) && e.Degree(tp, gr4ph.RelAny) > 0 && !mapped[tp] {
+			t.Errorf("flagged %s carries offensive edges but is outside the mapped range", e.TTPName(tp))
+		}
+	}
+	// The five ids the README names are among those 23.
+	for _, id := range []string{"T1053.004", "T1070.001", "T1070.002", "T1562.001", "T1574.002"} {
+		tp, ok := e.Incident(id)
+		if !ok {
+			t.Fatalf("Incident(%s) not found", id)
+		}
+		if degree, isMapped := e.Degree(tp, gr4ph.RelAny), mapped[tp]; !e.TTPRevoked(tp) || degree == 0 || !isMapped {
+			t.Errorf("%s: revoked=%v degree=%d mapped=%v, want a flagged technique with edges inside the mapped range",
+				id, e.TTPRevoked(tp), degree, isMapped)
+		}
 	}
 }
 
