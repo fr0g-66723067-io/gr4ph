@@ -576,15 +576,11 @@ func (e *Engine) KEVProduct(k KEV) string {
 	return e.productNames[e.kevProductID(k)]
 }
 
-// kevProductID returns the product id of entry k. Every entry names exactly one
-// product, so the row holds one set bit; a builder that registered an entry
-// without a product edge would read product 0, which the ontology's generator
-// cannot produce.
+// kevProductID returns the product id of entry k, which Build guarantees to
+// exist: every entry names exactly one product (ErrKEVWithoutProduct), so the
+// row holds exactly one set bit.
 func (e *Engine) kevProductID(k KEV) Product {
 	p := Product(0)
-	if e.wProduct == 0 {
-		return 0
-	}
 	eachBit(e.row(e.kevProduct, e.kevProductOff(k), e.wProduct), func(i int) bool {
 		p = Product(i)
 		return false

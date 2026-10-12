@@ -519,7 +519,7 @@ Builder (cold path; the builder is single-use and then frozen by `Build`):
 | `AddKEV(id, name, added, ransomware)` | idempotent on the normalised CVE id, which is the only key: a second call with the same id ignores its other arguments |
 | `AddCWE(id, label)` `AddProduct(vendor, name)` | the weakness and product vocabularies, dense ids in registration order |
 | `AddEdge(t, a, r)` `AddDefEdge(cm, a, dr)` `AddDefendsEdge(cm, t)` `AddTacticEdge(t, ta)` `AddPlatformEdge(t, p)` `AddDetectsEdge(dc, t)` `AddGroupUsesEdge(g, t)` `AddGroupSoftwareEdge(from, to)` `AddKEVWeaknessEdge(k, c)` `AddKEVProductEdge(k, p)` | edges are ORed into the planes; an unregistered endpoint is `ErrUnknownTTP` / `ErrUnknownArtifact` / `ErrUnknownCountermeasure` / `ErrUnknownTactic` / `ErrUnknownPlatform` / `ErrUnknownDataComponent` / `ErrUnknownGroup` / `ErrUnknownKEV` / `ErrUnknownCWE` / `ErrUnknownProduct` |
-| `Built()` `Build()` | `Build` is single-use: `ErrBuilderUsed` afterwards |
+| `Built()` `Build()` | `Build` is single-use: `ErrBuilderUsed` afterwards; `ErrKEVWithoutProduct` / `ErrKEVMultipleProducts` when the graph breaks the one-product-per-entry invariant the KEV accessors read |
 
 ### Exact vs roll-up
 
