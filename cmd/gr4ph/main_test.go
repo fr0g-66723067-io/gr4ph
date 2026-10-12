@@ -64,6 +64,24 @@ func fixtureEngine(t *testing.T) *gr4ph.Engine {
 	must(t, b.AddDetectsEdge(dcProcess, sub))
 	must(t, b.AddGroupUsesEdge(actor, t1003))
 	must(t, b.AddGroupSoftwareEdge(actor, software))
+
+	// The KEV partition, registered after every node above so no existing dense
+	// id moves: two weakness classes, two products and three entries, the third
+	// with no weakness and the first product shared with the first entry.
+	cwe20 := mustCWE(t, b, "CWE-20")
+	cwe502 := mustCWE(t, b, "CWE-502")
+	alpha := mustProduct(t, b, "Avendor", "Alpha")
+	beta := mustProduct(t, b, "Bvendor", "Beta")
+	kevAlpha := mustKEV(t, b, "CVE-2099-0001", "Alpha Flaw", "2099-01-01", true)
+	kevBeta := mustKEV(t, b, "CVE-2099-0002", "Beta Flaw", "2099-01-02", false)
+	kevGamma := mustKEV(t, b, "CVE-2099-0003", "Gamma Flaw", "2099-01-03", false)
+	must(t, b.AddKEVWeaknessEdge(kevAlpha, cwe20))
+	must(t, b.AddKEVWeaknessEdge(kevAlpha, cwe502))
+	must(t, b.AddKEVWeaknessEdge(kevBeta, cwe502))
+	must(t, b.AddKEVProductEdge(kevAlpha, alpha))
+	must(t, b.AddKEVProductEdge(kevBeta, beta))
+	must(t, b.AddKEVProductEdge(kevGamma, alpha))
+
 	e, err := b.Build()
 	if err != nil {
 		t.Fatalf("build fixture: %v", err)
@@ -139,6 +157,29 @@ func mustCountermeasure(t *testing.T, b *gr4ph.Builder, id, label string) gr4ph.
 	cm, err := b.AddCountermeasure(id, label)
 	must(t, err)
 	return cm
+}
+
+// mustCWE registers a weakness with its id as its label, as the ontology does:
+// a weakness has no separate label, so a node prints its id alone.
+func mustCWE(t *testing.T, b *gr4ph.Builder, id string) gr4ph.CWE {
+	t.Helper()
+	c, err := b.AddCWE(id, id)
+	must(t, err)
+	return c
+}
+
+func mustProduct(t *testing.T, b *gr4ph.Builder, vendor, name string) gr4ph.Product {
+	t.Helper()
+	p, err := b.AddProduct(vendor, name)
+	must(t, err)
+	return p
+}
+
+func mustKEV(t *testing.T, b *gr4ph.Builder, id, name, added string, ransomware bool) gr4ph.KEV {
+	t.Helper()
+	k, err := b.AddKEV(id, name, added, ransomware)
+	must(t, err)
+	return k
 }
 
 // runCase runs one invocation through run and returns stdout, stderr and the
@@ -305,6 +346,36 @@ rel blocks defensive plane 3/3 (countermeasure -> artifact): edges=1 sources=1
 	fixtureContainIsolated = `contain observed=1
   out countermeasures (0): -
 `
+
+	// The KEV verbs on the fixture: the catalog's own columns in the header,
+	// then the weakness classes of one entry, the entries of one class and the
+	// union of a product selection.
+	fixtureKEVAlpha = `kev CVE-2099-0001 "Alpha Flaw" added=2099-01-01 ransomware=true vendor="Avendor" product="Alpha"
+  out weaknesses (2): CWE-20, CWE-502
+`
+
+	fixtureKEVGamma = `kev CVE-2099-0003 "Gamma Flaw" added=2099-01-03 ransomware=false vendor="Avendor" product="Alpha"
+  out weaknesses (0): -
+`
+
+	fixtureCWEFirst = `cwe CWE-20
+  in  entries (1): CVE-2099-0001 "Alpha Flaw"
+`
+
+	fixtureCWESecond = `cwe CWE-502
+  in  entries (2): CVE-2099-0001 "Alpha Flaw", CVE-2099-0002 "Beta Flaw"
+`
+
+	// One product, whose entries are the two that name it.
+	fixtureProductAlpha = `product Avendor/Alpha
+  out entries (2): CVE-2099-0001 "Alpha Flaw", CVE-2099-0003 "Gamma Flaw"
+`
+
+	// Two products in one selection: the union of their entries, and the header
+	// names both resolved keys.
+	fixtureProductBoth = `product Avendor/Alpha Bvendor/Beta
+  out entries (3): CVE-2099-0001 "Alpha Flaw", CVE-2099-0002 "Beta Flaw", CVE-2099-0003 "Gamma Flaw"
+`
 )
 
 // TestTextFixture pins the text encoder byte for byte, one case per behaviour,
@@ -418,6 +489,13 @@ func TestTextFixture(t *testing.T) {
 		{"greedy gain sequence", []string{"gain", "-greedy"}, fixtureGainGreedy},
 		{"containment set of a defended technique", []string{"contain", "T1003.001"}, fixtureContainSub},
 		{"containment set of an isolated technique", []string{"contain", "T1059"}, fixtureContainIsolated},
+		{"kev entry with two weakness classes", []string{"kev", "CVE-2099-0001"}, fixtureKEVAlpha},
+		{"kev entry with no weakness class", []string{"kev", "CVE-2099-0003"}, fixtureKEVGamma},
+		{"weakness class with one entry", []string{"cwe", "CWE-20"}, fixtureCWEFirst},
+		{"weakness class with two entries", []string{"cwe", "CWE-502"}, fixtureCWESecond},
+		{"one product", []string{"product", "Avendor/Alpha"}, fixtureProductAlpha},
+		{"two products in one selection", []string{"product", "Avendor/Alpha", "Bvendor/Beta"}, fixtureProductBoth},
+		{"a repeated product query is one selection", []string{"product", "Avendor/Alpha", "Avendor/Alpha"}, fixtureProductAlpha},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -595,6 +673,81 @@ func TestJSONFixture(t *testing.T) {
 	out, _, status = runCase(t, e, "-json", "ttp", "T1003.001", "T1059")
 	if status != 0 || strings.Count(out, "\n") != 2 {
 		t.Fatalf("status = %d, lines = %d in\n%s", status, strings.Count(out, "\n"), out)
+	}
+
+	// The KEV verbs: a kev result carries the catalog's columns and one set of
+	// weakness ids; a cwe result the entries of the class; a product selection
+	// is one result whatever the number of queries.
+	out, stderr, status = runCase(t, e, "-json", "kev", "CVE-2099-0001")
+	if status != 0 || stderr != "" {
+		t.Fatalf("status = %d, stderr = %q, want 0 and empty", status, stderr)
+	}
+	var kevRes result
+	if err := json.Unmarshal([]byte(out), &kevRes); err != nil {
+		t.Fatalf("decode %q: %v", out, err)
+	}
+	if kevRes.Kind != "kev" || kevRes.Name != "CVE-2099-0001" || kevRes.Label != "Alpha Flaw" {
+		t.Fatalf("kev result = %+v, want CVE-2099-0001 Alpha Flaw", kevRes)
+	}
+	if kevRes.Added != "2099-01-01" || !kevRes.Ransomware || kevRes.Vendor != "Avendor" || kevRes.Product != "Alpha" {
+		t.Fatalf("kev columns = %q/%v/%q/%q, want 2099-01-01/true/Avendor/Alpha",
+			kevRes.Added, kevRes.Ransomware, kevRes.Vendor, kevRes.Product)
+	}
+	wantCWEs := []node{{ID: 0, Name: "CWE-20"}, {ID: 1, Name: "CWE-502"}}
+	if len(kevRes.Sets) != 1 || kevRes.Sets[0].Dir != "out" || kevRes.Sets[0].Name != "weaknesses" {
+		t.Fatalf("kev sets = %+v, want one out weaknesses set", kevRes.Sets)
+	}
+	if got := kevRes.Sets[0].Nodes; len(got) != len(wantCWEs) {
+		t.Fatalf("kev weaknesses = %+v, want %+v", got, wantCWEs)
+	} else {
+		for i, want := range wantCWEs {
+			if got[i] != want {
+				t.Errorf("weaknesses[%d] = %+v, want %+v", i, got[i], want)
+			}
+		}
+	}
+
+	// A false ransomware flag is absent from the JSON: the column is only
+	// meaningful when set, like revoked.
+	out, _, status = runCase(t, e, "-json", "kev", "CVE-2099-0003")
+	if status != 0 {
+		t.Fatalf("status = %d, want 0", status)
+	}
+	if !strings.Contains(out, `"name":"CVE-2099-0003"`) || strings.Contains(out, "ransomware") {
+		t.Errorf("kev CVE-2099-0003 = %s, want the ransomware field absent", out)
+	}
+
+	out, _, status = runCase(t, e, "-json", "cwe", "CWE-502")
+	if status != 0 {
+		t.Fatalf("status = %d, want 0", status)
+	}
+	var cweRes result
+	if err := json.Unmarshal([]byte(out), &cweRes); err != nil {
+		t.Fatalf("decode %q: %v", out, err)
+	}
+	if cweRes.Kind != "cwe" || cweRes.Name != "CWE-502" || cweRes.Label != "" || cweRes.Added != "" {
+		t.Fatalf("cwe result = %+v, want CWE-502 with no label or columns", cweRes)
+	}
+	if len(cweRes.Sets) != 1 || cweRes.Sets[0].Dir != "in" || cweRes.Sets[0].Name != "entries" || cweRes.Sets[0].Count != 2 {
+		t.Fatalf("cwe sets = %+v, want in entries 2", cweRes.Sets)
+	}
+
+	out, _, status = runCase(t, e, "-json", "product", "Avendor/Alpha", "Bvendor/Beta")
+	if status != 0 {
+		t.Fatalf("status = %d, want 0", status)
+	}
+	if lines := strings.Count(out, "\n"); lines != 1 {
+		t.Fatalf("product of two queries = %d lines, want one result", lines)
+	}
+	var prodRes result
+	if err := json.Unmarshal([]byte(out), &prodRes); err != nil {
+		t.Fatalf("decode %q: %v", out, err)
+	}
+	if prodRes.Kind != "product" || prodRes.Name != "Avendor/Alpha Bvendor/Beta" {
+		t.Fatalf("product result = %+v, want both resolved keys in name", prodRes)
+	}
+	if len(prodRes.Sets) != 1 || prodRes.Sets[0].Dir != "out" || prodRes.Sets[0].Name != "entries" || prodRes.Sets[0].Count != 3 {
+		t.Fatalf("product sets = %+v, want out entries 3", prodRes.Sets)
 	}
 
 	// The overlay verbs: coverage carries the deployment and the three states,
@@ -940,6 +1093,108 @@ func TestOntologyValues(t *testing.T) {
 				t.Errorf("%s = %d nodes/%d count, want %d", tt.set, len(nodes), count, tt.count)
 			}
 		})
+	}
+
+	// The KEV verbs on the committed tables: the catalog's own columns in the
+	// kev header, the weakness and product directions, and an entry the catalog
+	// leaves without a weakness class.
+	kevCommands := []struct {
+		name   string
+		args   []string
+		header string
+		set    string
+		count  int
+		first  string
+		last   string
+	}{
+		{
+			"KEV entry with three weakness classes",
+			[]string{"kev", "CVE-2021-44228"},
+			`kev CVE-2021-44228 "Apache Log4j2 Remote Code Execution Vulnerability" added=2021-12-10 ransomware=true vendor="Apache" product="Log4j2"`,
+			"out weaknesses", 3, "CWE-20", "CWE-502",
+		},
+		{
+			"KEV entry with no weakness class",
+			[]string{"kev", "CVE-2002-0367"},
+			`kev CVE-2002-0367 "Microsoft Windows Privilege Escalation Vulnerability" added=2022-03-03 ransomware=false vendor="Microsoft" product="Windows"`,
+			"out weaknesses", 0, "", "",
+		},
+		{"weakness class", []string{"cwe", "CWE-78"}, "cwe CWE-78", "in entries", 110, "", ""},
+		{"one product", []string{"product", "Apache/Log4j2"}, "product Apache/Log4j2", "out entries", 2, "", ""},
+		{
+			"two products in one selection",
+			[]string{"product", "Apache/Log4j2", "Apache/Struts"},
+			"product Apache/Log4j2 Apache/Struts", "out entries", 8, "", "",
+		},
+	}
+	for _, tt := range kevCommands {
+		t.Run(tt.name, func(t *testing.T) {
+			out, stderr, status := runCase(t, e, tt.args...)
+			if status != 0 || stderr != "" {
+				t.Fatalf("status = %d, stderr = %q, want 0 and empty", status, stderr)
+			}
+			if got := strings.SplitN(out, "\n", 2)[0]; got != tt.header {
+				t.Errorf("header = %q, want %q", got, tt.header)
+			}
+			count, nodes := setLine(t, out, tt.set)
+			if count != tt.count {
+				t.Errorf("%s count = %d, want %d", tt.set, count, tt.count)
+			}
+			// Only the weakness set is a list of bare ids: a CVE title may
+			// itself contain ", ", which setLine's comma split cannot tell from
+			// a node separator, so the entry lists are pinned by the fixture
+			// blocks (TestTextFixture) instead.
+			if tt.first == "" && tt.last == "" {
+				return
+			}
+			if len(nodes) != tt.count {
+				t.Fatalf("%s lists %d nodes, want %d", tt.set, len(nodes), tt.count)
+			}
+			if nodes[0] != tt.first {
+				t.Errorf("%s first = %q, want %q", tt.set, nodes[0], tt.first)
+			}
+			if nodes[len(nodes)-1] != tt.last {
+				t.Errorf("%s last = %q, want %q", tt.set, nodes[len(nodes)-1], tt.last)
+			}
+		})
+	}
+
+	// The failure paths: an unknown key is a failure with the exact message, and
+	// a product query that carries no "/" cannot be read as a pair at all. All
+	// exit 1, and a run whose every query failed prints no block.
+	kevFailures := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"unknown KEV entry", []string{"kev", "CVE-2099-99999"}, "gr4ph: no such KEV entry: CVE-2099-99999\n"},
+		{"unknown weakness", []string{"cwe", "CWE-9999"}, "gr4ph: no such cwe: CWE-9999\n"},
+		{"unknown product", []string{"product", "Apache/Log4j"}, "gr4ph: no such product: Apache/Log4j\n"},
+		{"product query without a slash", []string{"product", "Log4j2"}, "gr4ph: product query must be Vendor/Product: Log4j2\n"},
+	}
+	for _, tt := range kevFailures {
+		t.Run(tt.name, func(t *testing.T) {
+			out, stderr, status := runCase(t, e, tt.args...)
+			if status != 1 {
+				t.Fatalf("status = %d, want 1", status)
+			}
+			if stderr != tt.want {
+				t.Errorf("stderr = %q, want %q", stderr, tt.want)
+			}
+			if out != "" {
+				t.Errorf("stdout = %q, want empty", out)
+			}
+		})
+	}
+
+	// A partial product selection keeps the block of the queries that did
+	// resolve, exactly as the per-node verbs do.
+	out, stderr, status = runCase(t, e, "product", "Apache/Log4j2", "Apache/Log4j")
+	if status != 1 || stderr != "gr4ph: no such product: Apache/Log4j\n" {
+		t.Fatalf("status = %d, stderr = %q, want 1 and the failure", status, stderr)
+	}
+	if count, _ := setLine(t, out, "out entries"); count != 2 {
+		t.Errorf("partial product entries = %d, want 2", count)
 	}
 
 	// The overlay verbs on the committed tables: one deployment's three states
