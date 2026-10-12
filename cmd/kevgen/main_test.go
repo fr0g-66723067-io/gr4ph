@@ -13,15 +13,16 @@ import (
 )
 
 // testKEV is the offline fixture: four entries in a deliberately unsorted order,
-// one with a duplicated and unsorted CWE list, one with no CWE at all, one
-// ransomware entry, surrounding whitespace on a name and a vendor, and two
-// entries whose product pairs differ only in case.
+// one with a duplicated and unsorted CWE list, one naming a class twice under
+// two spellings ("CWE-79" and "cwe-79"), one with no CWE at all, one ransomware
+// entry, surrounding whitespace on a name and a vendor, and two entries whose
+// product pairs differ only in case.
 const testKEV = `{
   "catalogVersion": "2099.01.01",
   "vulnerabilities": [
     {"cveID": "CVE-2099-0003", "vendorProject": "Zvendor", "product": "Zed",
      "vulnerabilityName": "Zed Flaw", "dateAdded": "2099-01-03",
-     "knownRansomwareCampaignUse": "Unknown", "cwes": ["CWE-79"]},
+     "knownRansomwareCampaignUse": "Unknown", "cwes": ["CWE-79", "cwe-79"]},
     {"cveID": "CVE-2099-0001", "vendorProject": "  Avendor  ", "product": "Alpha",
      "vulnerabilityName": " Alpha Flaw ", "dateAdded": "2099-01-01",
      "knownRansomwareCampaignUse": "Known", "cwes": ["CWE-502", "CWE-20", "CWE-20"]},
@@ -41,7 +42,8 @@ var testShape = shape{
 }
 
 // TestParseSortsAndTrims pins the parsing rules: entries sorted by CVE id, the
-// two vocabularies sorted byte-wise, one pair per distinct weakness reference,
+// two vocabularies keyed and deduped the way the builder keys them (trimmed and
+// lower-cased, one element per node), one pair per distinct weakness reference,
 // one product index per entry, and the surrounding whitespace trimmed (the
 // engine's key normalisation trims, so a stored label must not keep it).
 func TestParseSortsAndTrims(t *testing.T) {
@@ -64,8 +66,12 @@ func TestParseSortsAndTrims(t *testing.T) {
 	if !m.kevRansom[0] || m.kevRansom[1] || m.kevRansom[2] || m.kevRansom[3] {
 		t.Errorf("kevRansom = %v, want only the Known entry", m.kevRansom)
 	}
+	// One element per normalised key, holding the byte-smallest spelling of it:
+	// entry 2 names CWE-79 twice under two spellings, and the key it resolves to
+	// is one node in the builder, so the vocabulary is three elements and not
+	// four (a fourth would shift every index after it).
 	if got := strings.Join(m.cweIDs, ","); got != "CWE-20,CWE-502,CWE-79" {
-		t.Errorf("cweIDs = %s, want the byte-wise sorted vocabulary", got)
+		t.Errorf("cweIDs = %s, want one element per normalised key", got)
 	}
 	// The duplicated CWE-20 of entry 0 collapses to one pair, and the pairs stay
 	// sorted by (entry, cwe).
@@ -273,7 +279,9 @@ func TestRepinPath(t *testing.T) {
 		}
 	}
 
-	// A file without the markers is reported, not silently accepted.
+	// A file without the markers is reported, not silently accepted, and a file
+	// whose marker occurs twice is refused rather than rewritten at the wrong
+	// occurrence.
 	for _, tt := range []struct {
 		name string
 		src  string
@@ -281,6 +289,17 @@ func TestRepinPath(t *testing.T) {
 	}{
 		{"no sourceKEV", "package main\nvar pinnedShape = shape{\n\tcatalog: \"x\",\n}\n", "not found"},
 		{"no pinnedShape", "package main\n\nconst sourceKEV = \"" + sourceFile() + "@x\"\n", "not found"},
+		{
+			"two sourceKEV markers",
+			"package main\n\n// sourceKEV = \"a comment that carries the marker\"\nconst sourceKEV = \"" +
+				sourceFile() + "@x\"\n\nvar pinnedShape = shape{\n\tcatalog: \"x\",\n}\n",
+			"2 occurrences",
+		},
+		{
+			"two pinnedShape markers",
+			"package main\n\nconst sourceKEV = \"" + sourceFile() + "@x\"\n\n// var pinnedShape = shape{\nvar pinnedShape = shape{\n\tcatalog: \"x\",\n}\n",
+			"2 occurrences",
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			p := filepath.Join(t.TempDir(), "main.go")
@@ -313,6 +332,15 @@ func TestParseRejects(t *testing.T) {
 			  {"cveID":"CVE-1","vendorProject":"V","product":"P"},
 			  {"cveID":"CVE-1","vendorProject":"W","product":"Q"}]}`,
 			"duplicate cveID CVE-1",
+		},
+		{
+			// The builder registers one node per normalised key, so two
+			// spellings of one CVE are a duplicate here, not two entries.
+			"case-variant duplicate id",
+			`{"catalogVersion":"1","vulnerabilities":[
+			  {"cveID":"CVE-1","vendorProject":"V","product":"P"},
+			  {"cveID":"cve-1","vendorProject":"W","product":"Q"}]}`,
+			"duplicate cveID cve-1",
 		},
 		{"malformed", `{`, "parse json"},
 	}
