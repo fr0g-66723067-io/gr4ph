@@ -535,6 +535,7 @@ func TestRunEndToEnd(t *testing.T) {
 		`"Sp One"`,
 		`{"One One Alt"}`,
 		"var TTPRevoked = [...]bool{",
+		"var GroupRevoked = [...]bool{",
 		"var TacticTTP = [...][]uint16{",
 		"var GroupKinds = [...]gr4ph.GroupKind{",
 		"gr4ph.GroupSoftware",

@@ -172,6 +172,61 @@ func TestBuilderLiveLabelBeatsRevoked(t *testing.T) {
 	}
 }
 
+// TestBuilderGroupLiveLabelBeatsRevoked is the grouping analogue of
+// TestBuilderLiveLabelBeatsRevoked, on the pair that made the difference: on the
+// pinned 19.2 tables the label "TRITON" is carried by the deprecated S0609 and
+// the live S1009, and resolving a shared label to the first registration handed
+// the key to the retired node.
+func TestBuilderGroupLiveLabelBeatsRevoked(t *testing.T) {
+	// Revoked registered first, live second: the live node takes the key.
+	b := NewBuilder()
+	retired, err := b.AddGroup("S0609", "TRITON", GroupSoftware, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, err := b.AddGroup("S1009", "Triton", GroupSoftware, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := b.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := e.Group("triton"); !ok || got != live {
+		t.Fatalf("Group(triton) = %d,%v want the live node %d", got, ok, live)
+	}
+	if got, ok := e.Group(" S0609 "); !ok || got != retired {
+		t.Fatalf("Group(S0609) = %d,%v want the retired node %d (the id form is exact)", got, ok, retired)
+	}
+	if !e.GroupRevoked(retired) || e.GroupRevoked(live) {
+		t.Fatalf("GroupRevoked = %v/%v, want true/false", e.GroupRevoked(retired), e.GroupRevoked(live))
+	}
+	// Live registered first: the live holder keeps the key.
+	b = NewBuilder()
+	live, _ = b.AddGroup("S1009", "Triton", GroupSoftware, false)
+	retired, _ = b.AddGroup("S0609", "TRITON", GroupSoftware, true)
+	e, _ = b.Build()
+	if got, _ := e.Group("triton"); got != live {
+		t.Fatalf("Group(triton) = %d, want the holder %d", got, live)
+	}
+	// Every holder revoked: the earliest registration keeps the key.
+	b = NewBuilder()
+	first, _ := b.AddGroup("S9000", "Ngrok", GroupSoftware, true)
+	b.AddGroup("S9001", "ngrok", GroupSoftware, true)
+	e, _ = b.Build()
+	if got, _ := e.Group("ngrok"); got != first {
+		t.Fatalf("Group(ngrok) = %d, want the earliest holder %d", got, first)
+	}
+	// A live label never takes a revoked node's id key.
+	b = NewBuilder()
+	byID, _ := b.AddGroup("S0609", "TRITON", GroupSoftware, true)
+	b.AddGroup("S2", "S0609", GroupSoftware, false)
+	e, _ = b.Build()
+	if got, ok := e.Group("S0609"); !ok || got != byID {
+		t.Fatalf("Group(S0609) = %d,%v want %d,true (the id key is never taken)", got, ok, byID)
+	}
+}
+
 // TestBuilderValidation pins the cold-path input contract: an empty (or
 // whitespace-only) key and an unknown domain are rejected without touching the
 // builder's state.
@@ -199,7 +254,7 @@ func TestBuilderValidation(t *testing.T) {
 	if _, err := b.AddDataComponent("", "L"); !errors.Is(err, ErrEmptyKey) {
 		t.Fatalf("AddDataComponent empty id: %v", err)
 	}
-	if _, err := b.AddGroup("", "L", GroupActor); !errors.Is(err, ErrEmptyKey) {
+	if _, err := b.AddGroup("", "L", GroupActor, false); !errors.Is(err, ErrEmptyKey) {
 		t.Fatalf("AddGroup empty id: %v", err)
 	}
 	if _, err := b.AddTactic("", "L"); !errors.Is(err, ErrEmptyKey) {
@@ -468,7 +523,7 @@ func TestBuilderUnknownEndpoints(t *testing.T) {
 	if _, err := b.AddTTP("T1003", "OS Credential Dumping", DomainEnterprise, NoParent, false); err != nil {
 		t.Fatalf("AddTTP: %v", err)
 	}
-	if _, err := b.AddGroup("G0001", "Actor One", GroupActor); err != nil {
+	if _, err := b.AddGroup("G0001", "Actor One", GroupActor, false); err != nil {
 		t.Fatalf("AddGroup: %v", err)
 	}
 	if _, err := b.AddKEV("CVE-2099-0001", "Alpha Flaw", "2099-01-01", false); err != nil {
@@ -495,7 +550,7 @@ func TestBuilderUnknownEndpoints(t *testing.T) {
 		{"AddKEVWeaknessEdge cwe", b.AddKEVWeaknessEdge(KEV(0), CWE(1)), ErrUnknownCWE},
 		{"AddKEVProductEdge kev", b.AddKEVProductEdge(KEV(1), Product(0)), ErrUnknownKEV},
 		{"AddKEVProductEdge product", b.AddKEVProductEdge(KEV(0), Product(1)), ErrUnknownProduct},
-		{"AddGroup kind", func() error { _, err := b.AddGroup("X9", "Unknown Kind", GroupKind(9)); return err }(), ErrUnknownGroupKind},
+		{"AddGroup kind", func() error { _, err := b.AddGroup("X9", "Unknown Kind", GroupKind(9), false); return err }(), ErrUnknownGroupKind},
 	} {
 		if !errors.Is(tt.got, tt.want) {
 			t.Errorf("%s = %v, want %v", tt.name, tt.got, tt.want)
@@ -605,14 +660,14 @@ func TestBuilderBoundsNodes(t *testing.T) {
 	}
 	for i := range MaxNodes {
 		id := "G" + strconv.Itoa(i)
-		if _, err := b.AddGroup(id, "label "+id, GroupSoftware); err != nil {
+		if _, err := b.AddGroup(id, "label "+id, GroupSoftware, false); err != nil {
 			t.Fatalf("AddGroup #%d: %v", i, err)
 		}
 	}
 	if b.GroupCount() != MaxNodes {
 		t.Fatalf("GroupCount = %d, want %d", b.GroupCount(), MaxNodes)
 	}
-	if _, err := b.AddGroup("G-overflow", "x", GroupSoftware); !errors.Is(err, ErrTooManyNodes) {
+	if _, err := b.AddGroup("G-overflow", "x", GroupSoftware, false); !errors.Is(err, ErrTooManyNodes) {
 		t.Fatalf("AddGroup past cap: %v", err)
 	}
 	for i := range MaxNodes {
@@ -860,7 +915,7 @@ func TestLayoutMatchesReadme(t *testing.T) {
 		}
 	}
 	for i := range 1212 {
-		if _, err := b.AddGroup("G"+strconv.Itoa(i), "g"+strconv.Itoa(i), GroupActor); err != nil {
+		if _, err := b.AddGroup("G"+strconv.Itoa(i), "g"+strconv.Itoa(i), GroupActor, false); err != nil {
 			t.Fatalf("AddGroup #%d: %v", i, err)
 		}
 	}

@@ -179,7 +179,7 @@ func buildSynthetic(t *testing.T) *Engine {
 	// Grouping nodes: one actor, one software, one campaign.
 	group := func(id, label string, kind GroupKind) Group {
 		t.Helper()
-		v, err := b.AddGroup(id, label, kind)
+		v, err := b.AddGroup(id, label, kind, false)
 		if err != nil {
 			t.Fatalf("AddGroup(%s): %v", id, err)
 		}

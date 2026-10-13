@@ -89,8 +89,12 @@ id, label or alias; artifact name or label; countermeasure id, label or alias; d
 label; grouping-node id or label; ATT&CK tactic id; platform name; CVE id; weakness id; vendor/product
 pair; relation name — resolves to its dense id, and every relation of that node is printed in both
 directions. A grouping label shared by
-two nodes resolves to the byte-smallest id, and the printed header names the node that resolved: 12
-labels are shared verbatim in 19.2 (`Frankenstein` is the campaign `C0001` and the actor `G0101`), all
+two nodes resolves to its **live carrier** — the node ATT&CK still maintains — or to the lowest-index
+holder when every carrier is revoked, exactly as a technique's label does; the printed header names the
+node that resolved. 12
+labels are shared verbatim in 19.2 (`Frankenstein` is the campaign `C0001` and the retired actor `G0101`,
+and the live campaign keeps the key; `Gelsemium` is the retired actor `G0141` and the live software node
+`S0666`, and resolves to the software node), all
 across kinds, and the resolver's case-insensitive key space folds three case-variant pairs into shared
 keys — 15 keys in all, 13 of them across kinds, the other two (`ngrok`, `triton`) pairing two software
 nodes.
@@ -152,7 +156,9 @@ header carries the ATT&CK attributes: ` subtechnique=true` for a sub-technique, 
 order and both absent when the technique has no ATT&CK object (the D3FEND-named nodes) — under `-json`
 they are `"subtechnique"`, `"tactics"` and `"platforms"`, and `tactic` queries only by `TA` id because
 11 tactic labels name two or three tactics across the three domains. A grouping node's header names its
-kind (`kind=actor|software|campaign`, `"group_kind"` under `-json`).
+kind (`kind=actor|software|campaign`, `"group_kind"` under `-json`) and carries ` revoked=true`
+(`"revoked":true`), the ATT&CK flag its label is resolved live-first by, exactly as a technique's header
+does.
 
 ```sh
 $ ./gr4ph ttp T1003.001
@@ -421,6 +427,7 @@ entries, 189 weaknesses, 722 products, 41 tactics, 15 platforms, 41 + 38 predica
 | **total** | | **608,828** | **4,870,624 (4.645 MiB)** |
 | hierarchy (`ttpParents` + `ttpChildCount`) | | | 4,744 |
 | revoked flag (`ttpRevoked`) | | | 1,186 |
+| grouping revocation flag (`GroupRevoked`) | | | 1,212 |
 | tactic vocabulary (`tacticIDs` + `tacticLabels` + `tacticIndex`) | | | cold |
 | platform vocabulary (`platformNames` + `platformIndex`) | | | cold |
 | data components (`dcIDs` + `dcLabels` + `dcIndex`) | | | cold |
@@ -466,10 +473,10 @@ Sizes and cold path:
 | method | work | alloc |
 |---|---|---|
 | `TTPCount` `ArtifactCount` `CountermeasureCount` `DataComponentCount` `GroupCount` `KEVCount` `CWECount` `ProductCount` `TacticCount` `PlatformCount` `RelCount` `DefRelCount` `WordsPerRow` | O(1) | 0 |
-| `Incident(alert) (TTP, bool)`, `Artifact(s)`, `Countermeasure(s)`, `DataComponent(s)`, `Group(s)` | map lookup (trim + lower); a shared technique label resolves to its live carrier, or to the lowest-index match when every carrier is revoked; a shared grouping label resolves to the earliest registration | cold |
+| `Incident(alert) (TTP, bool)`, `Artifact(s)`, `Countermeasure(s)`, `DataComponent(s)`, `Group(s)` | map lookup (trim + lower); a shared technique label resolves to its live carrier, or to the lowest-index match when every carrier is revoked; a shared grouping label resolves the same way (`GroupRevoked` reports the flag) | cold |
 | `Tactic(id) (Tactic, bool)`, `Platform(name) (Platform, bool)` | map lookup (trim + lower); only the `TA` id keys a tactic — 11 tactic labels name two or three tactics across the three domains | cold |
 | `KEV(id) (KEV, bool)`, `CWE(id) (CWE, bool)`, `Product(vendor, name) (Product, bool)` | map lookup (trim + lower); the CVE id is the only key of an entry (titles repeat), a weakness keys on its id and a product on the vendor/name pair | cold |
-| `TTPName` `TTPLabel` `ArtifactName` `ArtifactLabel` `CountermeasureName` `CountermeasureLabel` `DataComponentID` `DataComponentLabel` `GroupID` `GroupLabel` `GroupKind` `TacticID` `TacticLabel` `PlatformName` `TTPDomain` `TTPRevoked` `KEVID` `KEVName` `KEVAdded` `KEVRansomware` `CWEID` `KEVProductVendor` `KEVProductName` `KEVVendor` `KEVProduct` | O(1) | 0 |
+| `TTPName` `TTPLabel` `ArtifactName` `ArtifactLabel` `CountermeasureName` `CountermeasureLabel` `DataComponentID` `DataComponentLabel` `GroupID` `GroupLabel` `GroupKind` `GroupRevoked` `TacticID` `TacticLabel` `PlatformName` `TTPDomain` `TTPRevoked` `KEVID` `KEVName` `KEVAdded` `KEVRansomware` `CWEID` `KEVProductVendor` `KEVProductName` `KEVVendor` `KEVProduct` | O(1) | 0 |
 | `Rel` `DefRel` | map lookup (trim + lower), `"any"` is the union plane and cannot be registered (`ErrReservedName`) | cold |
 | `RelName` `DefRelName` | O(1) | 0 |
 | `TTPTactics` `TTPPlatforms` `TTPFlags` `TTPSubTechnique` | one attribute load / one shift+compare | 0 |

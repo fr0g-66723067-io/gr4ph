@@ -487,7 +487,7 @@ func attributedEngine(tb testing.TB) *Engine {
 		} else if i%3 == 2 {
 			kind, id = GroupCampaign, "C"+strconv.Itoa(i)
 		}
-		g, err := b.AddGroup(id, "Group "+id, kind)
+		g, err := b.AddGroup(id, "Group "+id, kind, false)
 		if err != nil {
 			tb.Fatalf("AddGroup: %v", err)
 		}

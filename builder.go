@@ -231,10 +231,12 @@ type Builder struct {
 	dcIDs    []string
 	dcLabels []string
 
-	// The grouping partition: ids, labels, kinds and the two uses families.
-	groupIDs    []string
-	groupLabels []string
-	groupKinds  []GroupKind
+	// The grouping partition: ids, labels, kinds, the revocation flag that
+	// decides who wins a shared label, and the two uses families.
+	groupIDs     []string
+	groupLabels  []string
+	groupKinds   []GroupKind
+	groupRevoked []bool
 
 	// The KEV partition, the weakness vocabulary it names and the product
 	// vocabulary it is about, plus the two edge families.
@@ -359,6 +361,26 @@ func (b *Builder) claimTTP(key string, idx int) {
 		}
 	}
 	b.ttpIndex[key] = uint16(idx)
+}
+
+// claimGroup registers key in b.groupIndex under idx unless the key is empty. A
+// live grouping node takes a label from a revoked holder, exactly as a live
+// technique takes one from a revoked technique (see claimTTP): ATT&CK reuses a
+// grouping node's label on its successor, so the label must resolve to the node
+// that is still maintained. Between holders of the same standing the earliest
+// registration keeps the key, so a shared label resolves to the live node with
+// the lowest index, and to the lowest-index one when every holder is revoked. A
+// key that is another node's id is never taken: ids are unambiguous.
+func (b *Builder) claimGroup(key string, idx int) {
+	if key == "" {
+		return
+	}
+	if cur, ok := b.groupIndex[key]; ok {
+		if !b.groupRevoked[cur] || b.groupRevoked[idx] || normalize(b.groupIDs[cur]) == key {
+			return
+		}
+	}
+	b.groupIndex[key] = uint16(idx)
 }
 
 // AddRel registers an offensive relation predicate and returns its plane id
@@ -498,9 +520,12 @@ func (b *Builder) AddDataComponent(id, label string) (DataComponent, error) {
 
 // AddGroup registers a grouping node — an actor, a piece of software or a
 // campaign — and returns its dense id. Idempotent on the normalised id; the label
-// is a lookup key too (first registration wins, as for artifacts). kind must be
-// one of the three GroupKind constants.
-func (b *Builder) AddGroup(id, label string, kind GroupKind) (Group, error) {
+// is a lookup key too, resolved live-first as a technique's label is: a live node
+// takes a shared label from a revoked holder, and the earliest registration keeps
+// it between holders of the same standing. kind must be one of the three
+// GroupKind constants. revoked marks an ATT&CK object that has been revoked or
+// deprecated; it only decides who wins a shared label.
+func (b *Builder) AddGroup(id, label string, kind GroupKind, revoked bool) (Group, error) {
 	if b.Built() {
 		return 0, ErrBuilderUsed
 	}
@@ -522,8 +547,9 @@ func (b *Builder) AddGroup(id, label string, kind GroupKind) (Group, error) {
 	b.groupIDs = append(b.groupIDs, strings.TrimSpace(id))
 	b.groupLabels = append(b.groupLabels, strings.TrimSpace(label))
 	b.groupKinds = append(b.groupKinds, kind)
+	b.groupRevoked = append(b.groupRevoked, revoked)
 	claim(b.groupIndex, key, uint16(idx))
-	claim(b.groupIndex, normalize(label), uint16(idx))
+	b.claimGroup(normalize(label), idx)
 	return Group(idx), nil
 }
 
@@ -1127,6 +1153,7 @@ func (b *Builder) Build() (*Engine, error) {
 	e.groupIDs = b.groupIDs
 	e.groupLabels = b.groupLabels
 	e.groupKinds = b.groupKinds
+	e.groupRevoked = b.groupRevoked
 	e.tacticIndex = b.tacticIndex
 	e.platformIndex = b.platformIndex
 	e.dcIndex = b.dcIndex

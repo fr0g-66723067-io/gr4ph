@@ -106,9 +106,10 @@ type Engine struct {
 	dcIDs    []string
 	dcLabels []string
 
-	groupIDs    []string
-	groupLabels []string
-	groupKinds  []GroupKind
+	groupIDs     []string
+	groupLabels  []string
+	groupKinds   []GroupKind
+	groupRevoked []bool
 
 	artNames  []string
 	artLabels []string
@@ -387,8 +388,12 @@ func (e *Engine) DataComponent(s string) (DataComponent, bool) {
 }
 
 // Group resolves a grouping-node id ("G0007", "S0002", "C0001") or label to an
-// id. Labels are unique within a kind but not across kinds ("Frankenstein" is
-// both C0001 and G0101), so the earliest registration keeps a shared label.
+// id. Labels are unique within a kind up to case folding, with one exception on
+// the pinned tables: two software nodes pair up under the key "ngrok" (S0508 and
+// S9000) and two under "triton" (S0609 and S1009). Across kinds a shared label
+// is normal ("Frankenstein" is both C0001 and G0101), and a shared label
+// resolves to its live carrier, or to the lowest-index holder when every carrier
+// is revoked — the rule GroupRevoked reports the flag for.
 func (e *Engine) Group(s string) (Group, bool) {
 	i, ok := e.groupIndex[normalize(s)]
 	return Group(i), ok
@@ -482,6 +487,13 @@ func (e *Engine) GroupLabel(g Group) string {
 func (e *Engine) GroupKind(g Group) GroupKind {
 	e.mustGroup(g)
 	return e.groupKinds[g]
+}
+
+// GroupRevoked reports whether ATT&CK revoked (or deprecated) the grouping
+// node, which is the flag the label resolution prefers the live twin by.
+func (e *Engine) GroupRevoked(g Group) bool {
+	e.mustGroup(g)
+	return e.groupRevoked[g]
 }
 
 // TTPName returns the technique id string, e.g. "T1003.001".

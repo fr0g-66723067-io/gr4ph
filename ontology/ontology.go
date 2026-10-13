@@ -95,7 +95,7 @@ func Register(b *gr4ph.Builder) error {
 		}
 	}
 	for i, id := range GroupIDs {
-		if _, err := b.AddGroup(id, GroupLabels[i], GroupKinds[i]); err != nil {
+		if _, err := b.AddGroup(id, GroupLabels[i], GroupKinds[i], GroupRevoked[i]); err != nil {
 			return fmt.Errorf("group %s: %w", id, err)
 		}
 	}

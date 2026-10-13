@@ -138,7 +138,7 @@ type result struct {
 	Domain   string `json:"domain,omitempty"`   // ttp only
 	Parent   string `json:"parent,omitempty"`   // ttp only, absent at top level
 	Children *int   `json:"children,omitempty"` // ttp only, 0 is emitted
-	Revoked  bool   `json:"revoked,omitempty"`  // ttp only, absent when live
+	Revoked  bool   `json:"revoked,omitempty"`  // ttp and group only, absent when live
 	// Tactics and Platforms are the ttp attribute masks, rendered as ids/names in
 	// index order, so bit i of TTPTactics is Tactics[i].
 	Tactics      []string `json:"tactics,omitempty"`      // ttp only
@@ -584,6 +584,7 @@ func runGroup(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
 			Name:      name,
 			Label:     collapseLabel(name, label),
 			GroupKind: groupKindName(e.GroupKind(g)),
+			Revoked:   e.GroupRevoked(g),
 		}
 		n := e.TTPsForGroup(g, buf.ttps)
 		ttps := set{Dir: "out", Name: "techniques", Count: n, Nodes: ttpNodes(e, buf.ttps, n)}
@@ -1214,7 +1215,7 @@ func writeText(w io.Writer, res result) error {
 			revokedPart(res.Revoked), subTechniquePart(res.SubTechnique),
 			tacticsPart(res.Tactics), platformsPart(res.Platforms))
 	case "group":
-		fmt.Fprintf(rec, "group %s%s kind=%s\n", res.Name, quoted(res.Label), res.GroupKind)
+		fmt.Fprintf(rec, "group %s%s kind=%s%s\n", res.Name, quoted(res.Label), res.GroupKind, revokedPart(res.Revoked))
 	case "kev":
 		fmt.Fprintf(rec, "kev %s%s added=%s ransomware=%t vendor=%q product=%q\n",
 			res.Name, quoted(res.Label), res.Added, res.Ransomware, res.Vendor, res.Product)

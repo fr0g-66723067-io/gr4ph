@@ -147,7 +147,7 @@ func mustDC(t *testing.T, b *gr4ph.Builder, id, label string) gr4ph.DataComponen
 
 func mustGroup(t *testing.T, b *gr4ph.Builder, id, label string, kind gr4ph.GroupKind) gr4ph.Group {
 	t.Helper()
-	v, err := b.AddGroup(id, label, kind)
+	v, err := b.AddGroup(id, label, kind, false)
 	must(t, err)
 	return v
 }

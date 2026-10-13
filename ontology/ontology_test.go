@@ -869,9 +869,9 @@ func TestOntologyLabelAmbiguity(t *testing.T) {
 		t.Fatalf("DataComponent(label) = %d,%v want DC0084", got, ok)
 	}
 
-	// Grouping nodes: the id always resolves; a label shared by two nodes
-	// resolves to the lowest-index carrier, which is the byte-smallest id
-	// because the tables are emitted sorted.
+	// Grouping nodes: the id always resolves, and a label shared by two nodes
+	// resolves to its live carrier — the lowest-index carrier only when every
+	// carrier is revoked, which is the rule claimGroup mirrors from claimTTP.
 	groupKey := map[string][]gr4ph.Group{}
 	for i := range e.GroupCount() {
 		g := gr4ph.Group(i)
@@ -881,6 +881,17 @@ func TestOntologyLabelAmbiguity(t *testing.T) {
 		key := e.GroupLabel(g)
 		groupKey[key] = append(groupKey[key], g)
 	}
+	// liveWinner is the carrier a shared key must resolve to: the first live one
+	// in index order, or the first carrier when every one is revoked.
+	liveWinner := func(carriers []gr4ph.Group) gr4ph.Group {
+		for _, carrier := range carriers {
+			if !e.GroupRevoked(carrier) {
+				return carrier
+			}
+		}
+		return carriers[0]
+	}
+	revokedCarriers := 0
 	sharedGroups := 0
 	for key, carriers := range groupKey {
 		if len(carriers) == 1 {
@@ -895,14 +906,20 @@ func TestOntologyLabelAmbiguity(t *testing.T) {
 				t.Errorf("label %q is shared within one grouping kind", key)
 			}
 			kinds[e.GroupKind(carrier)] = true
+			if e.GroupRevoked(carrier) {
+				revokedCarriers++
+			}
 		}
-		got, ok := e.Group(key)
-		if !ok || got != carriers[0] {
-			t.Errorf("Group(%q) = %d,%v want the lowest-index carrier %d", key, got, ok, carriers[0])
+		want := liveWinner(carriers)
+		if got, ok := e.Group(key); !ok || got != want {
+			t.Errorf("Group(%q) = %d,%v want the live carrier %s", key, got, ok, e.GroupID(want))
 		}
 	}
 	if sharedGroups != 12 {
 		t.Fatalf("group labels shared by two nodes = %d, want 12", sharedGroups)
+	}
+	if revokedCarriers != 6 {
+		t.Fatalf("revoked carriers of a shared label = %d, want 6 (Gelsemium, Taidoor, Frankenstein, Night Dragon, Operation Wocao, CostaRicto)", revokedCarriers)
 	}
 	// The resolver folds the label (trim + lower-case), so three case-variant
 	// pairs collapse into keys the raw sweep above cannot see. Two of them are
@@ -915,7 +932,7 @@ func TestOntologyLabelAmbiguity(t *testing.T) {
 		folded[key] = append(folded[key], g)
 	}
 	foldedShared, foldedSameKind := 0, 0
-	for _, carriers := range folded {
+	for key, carriers := range folded {
 		if len(carriers) == 1 {
 			continue
 		}
@@ -927,6 +944,10 @@ func TestOntologyLabelAmbiguity(t *testing.T) {
 				break
 			}
 			kinds[e.GroupKind(carrier)] = true
+		}
+		want := liveWinner(carriers)
+		if got, ok := e.Group(key); !ok || got != want {
+			t.Errorf("folded key %q resolves to %d,%v, want the live carrier %s", key, got, ok, e.GroupID(want))
 		}
 	}
 	if foldedShared != 15 || foldedSameKind != 2 {
@@ -944,8 +965,37 @@ func TestOntologyLabelAmbiguity(t *testing.T) {
 			}
 		}
 	}
-	// The two hard cases: the byte-smallest id wins, so a campaign beats the
-	// actor that shares its label, and an actor beats software.
+	// The keys where live-first changes the winner — triton, taidoor and
+	// gelsemium, whose retired carrier is the lower index — plus ngrok, whose
+	// live carrier was the lower index already.
+	for key, want := range map[string]string{
+		"ngrok": "S0508", "triton": "S1009", "taidoor": "S0011", "gelsemium": "S0666",
+	} {
+		if got, ok := e.Group(key); !ok || e.GroupID(got) != want {
+			t.Errorf("Group(%q) = %s,%v want the live carrier %s", key, e.GroupID(got), ok, want)
+		}
+	}
+	// The pair the rule exists for: the retired S0609 keeps its own id key and
+	// its exact label, and the folded key goes to the live S1009.
+	retired, tritonLive := g(t, e, "S0609"), g(t, e, "S1009")
+	if !e.GroupRevoked(retired) || e.GroupRevoked(tritonLive) {
+		t.Errorf("GroupRevoked(S0609) = %v, GroupRevoked(S1009) = %v, want true,false",
+			e.GroupRevoked(retired), e.GroupRevoked(tritonLive))
+	}
+	if got, ok := e.Group("triton"); !ok || got != tritonLive {
+		t.Errorf("Group(triton) = %d,%v, want the live S1009", got, ok)
+	}
+	// Keys are folded, so the retired node's own capitalisation resolves through
+	// the same key; only its id reaches it.
+	if got, ok := e.Group("TRITON"); !ok || got != tritonLive {
+		t.Errorf("Group(TRITON) = %d,%v, want the live S1009 (labels are keyed case-insensitively)", got, ok)
+	}
+	if got, ok := e.Group("S0609"); !ok || got != retired {
+		t.Errorf("Group(S0609) = %d,%v, want the retired node by id", got, ok)
+	}
+	// The two hard cases on the pinned tables: with both carriers live the
+	// earliest keeps the key, so the campaign C0001 beats the actor G0101 (which
+	// is revoked in any case) and the actor G0008 beats the software S0030.
 	if got, ok := e.Group("Frankenstein"); !ok || got != g(t, e, "C0001") || got == g(t, e, "G0101") {
 		t.Errorf("Group(Frankenstein) = %d,%v, want the campaign C0001", got, ok)
 	}
