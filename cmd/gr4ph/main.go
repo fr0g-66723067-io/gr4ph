@@ -138,7 +138,7 @@ type result struct {
 	Domain   string `json:"domain,omitempty"`   // ttp only
 	Parent   string `json:"parent,omitempty"`   // ttp only, absent at top level
 	Children *int   `json:"children,omitempty"` // ttp only, 0 is emitted
-	Revoked  bool   `json:"revoked,omitempty"`  // ttp only, absent when live
+	Revoked  bool   `json:"revoked,omitempty"`  // ttp and group only, absent when live
 	// Tactics and Platforms are the ttp attribute masks, rendered as ids/names in
 	// index order, so bit i of TTPTactics is Tactics[i].
 	Tactics      []string `json:"tactics,omitempty"`      // ttp only
@@ -155,6 +155,7 @@ type result struct {
 	// techniques, and every count is the number of distinct resolved queries.
 	Deployed   *int    `json:"deployed,omitempty"`   // coverage, gain
 	Mapped     *int    `json:"mapped,omitempty"`     // coverage
+	Retired    *int    `json:"retired,omitempty"`    // coverage: the flagged techniques among all 1186
 	Observed   *int    `json:"observed,omitempty"`   // contain
 	Candidates *int    `json:"candidates,omitempty"` // gain
 	Greedy     *int    `json:"greedy,omitempty"`     // gain -greedy
@@ -307,34 +308,36 @@ func boolFlag(f *flag.Flag) bool {
 // truncation at len(dst) never bites, and one allocation per partition serves
 // every query of the invocation.
 type buffers struct {
-	arts []gr4ph.Artifact
-	ttps []gr4ph.TTP
-	cms  []gr4ph.Countermeasure
-	dcs  []gr4ph.DataComponent
-	gs   []gr4ph.Group
-	kevs []gr4ph.KEV
-	cwes []gr4ph.CWE
-	scrA []uint64 // artifact partition: ArtifactsRollupRel
-	scrT []uint64 // technique partition: TTPsRollupRel, TTPsForCountermeasureRollup
-	scrC []uint64 // countermeasure partition: CountermeasuresForTTPRollup, ...ViaTTPs
-	scrD []uint64 // data-component partition: DataComponentsForTTPRollup
-	scrK []uint64 // KEV partition: KEVsForProducts, KEVsForCWEs
+	arts  []gr4ph.Artifact
+	ttps  []gr4ph.TTP
+	cms   []gr4ph.Countermeasure
+	dcs   []gr4ph.DataComponent
+	gs    []gr4ph.Group
+	kevs  []gr4ph.KEV
+	cwes  []gr4ph.CWE
+	gains []int    // countermeasure partition: one marginal gain per candidate
+	scrA  []uint64 // artifact partition: ArtifactsRollupRel
+	scrT  []uint64 // technique partition: TTPsRollupRel, TTPsForCountermeasureRollup
+	scrC  []uint64 // countermeasure partition: CountermeasuresForTTPRollup, ...ViaTTPs
+	scrD  []uint64 // data-component partition: DataComponentsForTTPRollup
+	scrK  []uint64 // KEV partition: KEVsForProducts, KEVsForCWEs
 }
 
 func newBuffers(e *gr4ph.Engine) *buffers {
 	return &buffers{
-		arts: make([]gr4ph.Artifact, e.ArtifactCount()),
-		ttps: make([]gr4ph.TTP, e.TTPCount()),
-		cms:  make([]gr4ph.Countermeasure, e.CountermeasureCount()),
-		dcs:  make([]gr4ph.DataComponent, e.DataComponentCount()),
-		gs:   make([]gr4ph.Group, e.GroupCount()),
-		kevs: make([]gr4ph.KEV, e.KEVCount()),
-		cwes: make([]gr4ph.CWE, e.CWECount()),
-		scrA: make([]uint64, e.WordsPerRow(gr4ph.KindArtifact)),
-		scrT: make([]uint64, e.WordsPerRow(gr4ph.KindTTP)),
-		scrC: make([]uint64, e.WordsPerRow(gr4ph.KindCountermeasure)),
-		scrD: make([]uint64, e.WordsPerRow(gr4ph.KindDataComponent)),
-		scrK: make([]uint64, e.WordsPerRow(gr4ph.KindKEV)),
+		arts:  make([]gr4ph.Artifact, e.ArtifactCount()),
+		ttps:  make([]gr4ph.TTP, e.TTPCount()),
+		cms:   make([]gr4ph.Countermeasure, e.CountermeasureCount()),
+		dcs:   make([]gr4ph.DataComponent, e.DataComponentCount()),
+		gs:    make([]gr4ph.Group, e.GroupCount()),
+		kevs:  make([]gr4ph.KEV, e.KEVCount()),
+		cwes:  make([]gr4ph.CWE, e.CWECount()),
+		gains: make([]int, e.CountermeasureCount()),
+		scrA:  make([]uint64, e.WordsPerRow(gr4ph.KindArtifact)),
+		scrT:  make([]uint64, e.WordsPerRow(gr4ph.KindTTP)),
+		scrC:  make([]uint64, e.WordsPerRow(gr4ph.KindCountermeasure)),
+		scrD:  make([]uint64, e.WordsPerRow(gr4ph.KindDataComponent)),
+		scrK:  make([]uint64, e.WordsPerRow(gr4ph.KindKEV)),
 	}
 }
 
@@ -582,6 +585,7 @@ func runGroup(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
 			Name:      name,
 			Label:     collapseLabel(name, label),
 			GroupKind: groupKindName(e.GroupKind(g)),
+			Revoked:   e.GroupRevoked(g),
 		}
 		n := e.TTPsForGroup(g, buf.ttps)
 		ttps := set{Dir: "out", Name: "techniques", Count: n, Nodes: ttpNodes(e, buf.ttps, n)}
@@ -900,26 +904,54 @@ func runCoverage(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
 	// doubles as the active set of the undefended set, so no state is derived
 	// from another state's output.
 	defendedN := e.TTPsCovered(deployed, buf.scrT, buf.ttps)
-	defended := set{Dir: "in", Name: "defended", Count: defendedN, Nodes: ttpNodes(e, buf.ttps, defendedN)}
+	defendedLive, retiredDefended := splitRetired(e, buf.ttps, defendedN)
+	defended := set{Dir: "in", Name: "defended", Count: len(defendedLive), Nodes: ttpNodes(e, defendedLive, len(defendedLive))}
 	mappedN := e.TTPsMapped(buf.scrT, buf.ttps)
 	mapped := make([]uint64, e.WordsPerRow(gr4ph.KindTTP))
 	for _, t := range buf.ttps[:mappedN] {
 		setBit(mapped, int(t))
 	}
 	undefendedN := e.TTPsBlind(mapped, deployed, buf.scrT, buf.ttps)
-	undefended := set{Dir: "in", Name: "undefended", Count: undefendedN, Nodes: ttpNodes(e, buf.ttps, undefendedN)}
+	undefendedLive, retiredUndefended := splitRetired(e, buf.ttps, undefendedN)
+	undefended := set{Dir: "in", Name: "undefended", Count: len(undefendedLive), Nodes: ttpNodes(e, undefendedLive, len(undefendedLive))}
 	allTTP, allCM := allSelections(e)
 	unmappedN := e.TTPsBlind(allTTP, allCM, buf.scrT, buf.ttps)
-	unmapped := set{Dir: "in", Name: "unmapped", Count: unmappedN, Nodes: ttpNodes(e, buf.ttps, unmappedN)}
+	unmappedLive, retiredUnmapped := splitRetired(e, buf.ttps, unmappedN)
+	unmapped := set{Dir: "in", Name: "unmapped", Count: len(unmappedLive), Nodes: ttpNodes(e, unmappedLive, len(unmappedLive))}
+
+	// The retired state: every flagged technique, wherever it sat. The three
+	// sets above are disjoint and cover the whole partition, so this union is
+	// too, and it is sorted because the three parts are.
+	retiredIDs := slices.Concat(retiredDefended, retiredUndefended, retiredUnmapped)
+	slices.Sort(retiredIDs)
+	retired := set{Dir: "in", Name: "retired", Count: len(retiredIDs), Nodes: ttpNodes(e, retiredIDs, len(retiredIDs))}
 
 	res := result{
 		Query:    strings.Join(queries, " "),
 		Kind:     "coverage",
 		Deployed: new(len(seen)),
 		Mapped:   new(mappedN),
-		Sets:     []set{defended, undefended, unmapped},
+		Retired:  new(len(retiredIDs)),
+		// The order is the classification's: what is defended, what is not, what
+		// is retired, and what D3FEND never mapped.
+		Sets: []set{defended, undefended, retired, unmapped},
 	}
 	return finish(stdout, stderr, []result{res}, failures, *jsonOut)
+}
+
+// splitRetired partitions a result set into its live and retired members, in
+// that order and keeping the ascending id order of the input: a flagged
+// technique is not a purchase target, so coverage reports it as its own state
+// instead of mixing it into the set a deployment would act on.
+func splitRetired(e *gr4ph.Engine, ids []gr4ph.TTP, n int) (live, retired []gr4ph.TTP) {
+	for _, t := range ids[:n] {
+		if e.TTPRevoked(t) {
+			retired = append(retired, t)
+			continue
+		}
+		live = append(live, t)
+	}
+	return live, retired
 }
 
 // runGain answers `gain <cm>...`: the resolved countermeasures are the deployed
@@ -981,9 +1013,13 @@ func runGain(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
 		return finish(stdout, stderr, []result{res}, failures, *jsonOut)
 	}
 
+	// One union for the whole scan: the covered set of the deployment is the
+	// same for every candidate, so ranking walks the gains table instead of
+	// re-deriving the union 157 times.
 	candidates := make([]gain, 0, e.CountermeasureCount())
+	n := e.CoverageGains(deployed, buf.scrT, buf.gains)
 	for cm := range e.CountermeasureCount() {
-		g := e.CoverageGain(gr4ph.Countermeasure(cm), deployed, buf.scrT)
+		g := buf.gains[cm]
 		if g <= 0 {
 			continue
 		}
@@ -1007,7 +1043,7 @@ func runGain(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
 	if !*all && *top < len(shown) {
 		shown = shown[:*top]
 	}
-	res.Candidates = new(len(candidates))
+	res.Candidates = new(n)
 	res.Gains = shown
 	return finish(stdout, stderr, []result{res}, failures, *jsonOut)
 }
@@ -1021,13 +1057,17 @@ func runGain(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
 func greedyGain(e *gr4ph.Engine, deployed []uint64, scratch []uint64) ([]gain, int) {
 	sel := make([]uint64, len(deployed))
 	copy(sel, deployed)
+	gains := make([]int, e.CountermeasureCount())
 	var rows []gain
 	for {
+		// One union per round, not one per candidate: every candidate is
+		// ranked against the same accumulated selection.
+		e.CoverageGains(sel, scratch, gains)
 		best := -1
 		bestGain := 0
 		bestName := ""
 		for cm := range e.CountermeasureCount() {
-			g := e.CoverageGain(gr4ph.Countermeasure(cm), sel, scratch)
+			g := gains[cm]
 			if g <= 0 {
 				continue
 			}
@@ -1204,12 +1244,12 @@ func writeText(w io.Writer, res result) error {
 			revokedPart(res.Revoked), subTechniquePart(res.SubTechnique),
 			tacticsPart(res.Tactics), platformsPart(res.Platforms))
 	case "group":
-		fmt.Fprintf(rec, "group %s%s kind=%s\n", res.Name, quoted(res.Label), res.GroupKind)
+		fmt.Fprintf(rec, "group %s%s kind=%s%s\n", res.Name, quoted(res.Label), res.GroupKind, revokedPart(res.Revoked))
 	case "kev":
 		fmt.Fprintf(rec, "kev %s%s added=%s ransomware=%t vendor=%q product=%q\n",
 			res.Name, quoted(res.Label), res.Added, res.Ransomware, res.Vendor, res.Product)
 	case "coverage":
-		fmt.Fprintf(rec, "coverage deployed=%d mapped=%d\n", *res.Deployed, *res.Mapped)
+		fmt.Fprintf(rec, "coverage deployed=%d mapped=%d retired=%d\n", *res.Deployed, *res.Mapped, *res.Retired)
 	case "gain":
 		if res.Greedy != nil {
 			fmt.Fprintf(rec, "gain deployed=%d greedy=%d\n", *res.Deployed, *res.Greedy)

@@ -372,6 +372,76 @@ func TestOntologySizes(t *testing.T) {
 	}
 }
 
+// TestOntologyLayoutArithmetic recomputes the README's block table from the
+// tables themselves — the generated counts and the engine's own strides — so a
+// re-pin that moves a count cannot leave the published arithmetic green.
+// builder_test.go's TestLayoutMatchesReadme reads the same numbers off a
+// registered builder, which is what pins the table's shape; this test pins the
+// arithmetic the row widths and plane counts imply.
+func TestOntologyLayoutArithmetic(t *testing.T) {
+	e := build(t)
+
+	wTTP := e.WordsPerRow(gr4ph.KindTTP)
+	wArt := e.WordsPerRow(gr4ph.KindArtifact)
+	wCM := e.WordsPerRow(gr4ph.KindCountermeasure)
+	wDC := e.WordsPerRow(gr4ph.KindDataComponent)
+	wKEV := e.WordsPerRow(gr4ph.KindKEV)
+	wCWE := e.WordsPerRow(gr4ph.KindCWE)
+	wProduct := e.WordsPerRow(gr4ph.KindProduct)
+	// The grouping partition has no Kind, so its row width is the one stride
+	// WordsPerRow does not publish.
+	wGrp := (NGroup + 63) / 64
+	offPlanes, defPlanes := NRel+1, NDefRel+1 // plane 0 of each family is the union
+	wTactic, wPlatform := 1, 1                // one uint64 mask per technique
+
+	blocks := []struct {
+		name  string
+		words int
+	}{
+		{"ttpArt", offPlanes * NTTP * wArt},
+		{"artTTP", offPlanes * NArtifact * wTTP},
+		{"cmArt", defPlanes * NCountermeasure * wArt},
+		{"artCM", defPlanes * NArtifact * wCM},
+		{"cmTTP", NCountermeasure * wTTP},
+		{"ttpCM", NTTP * wCM},
+		{"tacticTTP", NTactic * wTTP},
+		{"ttpTactic", NTTP * wTactic},
+		{"platformTTP", NPlatform * wTTP},
+		{"ttpPlatform", NTTP * wPlatform},
+		{"ttpFlags", NTTP},
+		{"dcTTP", NDataComponent * wTTP},
+		{"ttpDC", NTTP * wDC},
+		{"grpTTP", NGroup * wTTP},
+		{"ttpGrp", NTTP * wGrp},
+		{"grpSoftware", NGroup * wGrp},
+		{"softwareGrp", NGroup * wGrp},
+		{"kevCWE", NKEV * wCWE},
+		{"cweKEV", NCWE * wKEV},
+		{"kevProduct", NKEV * wProduct},
+		{"productKEV", NProduct * wKEV},
+	}
+	want := []int{
+		199248, 197106, 24492, 28899, 2983, 3558,
+		779, 1186, 285, 1186, 1186, 2337, 2372, 23028, 22534, 23028, 23028,
+		5217, 5292, 20868, 20216,
+	}
+	subtotal, newArrays := 0, 0
+	for i, bl := range blocks {
+		if bl.words != want[i] {
+			t.Errorf("%s = %d words, want %d (README block table)", bl.name, bl.words, want[i])
+		}
+		if i < 6 {
+			subtotal += bl.words
+		} else {
+			newArrays += bl.words
+		}
+	}
+	if subtotal != 456286 || newArrays != 152542 || subtotal+newArrays != 608828 {
+		t.Errorf("six-block subtotal %d, new arrays %d, total %d, want 456286/152542/608828",
+			subtotal, newArrays, subtotal+newArrays)
+	}
+}
+
 // TestOntologyRelationConstants pins every generated constant to its plane, so
 // a change in the naming rule or the sort order cannot pass unnoticed.
 func TestOntologyRelationConstants(t *testing.T) {
@@ -799,9 +869,9 @@ func TestOntologyLabelAmbiguity(t *testing.T) {
 		t.Fatalf("DataComponent(label) = %d,%v want DC0084", got, ok)
 	}
 
-	// Grouping nodes: the id always resolves; a label shared by two nodes
-	// resolves to the lowest-index carrier, which is the byte-smallest id
-	// because the tables are emitted sorted.
+	// Grouping nodes: the id always resolves, and a label shared by two nodes
+	// resolves to its live carrier — the lowest-index carrier only when every
+	// carrier is revoked, which is the rule claimGroup mirrors from claimTTP.
 	groupKey := map[string][]gr4ph.Group{}
 	for i := range e.GroupCount() {
 		g := gr4ph.Group(i)
@@ -811,6 +881,17 @@ func TestOntologyLabelAmbiguity(t *testing.T) {
 		key := e.GroupLabel(g)
 		groupKey[key] = append(groupKey[key], g)
 	}
+	// liveWinner is the carrier a shared key must resolve to: the first live one
+	// in index order, or the first carrier when every one is revoked.
+	liveWinner := func(carriers []gr4ph.Group) gr4ph.Group {
+		for _, carrier := range carriers {
+			if !e.GroupRevoked(carrier) {
+				return carrier
+			}
+		}
+		return carriers[0]
+	}
+	revokedCarriers := 0
 	sharedGroups := 0
 	for key, carriers := range groupKey {
 		if len(carriers) == 1 {
@@ -825,17 +906,96 @@ func TestOntologyLabelAmbiguity(t *testing.T) {
 				t.Errorf("label %q is shared within one grouping kind", key)
 			}
 			kinds[e.GroupKind(carrier)] = true
+			if e.GroupRevoked(carrier) {
+				revokedCarriers++
+			}
 		}
-		got, ok := e.Group(key)
-		if !ok || got != carriers[0] {
-			t.Errorf("Group(%q) = %d,%v want the lowest-index carrier %d", key, got, ok, carriers[0])
+		want := liveWinner(carriers)
+		if got, ok := e.Group(key); !ok || got != want {
+			t.Errorf("Group(%q) = %d,%v want the live carrier %s", key, got, ok, e.GroupID(want))
 		}
 	}
 	if sharedGroups != 12 {
 		t.Fatalf("group labels shared by two nodes = %d, want 12", sharedGroups)
 	}
-	// The two hard cases: the byte-smallest id wins, so a campaign beats the
-	// actor that shares its label, and an actor beats software.
+	if revokedCarriers != 6 {
+		t.Fatalf("revoked carriers of a shared label = %d, want 6 (Gelsemium, Taidoor, Frankenstein, Night Dragon, Operation Wocao, CostaRicto)", revokedCarriers)
+	}
+	// The resolver folds the label (trim + lower-case), so three case-variant
+	// pairs collapse into keys the raw sweep above cannot see. Two of them are
+	// within the software kind — the one case the "unique within a kind" rule
+	// does not hold for — so they are named as well as counted.
+	folded := map[string][]gr4ph.Group{}
+	for i := range e.GroupCount() {
+		g := gr4ph.Group(i)
+		key := strings.ToLower(strings.TrimSpace(e.GroupLabel(g)))
+		folded[key] = append(folded[key], g)
+	}
+	foldedShared, foldedSameKind := 0, 0
+	for key, carriers := range folded {
+		if len(carriers) == 1 {
+			continue
+		}
+		foldedShared++
+		kinds := map[gr4ph.GroupKind]bool{}
+		for _, carrier := range carriers {
+			if kinds[e.GroupKind(carrier)] {
+				foldedSameKind++
+				break
+			}
+			kinds[e.GroupKind(carrier)] = true
+		}
+		want := liveWinner(carriers)
+		if got, ok := e.Group(key); !ok || got != want {
+			t.Errorf("folded key %q resolves to %d,%v, want the live carrier %s", key, got, ok, e.GroupID(want))
+		}
+	}
+	if foldedShared != 15 || foldedSameKind != 2 {
+		t.Fatalf("folded group keys shared by two nodes = %d (%d within one kind), want 15 (2)",
+			foldedShared, foldedSameKind)
+	}
+	for _, key := range []string{"ngrok", "triton"} {
+		carriers := folded[key]
+		if len(carriers) != 2 {
+			t.Fatalf("folded key %q has %d carriers, want 2", key, len(carriers))
+		}
+		for _, carrier := range carriers {
+			if kind := e.GroupKind(carrier); kind != gr4ph.GroupSoftware {
+				t.Errorf("folded key %q carries kind %d (%q), want two software nodes", key, kind, e.GroupID(carrier))
+			}
+		}
+	}
+	// The keys where live-first changes the winner — triton, taidoor and
+	// gelsemium, whose retired carrier is the lower index — plus ngrok, whose
+	// live carrier was the lower index already.
+	for key, want := range map[string]string{
+		"ngrok": "S0508", "triton": "S1009", "taidoor": "S0011", "gelsemium": "S0666",
+	} {
+		if got, ok := e.Group(key); !ok || e.GroupID(got) != want {
+			t.Errorf("Group(%q) = %s,%v want the live carrier %s", key, e.GroupID(got), ok, want)
+		}
+	}
+	// The pair the rule exists for: the retired S0609 keeps its own id key and
+	// its exact label, and the folded key goes to the live S1009.
+	retired, tritonLive := g(t, e, "S0609"), g(t, e, "S1009")
+	if !e.GroupRevoked(retired) || e.GroupRevoked(tritonLive) {
+		t.Errorf("GroupRevoked(S0609) = %v, GroupRevoked(S1009) = %v, want true,false",
+			e.GroupRevoked(retired), e.GroupRevoked(tritonLive))
+	}
+	if got, ok := e.Group("triton"); !ok || got != tritonLive {
+		t.Errorf("Group(triton) = %d,%v, want the live S1009", got, ok)
+	}
+	// Keys are folded, so the retired node's own capitalisation resolves through
+	// the same key; only its id reaches it.
+	if got, ok := e.Group("TRITON"); !ok || got != tritonLive {
+		t.Errorf("Group(TRITON) = %d,%v, want the live S1009 (labels are keyed case-insensitively)", got, ok)
+	}
+	if got, ok := e.Group("S0609"); !ok || got != retired {
+		t.Errorf("Group(S0609) = %d,%v, want the retired node by id", got, ok)
+	}
+	// The two hard cases on the pinned tables: with both carriers live the
+	// earliest keeps the key, so the campaign C0001 beats the actor G0101 (which
+	// is revoked in any case) and the actor G0008 beats the software S0030.
 	if got, ok := e.Group("Frankenstein"); !ok || got != g(t, e, "C0001") || got == g(t, e, "G0101") {
 		t.Errorf("Group(Frankenstein) = %d,%v, want the campaign C0001", got, ok)
 	}
@@ -1126,13 +1286,46 @@ func TestOntologyCountermeasureGoldens(t *testing.T) {
 	}
 	// 759 of the 1186 techniques carry no offensive edge.
 	degreeZero := 0
+	// The audit's headline fact: ATT&CK moved most of its D3FEND mapping to
+	// the successor id, but some flagged techniques still carry offensive
+	// edges, which puts them inside the mapped range where coverage can offer
+	// them as targets. The mapped set is read once, below, so the walk is one.
+	revokedWithEdges := 0
 	for i := range e.TTPCount() {
-		if e.Degree(gr4ph.TTP(i), gr4ph.RelAny) == 0 {
+		tp := gr4ph.TTP(i)
+		if e.Degree(tp, gr4ph.RelAny) == 0 {
 			degreeZero++
+		}
+		if e.TTPRevoked(tp) && e.Degree(tp, gr4ph.RelAny) > 0 {
+			revokedWithEdges++
 		}
 	}
 	if degreeZero != 759 {
 		t.Fatalf("degree-0 techniques = %d, want 759", degreeZero)
+	}
+	if revokedWithEdges != 23 {
+		t.Fatalf("flagged techniques that still carry offensive edges = %d, want 23", revokedWithEdges)
+	}
+	mapped := make(map[gr4ph.TTP]bool, 427)
+	for _, tp := range bufT[:e.TTPsMapped(scratchT, bufT)] {
+		mapped[tp] = true
+	}
+	for i := range e.TTPCount() {
+		tp := gr4ph.TTP(i)
+		if e.TTPRevoked(tp) && e.Degree(tp, gr4ph.RelAny) > 0 && !mapped[tp] {
+			t.Errorf("flagged %s carries offensive edges but is outside the mapped range", e.TTPName(tp))
+		}
+	}
+	// The five ids the README names are among those 23.
+	for _, id := range []string{"T1053.004", "T1070.001", "T1070.002", "T1562.001", "T1574.002"} {
+		tp, ok := e.Incident(id)
+		if !ok {
+			t.Fatalf("Incident(%s) not found", id)
+		}
+		if degree, isMapped := e.Degree(tp, gr4ph.RelAny), mapped[tp]; !e.TTPRevoked(tp) || degree == 0 || !isMapped {
+			t.Errorf("%s: revoked=%v degree=%d mapped=%v, want a flagged technique with edges inside the mapped range",
+				id, e.TTPRevoked(tp), degree, isMapped)
+		}
 	}
 }
 
@@ -1170,6 +1363,7 @@ func TestZeroAllocOntology(t *testing.T) {
 	ttps := []gr4ph.TTP{t1003, t1003a}
 	selC := make([]uint64, e.WordsPerRow(gr4ph.KindCountermeasure))
 	setSel(selC, int(cm0))
+	dstGains := make([]int, e.CountermeasureCount())
 	selT := make([]uint64, e.WordsPerRow(gr4ph.KindTTP))
 	setSel(selT, int(t1003a))
 	bufK := make([]gr4ph.KEV, e.KEVCount())
@@ -1243,6 +1437,7 @@ func TestZeroAllocOntology(t *testing.T) {
 		{"TTPsCovered", func() { ontologySink += e.TTPsCovered(selC, scratchT, bufT) }},
 		{"TTPsBlind", func() { ontologySink += e.TTPsBlind(selT, selC, scratchT, bufT) }},
 		{"CoverageGain", func() { ontologySink += e.CoverageGain(cm0, selC, scratchT) }},
+		{"CoverageGains", func() { ontologySink += e.CoverageGains(selC, scratchT, dstGains) }},
 		{"CountermeasuresForObserved", func() {
 			ontologySink += e.CountermeasuresForObserved(selT, scratchC, bufC)
 		}},
@@ -1901,13 +2096,48 @@ func TestOntologyCoverage(t *testing.T) {
 	if !ok {
 		t.Fatal("no such countermeasure NetworkTrafficFiltering")
 	}
-	if got := e.CoverageGain(quarantine, emptyCM, scratchT); got != 125 {
-		t.Errorf("CoverageGain(ContentQuarantine, nothing) = %d, want 125", got)
+	if got := e.CoverageGain(quarantine, emptyCM, scratchT); got != 119 {
+		t.Errorf("CoverageGain(ContentQuarantine, nothing) = %d, want 119 (its live techniques)", got)
 	}
 	quarantineSel := make([]uint64, e.WordsPerRow(gr4ph.KindCountermeasure))
 	setSel(quarantineSel, int(quarantine))
-	if got := e.CoverageGain(filtering, quarantineSel, scratchT); got != 107 {
-		t.Errorf("CoverageGain(NetworkTrafficFiltering, ContentQuarantine) = %d, want 107", got)
+	if got := e.CoverageGain(filtering, quarantineSel, scratchT); got != 101 {
+		t.Errorf("CoverageGain(NetworkTrafficFiltering, ContentQuarantine) = %d, want 101", got)
+	}
+	// The retired mask is what makes those two numbers smaller than the 125 and
+	// 107 the same deployment reads without it: the difference is the flagged
+	// techniques the countermeasures also defend, and CoverageGain must not
+	// credit a candidate for one.
+	if got := e.CountermeasureDegree(quarantine); got != 125 {
+		t.Errorf("CountermeasureDegree(ContentQuarantine) = %d, want 125 (the row itself is unmasked)", got)
+	}
+	if got := e.CoverageGain(filtering, emptyCM, scratchT); got != 115 {
+		t.Errorf("CoverageGain(NetworkTrafficFiltering, nothing) = %d, want 115", got)
+	}
+	// The bulk scan agrees with the single-candidate primitive on every
+	// countermeasure, and reports the same best buy the documented `gain
+	// -greedy ContentQuarantine` example starts with.
+	gains := make([]int, e.CountermeasureCount())
+	n := e.CoverageGains(quarantineSel, scratchT, gains)
+	positive, best, bestGain := 0, -1, 0
+	for i := range e.CountermeasureCount() {
+		want := e.CoverageGain(gr4ph.Countermeasure(i), quarantineSel, scratchT)
+		if gains[i] != want {
+			t.Errorf("CoverageGains[%d] over ContentQuarantine = %d, CoverageGain = %d", i, gains[i], want)
+		}
+		if want > 0 {
+			positive++
+		}
+		if want > bestGain {
+			best, bestGain = i, want
+		}
+	}
+	if n != positive {
+		t.Errorf("CoverageGains reported %d positive gains, want %d", n, positive)
+	}
+	if gr4ph.Countermeasure(best) != filtering || bestGain != 101 {
+		t.Errorf("the best buy after ContentQuarantine is %s at %d, want NetworkTrafficFiltering at 101",
+			e.CountermeasureName(gr4ph.Countermeasure(best)), bestGain)
 	}
 
 	observed := make([]uint64, e.WordsPerRow(gr4ph.KindTTP))

@@ -232,6 +232,72 @@ func TestRunStaleCatalog(t *testing.T) {
 	}
 }
 
+// TestRunRepins drives run's re-pin branch — the one path no test could drive
+// without rewriting this repository's own source. It points repinTarget at a
+// copy of the generator, runs a stale catalog with re-pinning on and pins the
+// branch's whole effect: the two literals rewritten to the measurement just
+// taken, the re-pin line ahead of the summary, the exit status 0 (the branch
+// resets the gate to the measurement, so checkShape accepts what it wrote) and
+// the emitted file.
+func TestRunRepins(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "kev.json")
+	if err := os.WriteFile(src, []byte(testKEV), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	out := filepath.Join(dir, "kev_gen.go")
+
+	self, err := repinTarget()
+	if err != nil {
+		t.Fatalf("repinTarget: %v", err)
+	}
+	raw, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatalf("read generator: %v", err)
+	}
+	copyPath := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(copyPath, raw, 0o644); err != nil {
+		t.Fatalf("write copy: %v", err)
+	}
+	original := repinTarget
+	repinTarget = func() (string, error) { return copyPath, nil }
+	t.Cleanup(func() { repinTarget = original })
+
+	stale := testShape
+	stale.catalog = "2098.12.31"
+	// The stale pin also carries a count the measurement contradicts, as a real
+	// re-pin does: without the branch's `want = measured` reset checkShape would
+	// reject the very counts the re-pin just wrote.
+	stale.cwes = 4
+	var buf bytes.Buffer
+	if err := run(src, out, &buf, stale, true); err != nil {
+		t.Fatalf("run with a stale catalog and re-pinning on: %v", err)
+	}
+
+	rewritten, err := os.ReadFile(copyPath)
+	if err != nil {
+		t.Fatalf("read rewritten copy: %v", err)
+	}
+	if want := `sourceKEV = "` + sourceFile() + `@` + testShape.catalog + `"`; !strings.Contains(string(rewritten), want) {
+		t.Errorf("the re-pin did not rewrite sourceKEV to the measured catalog, want %q in\n%s", want, rewritten)
+	}
+	if want := renderShape(testShape); !strings.Contains(string(rewritten), want) {
+		t.Errorf("the re-pin did not rewrite pinnedShape to the measured counts, want %q", want)
+	}
+	if strings.Contains(string(rewritten), stale.catalog) {
+		t.Error("the stale catalog version is still in the rewritten copy")
+	}
+
+	wantRepin := "kevgen: re-pinned " + sourceFile() + "@" + stale.catalog + " -> @" + testShape.catalog +
+		" (re-measure the count pins in ontology/ontology_test.go and cmd/gr4ph/main_test.go, and the README's numbers by hand)\n"
+	if got := buf.String(); !strings.HasPrefix(got, wantRepin+"kevgen: wrote "+out+"\n") {
+		t.Errorf("output does not start with the re-pin line then the summary\n--- got ---\n%s--- want ---\n%s", got, wantRepin)
+	}
+	if _, err := os.Stat(out); err != nil {
+		t.Errorf("the re-pinned run still emits its output file: %v", err)
+	}
+}
+
 // TestRepinPath rewrites a copy of this generator's own source and pins what
 // changed: the two literals, and nothing else.
 func TestRepinPath(t *testing.T) {

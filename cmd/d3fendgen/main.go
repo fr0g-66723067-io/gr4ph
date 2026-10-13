@@ -848,9 +848,10 @@ type model struct {
 	detectsDC  []int
 	detectsTTP []int
 
-	groupIDs    []string
-	groupLabels []string
-	groupKinds  []groupKind
+	groupIDs     []string
+	groupLabels  []string
+	groupKinds   []groupKind
+	groupRevoked []bool
 	// uses pairs, parallel and sorted by (group, technique), and software-use
 	// pairs sorted by (group, software).
 	usesGroup         []int
@@ -1269,6 +1270,7 @@ func assemble(stix map[string]*ttpInfo, g *attackGraph, d3 *d3fendData) (*model,
 		}
 		m.groupLabels = append(m.groupLabels, label)
 		m.groupKinds = append(m.groupKinds, g.nodes[id].kind)
+		m.groupRevoked = append(m.groupRevoked, g.nodes[id].bad)
 	}
 	groupIndex := make(map[string]int, len(m.groupIDs))
 	for i, id := range m.groupIDs {
@@ -1532,6 +1534,7 @@ func emit(m *model) ([]byte, error) {
 	writeStrings(&b, "GroupIDs", "Grouping-node ids (intrusion set G, software S, campaign C), sorted byte-wise.", m.groupIDs)
 	writeStrings(&b, "GroupLabels", "Grouping-node labels, index-parallel to GroupIDs.", m.groupLabels)
 	writeGroupKinds(&b, "GroupKinds", "ATT&CK object type of each grouping node.", m.groupKinds)
+	writeBools(&b, "GroupRevoked", "ATT&CK revocation flag per grouping node (revoked or x_mitre_deprecated), index-parallel to GroupIDs.", m.groupRevoked)
 	writeInts(&b, "UsesGroup", "uint16", "Uses pairs: group index.", m.usesGroup, 10)
 	writeInts(&b, "UsesTTP", "uint16", "Uses pairs: technique index.", m.usesTTP, 10)
 	writeInts(&b, "SoftwareUseGroup", "uint16", "Software-use pairs: using group index.", m.softwareUseGroup, 10)

@@ -77,6 +77,12 @@ type Engine struct {
 	platformTTP []uint64 // [nPlatform][wTTP] platform -> techniques
 	ttpPlatform []uint64 // [nTTP][wPlatform] the per-technique platform mask
 	ttpFlags    []uint64 // [nTTP]            per-technique flags (derived)
+
+	// The revoked-or-deprecated flag as a row. The coverage overlay masks it out
+	// of a marginal gain, so a retired technique is never a purchase target; the
+	// cold ttpRevoked list below cannot serve a row scan.
+	ttpRevokedRow []uint64 // [nTTP]
+
 	dcTTP       []uint64 // [nDC][wTTP]       data component -> techniques
 	ttpDC       []uint64 // [nTTP][wDC]       technique -> data components
 	grpTTP      []uint64 // [nGrp][wTTP]      group -> techniques
@@ -106,9 +112,10 @@ type Engine struct {
 	dcIDs    []string
 	dcLabels []string
 
-	groupIDs    []string
-	groupLabels []string
-	groupKinds  []GroupKind
+	groupIDs     []string
+	groupLabels  []string
+	groupKinds   []GroupKind
+	groupRevoked []bool
 
 	artNames  []string
 	artLabels []string
@@ -387,8 +394,12 @@ func (e *Engine) DataComponent(s string) (DataComponent, bool) {
 }
 
 // Group resolves a grouping-node id ("G0007", "S0002", "C0001") or label to an
-// id. Labels are unique within a kind but not across kinds ("Frankenstein" is
-// both C0001 and G0101), so the earliest registration keeps a shared label.
+// id. Labels are unique within a kind up to case folding, with one exception on
+// the pinned tables: two software nodes pair up under the key "ngrok" (S0508 and
+// S9000) and two under "triton" (S0609 and S1009). Across kinds a shared label
+// is normal ("Frankenstein" is both C0001 and G0101), and a shared label
+// resolves to its live carrier, or to the lowest-index holder when every carrier
+// is revoked — the rule GroupRevoked reports the flag for.
 func (e *Engine) Group(s string) (Group, bool) {
 	i, ok := e.groupIndex[normalize(s)]
 	return Group(i), ok
@@ -482,6 +493,13 @@ func (e *Engine) GroupLabel(g Group) string {
 func (e *Engine) GroupKind(g Group) GroupKind {
 	e.mustGroup(g)
 	return e.groupKinds[g]
+}
+
+// GroupRevoked reports whether ATT&CK revoked (or deprecated) the grouping
+// node, which is the flag the label resolution prefers the live twin by.
+func (e *Engine) GroupRevoked(g Group) bool {
+	e.mustGroup(g)
+	return e.groupRevoked[g]
 }
 
 // TTPName returns the technique id string, e.g. "T1003.001".
@@ -1098,9 +1116,11 @@ func (e *Engine) TTPsBlind(active Selection, sel Selection, scratch []uint64, ds
 }
 
 // CoverageGain returns how many techniques cm would newly cover on top of the
-// deployed selection: popcount(cmTTP[cm] &^ covered(sel)). It is the marginal
-// value of adding one countermeasure, the number a procurement ranking sorts
-// by. An out-of-range cm yields 0.
+// deployed selection: popcount(cmTTP[cm] &^ covered(sel)) over the live
+// techniques. It is the marginal value of adding one countermeasure, the number
+// a procurement ranking sorts by. A retired technique is never a purchase
+// target, so the flagged ones are masked out of the count. An out-of-range cm
+// yields 0.
 func (e *Engine) CoverageGain(cm Countermeasure, sel Selection, scratch []uint64) int {
 	e.checkSelection(sel, KindCountermeasure)
 	e.checkScratch(scratch, KindTTP)
@@ -1112,7 +1132,37 @@ func (e *Engine) CoverageGain(cm Countermeasure, sel Selection, scratch []uint64
 	}
 	n := 0
 	for i, w := range e.row(e.cmTTP, e.cmTTPOff(cm), e.wTTP) {
-		n += bits.OnesCount64(w &^ row[i])
+		n += bits.OnesCount64(w &^ row[i] &^ e.ttpRevokedRow[i])
+	}
+	return n
+}
+
+// CoverageGains writes the marginal gain of every countermeasure against one
+// deployment: dst[cm] is what cm would newly cover on top of covered(sel), the
+// number CoverageGain returns for a single candidate. The covered union is
+// computed once for the whole scan, so ranking every countermeasure costs one
+// selected-row union instead of one union per candidate. Retired techniques are
+// masked out exactly as in CoverageGain, so a candidate is never credited for
+// one. Countermeasures at and beyond len(dst) are counted but not written; the
+// return value is the number of countermeasures with a positive gain.
+func (e *Engine) CoverageGains(sel Selection, scratch []uint64, dst []int) int {
+	e.checkSelection(sel, KindCountermeasure)
+	e.checkScratch(scratch, KindTTP)
+	row := scratch[:e.wTTP]
+	clear(row)
+	orSelectedRowsInto(row, sel, e.cmTTP, e.wTTP)
+	n := 0
+	for cm := range e.nCM {
+		g := 0
+		for i, w := range e.row(e.cmTTP, e.cmTTPOff(Countermeasure(cm)), e.wTTP) {
+			g += bits.OnesCount64(w &^ row[i] &^ e.ttpRevokedRow[i])
+		}
+		if g > 0 {
+			n++
+		}
+		if cm < len(dst) {
+			dst[cm] = g
+		}
 	}
 	return n
 }
