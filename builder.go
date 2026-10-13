@@ -1122,6 +1122,15 @@ func (b *Builder) Build() (*Engine, error) {
 		}
 	}
 
+	// The same for the revocation flag, which the coverage overlay masks out of
+	// its marginal gains: one row, built from the cold column the accessors read.
+	e.ttpRevokedRow = make([]uint64, e.wTTP)
+	for i, revoked := range b.ttpRevoked {
+		if revoked {
+			setBit(e.ttpRevokedRow, i)
+		}
+	}
+
 	// Fold the union planes (plane 0) from the predicate planes.
 	e.foldUnion(e.ttpArt, e.nRel, e.nTTP, e.wArt)
 	e.foldUnion(e.artTTP, e.nRel, e.nArt, e.wTTP)

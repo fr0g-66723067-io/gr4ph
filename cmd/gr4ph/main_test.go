@@ -311,18 +311,22 @@ rel blocks defensive plane 3/3 (countermeasure -> artifact): edges=1 sources=1
 `
 
 	// The overlay verbs on the fixture: both countermeasures defend T1003.001
-	// only, so the mapped range is that one technique, the four others are
-	// unmapped and anything below the mapping is undefended.
-	fixtureCoverageHardening = `coverage deployed=1 mapped=1
+	// only, so the mapped range is that one technique, the three live others are
+	// unmapped and anything below the mapping is undefended. T1015 is the
+	// fixture's revoked technique, so it is reported as retired wherever it
+	// would otherwise sit.
+	fixtureCoverageHardening = `coverage deployed=1 mapped=1 retired=1
   in  defended (1): T1003.001 "LSASS Memory"
   in  undefended (0): -
-  in  unmapped (4): T1003 "OS Credential Dumping", T1059 "Command and Scripting Interpreter", T1015 "Accessibility Features", T1546.008 "Accessibility Features"
+  in  retired (1): T1015 "Accessibility Features"
+  in  unmapped (3): T1003 "OS Credential Dumping", T1059 "Command and Scripting Interpreter", T1546.008 "Accessibility Features"
 `
 
-	fixtureCoverageEmpty = `coverage deployed=0 mapped=1
+	fixtureCoverageEmpty = `coverage deployed=0 mapped=1 retired=1
   in  defended (0): -
   in  undefended (1): T1003.001 "LSASS Memory"
-  in  unmapped (4): T1003 "OS Credential Dumping", T1059 "Command and Scripting Interpreter", T1015 "Accessibility Features", T1546.008 "Accessibility Features"
+  in  retired (1): T1015 "Accessibility Features"
+  in  unmapped (3): T1003 "OS Credential Dumping", T1059 "Command and Scripting Interpreter", T1546.008 "Accessibility Features"
 `
 
 	// Equal gains are ordered by the byte-smallest countermeasure id
@@ -768,12 +772,16 @@ func TestJSONFixture(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &cov); err != nil {
 		t.Fatalf("decode %q: %v", out, err)
 	}
-	if cov.Deployed == nil || *cov.Deployed != 1 || cov.Mapped == nil || *cov.Mapped != 1 {
-		t.Fatalf("coverage counts = %v/%v, want 1/1", cov.Deployed, cov.Mapped)
+	if cov.Deployed == nil || *cov.Deployed != 1 || cov.Mapped == nil || *cov.Mapped != 1 ||
+		cov.Retired == nil || *cov.Retired != 1 {
+		t.Fatalf("coverage counts = %v/%v/%v, want 1/1/1", cov.Deployed, cov.Mapped, cov.Retired)
 	}
-	if len(cov.Sets) != 3 || cov.Sets[0].Dir != "in" || cov.Sets[0].Count != 1 ||
-		cov.Sets[1].Count != 0 || cov.Sets[2].Count != 4 {
-		t.Fatalf("coverage sets = %+v, want in defended 1, undefended 0, unmapped 4", cov.Sets)
+	if len(cov.Sets) != 4 || cov.Sets[0].Dir != "in" || cov.Sets[0].Count != 1 ||
+		cov.Sets[1].Count != 0 || cov.Sets[2].Count != 1 || cov.Sets[3].Count != 3 {
+		t.Fatalf("coverage sets = %+v, want in defended 1, undefended 0, retired 1, unmapped 3", cov.Sets)
+	}
+	if cov.Sets[2].Name != "retired" || cov.Sets[2].Nodes[0].Name != "T1015" {
+		t.Fatalf("the retired set must be the flagged technique: %+v", cov.Sets[2])
 	}
 
 	out, stderr, status = runCase(t, e, "-json", "gain", "-all")
@@ -1226,17 +1234,22 @@ func TestOntologyValues(t *testing.T) {
 		{
 			"coverage: defended",
 			[]string{"coverage", "ContentQuarantine"},
-			"coverage deployed=1 mapped=427", "in defended", 125,
+			"coverage deployed=1 mapped=427 retired=222", "in defended", 119,
 		},
 		{
 			"coverage: undefended",
 			[]string{"coverage", "ContentQuarantine"},
-			"coverage deployed=1 mapped=427", "in undefended", 302,
+			"coverage deployed=1 mapped=427 retired=222", "in undefended", 285,
+		},
+		{
+			"coverage: retired",
+			[]string{"coverage", "ContentQuarantine"},
+			"coverage deployed=1 mapped=427 retired=222", "in retired", 222,
 		},
 		{
 			"coverage: unmapped",
 			[]string{"coverage", "ContentQuarantine"},
-			"coverage deployed=1 mapped=427", "in unmapped", 759,
+			"coverage deployed=1 mapped=427 retired=222", "in unmapped", 560,
 		},
 		{
 			"contain: one alert",
@@ -1260,26 +1273,27 @@ func TestOntologyValues(t *testing.T) {
 		})
 	}
 
-	// gain -greedy walks from the empty deployment: 21 buys cover the whole
-	// mapped range, led by ContentQuarantine (125) and NetworkTrafficFiltering
-	// (107). The walk is replayed through coverage, so the claim "21 buys cover
-	// everything mapped" is checked, not asserted.
+	// gain -greedy walks from the empty deployment: 20 buys cover every live
+	// mapped technique — the 404 that are neither retired nor unmapped — led by
+	// ContentQuarantine (119) and NetworkTrafficFiltering (101). The walk is
+	// replayed through coverage, so the claim "20 buys cover everything mapped
+	// and live" is checked, not asserted.
 	out, stderr, status = runCase(t, e, "gain", "-greedy")
 	if status != 0 || stderr != "" {
 		t.Fatalf("gain -greedy: status = %d, stderr = %q, want 0 and empty", status, stderr)
 	}
-	if got := strings.SplitN(out, "\n", 2)[0]; got != "gain deployed=0 greedy=21" {
-		t.Errorf("gain -greedy header = %q, want gain deployed=0 greedy=21", got)
+	if got := strings.SplitN(out, "\n", 2)[0]; got != "gain deployed=0 greedy=20" {
+		t.Errorf("gain -greedy header = %q, want gain deployed=0 greedy=20", got)
 	}
 	rows := gainRows(t, out)
-	if len(rows) != 21 {
-		t.Fatalf("gain -greedy lists %d candidates, want 21", len(rows))
+	if len(rows) != 20 {
+		t.Fatalf("gain -greedy lists %d candidates, want 20", len(rows))
 	}
-	if rows[0].Name != "ContentQuarantine" || rows[0].Gain != 125 {
-		t.Errorf("gain -greedy[0] = %+v, want ContentQuarantine 125", rows[0])
+	if rows[0].Name != "ContentQuarantine" || rows[0].Gain != 119 {
+		t.Errorf("gain -greedy[0] = %+v, want ContentQuarantine 119", rows[0])
 	}
-	if rows[1].Name != "NetworkTrafficFiltering" || rows[1].Gain != 107 {
-		t.Errorf("gain -greedy[1] = %+v, want NetworkTrafficFiltering 107", rows[1])
+	if rows[1].Name != "NetworkTrafficFiltering" || rows[1].Gain != 101 {
+		t.Errorf("gain -greedy[1] = %+v, want NetworkTrafficFiltering 101", rows[1])
 	}
 	coverageArgs := append([]string{"coverage"}, rowNames(rows)...)
 	covOut, stderr, status := runCase(t, e, coverageArgs...)
@@ -1289,25 +1303,28 @@ func TestOntologyValues(t *testing.T) {
 	if count, _ := setLine(t, covOut, "in undefended"); count != 0 {
 		t.Errorf("the greedy deployment leaves %d techniques undefended, want 0", count)
 	}
-	if count, _ := setLine(t, covOut, "in defended"); count != 427 {
-		t.Errorf("the greedy deployment defends %d techniques, want the whole mapped range (427)", count)
+	if count, _ := setLine(t, covOut, "in defended"); count != 404 {
+		t.Errorf("the greedy deployment defends %d live techniques, want all 404 mapped and live", count)
+	}
+	if count, _ := setLine(t, covOut, "in retired"); count != 222 {
+		t.Errorf("the greedy deployment's coverage lists %d retired techniques, want 222", count)
 	}
 
 	// The ranking mode against the empty deployment: the gains are each
-	// countermeasure's own degree there, so NetworkTrafficFiltering reads 121
-	// while the marginal 107 above is its gain over ContentQuarantine.
+	// countermeasure's own live degree there, so NetworkTrafficFiltering reads
+	// 115 while the marginal 101 above is its gain over ContentQuarantine.
 	out, stderr, status = runCase(t, e, "gain", "-top", "2")
 	if status != 0 || stderr != "" {
 		t.Fatalf("gain -top 2: status = %d, stderr = %q, want 0 and empty", status, stderr)
 	}
-	if got := strings.SplitN(out, "\n", 2)[0]; got != "gain deployed=0 candidates=157 shown=2" {
-		t.Errorf("gain -top 2 header = %q, want gain deployed=0 candidates=157 shown=2", got)
+	if got := strings.SplitN(out, "\n", 2)[0]; got != "gain deployed=0 candidates=155 shown=2" {
+		t.Errorf("gain -top 2 header = %q, want gain deployed=0 candidates=155 shown=2", got)
 	}
-	if got := gainLine(t, out, "ContentQuarantine"); got != 125 {
-		t.Errorf("gain -top 2 ContentQuarantine = %d, want 125", got)
+	if got := gainLine(t, out, "ContentQuarantine"); got != 119 {
+		t.Errorf("gain -top 2 ContentQuarantine = %d, want 119", got)
 	}
-	if got := gainLine(t, out, "NetworkTrafficFiltering"); got != 121 {
-		t.Errorf("gain -top 2 NetworkTrafficFiltering = %d, want 121", got)
+	if got := gainLine(t, out, "NetworkTrafficFiltering"); got != 115 {
+		t.Errorf("gain -top 2 NetworkTrafficFiltering = %d, want 115", got)
 	}
 }
 

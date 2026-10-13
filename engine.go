@@ -77,6 +77,12 @@ type Engine struct {
 	platformTTP []uint64 // [nPlatform][wTTP] platform -> techniques
 	ttpPlatform []uint64 // [nTTP][wPlatform] the per-technique platform mask
 	ttpFlags    []uint64 // [nTTP]            per-technique flags (derived)
+
+	// The revoked-or-deprecated flag as a row. The coverage overlay masks it out
+	// of a marginal gain, so a retired technique is never a purchase target; the
+	// cold ttpRevoked list below cannot serve a row scan.
+	ttpRevokedRow []uint64 // [nTTP]
+
 	dcTTP       []uint64 // [nDC][wTTP]       data component -> techniques
 	ttpDC       []uint64 // [nTTP][wDC]       technique -> data components
 	grpTTP      []uint64 // [nGrp][wTTP]      group -> techniques
@@ -1110,9 +1116,11 @@ func (e *Engine) TTPsBlind(active Selection, sel Selection, scratch []uint64, ds
 }
 
 // CoverageGain returns how many techniques cm would newly cover on top of the
-// deployed selection: popcount(cmTTP[cm] &^ covered(sel)). It is the marginal
-// value of adding one countermeasure, the number a procurement ranking sorts
-// by. An out-of-range cm yields 0.
+// deployed selection: popcount(cmTTP[cm] &^ covered(sel)) over the live
+// techniques. It is the marginal value of adding one countermeasure, the number
+// a procurement ranking sorts by. A retired technique is never a purchase
+// target, so the flagged ones are masked out of the count. An out-of-range cm
+// yields 0.
 func (e *Engine) CoverageGain(cm Countermeasure, sel Selection, scratch []uint64) int {
 	e.checkSelection(sel, KindCountermeasure)
 	e.checkScratch(scratch, KindTTP)
@@ -1124,7 +1132,7 @@ func (e *Engine) CoverageGain(cm Countermeasure, sel Selection, scratch []uint64
 	}
 	n := 0
 	for i, w := range e.row(e.cmTTP, e.cmTTPOff(cm), e.wTTP) {
-		n += bits.OnesCount64(w &^ row[i])
+		n += bits.OnesCount64(w &^ row[i] &^ e.ttpRevokedRow[i])
 	}
 	return n
 }
@@ -1133,9 +1141,10 @@ func (e *Engine) CoverageGain(cm Countermeasure, sel Selection, scratch []uint64
 // deployment: dst[cm] is what cm would newly cover on top of covered(sel), the
 // number CoverageGain returns for a single candidate. The covered union is
 // computed once for the whole scan, so ranking every countermeasure costs one
-// selected-row union instead of one union per candidate. Countermeasures at and
-// beyond len(dst) are counted but not written; the return value is the number of
-// countermeasures with a positive gain.
+// selected-row union instead of one union per candidate. Retired techniques are
+// masked out exactly as in CoverageGain, so a candidate is never credited for
+// one. Countermeasures at and beyond len(dst) are counted but not written; the
+// return value is the number of countermeasures with a positive gain.
 func (e *Engine) CoverageGains(sel Selection, scratch []uint64, dst []int) int {
 	e.checkSelection(sel, KindCountermeasure)
 	e.checkScratch(scratch, KindTTP)
@@ -1146,7 +1155,7 @@ func (e *Engine) CoverageGains(sel Selection, scratch []uint64, dst []int) int {
 	for cm := range e.nCM {
 		g := 0
 		for i, w := range e.row(e.cmTTP, e.cmTTPOff(Countermeasure(cm)), e.wTTP) {
-			g += bits.OnesCount64(w &^ row[i])
+			g += bits.OnesCount64(w &^ row[i] &^ e.ttpRevokedRow[i])
 		}
 		if g > 0 {
 			n++

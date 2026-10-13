@@ -2096,13 +2096,23 @@ func TestOntologyCoverage(t *testing.T) {
 	if !ok {
 		t.Fatal("no such countermeasure NetworkTrafficFiltering")
 	}
-	if got := e.CoverageGain(quarantine, emptyCM, scratchT); got != 125 {
-		t.Errorf("CoverageGain(ContentQuarantine, nothing) = %d, want 125", got)
+	if got := e.CoverageGain(quarantine, emptyCM, scratchT); got != 119 {
+		t.Errorf("CoverageGain(ContentQuarantine, nothing) = %d, want 119 (its live techniques)", got)
 	}
 	quarantineSel := make([]uint64, e.WordsPerRow(gr4ph.KindCountermeasure))
 	setSel(quarantineSel, int(quarantine))
-	if got := e.CoverageGain(filtering, quarantineSel, scratchT); got != 107 {
-		t.Errorf("CoverageGain(NetworkTrafficFiltering, ContentQuarantine) = %d, want 107", got)
+	if got := e.CoverageGain(filtering, quarantineSel, scratchT); got != 101 {
+		t.Errorf("CoverageGain(NetworkTrafficFiltering, ContentQuarantine) = %d, want 101", got)
+	}
+	// The retired mask is what makes those two numbers smaller than the 125 and
+	// 107 the same deployment reads without it: the difference is the flagged
+	// techniques the countermeasures also defend, and CoverageGain must not
+	// credit a candidate for one.
+	if got := e.CountermeasureDegree(quarantine); got != 125 {
+		t.Errorf("CountermeasureDegree(ContentQuarantine) = %d, want 125 (the row itself is unmasked)", got)
+	}
+	if got := e.CoverageGain(filtering, emptyCM, scratchT); got != 115 {
+		t.Errorf("CoverageGain(NetworkTrafficFiltering, nothing) = %d, want 115", got)
 	}
 	// The bulk scan agrees with the single-candidate primitive on every
 	// countermeasure, and reports the same best buy the documented `gain
@@ -2125,8 +2135,8 @@ func TestOntologyCoverage(t *testing.T) {
 	if n != positive {
 		t.Errorf("CoverageGains reported %d positive gains, want %d", n, positive)
 	}
-	if gr4ph.Countermeasure(best) != filtering || bestGain != 107 {
-		t.Errorf("the best buy after ContentQuarantine is %s at %d, want NetworkTrafficFiltering at 107",
+	if gr4ph.Countermeasure(best) != filtering || bestGain != 101 {
+		t.Errorf("the best buy after ContentQuarantine is %s at %d, want NetworkTrafficFiltering at 101",
 			e.CountermeasureName(gr4ph.Countermeasure(best)), bestGain)
 	}
 

@@ -155,6 +155,7 @@ type result struct {
 	// techniques, and every count is the number of distinct resolved queries.
 	Deployed   *int    `json:"deployed,omitempty"`   // coverage, gain
 	Mapped     *int    `json:"mapped,omitempty"`     // coverage
+	Retired    *int    `json:"retired,omitempty"`    // coverage: the flagged techniques among all 1186
 	Observed   *int    `json:"observed,omitempty"`   // contain
 	Candidates *int    `json:"candidates,omitempty"` // gain
 	Greedy     *int    `json:"greedy,omitempty"`     // gain -greedy
@@ -903,26 +904,54 @@ func runCoverage(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
 	// doubles as the active set of the undefended set, so no state is derived
 	// from another state's output.
 	defendedN := e.TTPsCovered(deployed, buf.scrT, buf.ttps)
-	defended := set{Dir: "in", Name: "defended", Count: defendedN, Nodes: ttpNodes(e, buf.ttps, defendedN)}
+	defendedLive, retiredDefended := splitRetired(e, buf.ttps, defendedN)
+	defended := set{Dir: "in", Name: "defended", Count: len(defendedLive), Nodes: ttpNodes(e, defendedLive, len(defendedLive))}
 	mappedN := e.TTPsMapped(buf.scrT, buf.ttps)
 	mapped := make([]uint64, e.WordsPerRow(gr4ph.KindTTP))
 	for _, t := range buf.ttps[:mappedN] {
 		setBit(mapped, int(t))
 	}
 	undefendedN := e.TTPsBlind(mapped, deployed, buf.scrT, buf.ttps)
-	undefended := set{Dir: "in", Name: "undefended", Count: undefendedN, Nodes: ttpNodes(e, buf.ttps, undefendedN)}
+	undefendedLive, retiredUndefended := splitRetired(e, buf.ttps, undefendedN)
+	undefended := set{Dir: "in", Name: "undefended", Count: len(undefendedLive), Nodes: ttpNodes(e, undefendedLive, len(undefendedLive))}
 	allTTP, allCM := allSelections(e)
 	unmappedN := e.TTPsBlind(allTTP, allCM, buf.scrT, buf.ttps)
-	unmapped := set{Dir: "in", Name: "unmapped", Count: unmappedN, Nodes: ttpNodes(e, buf.ttps, unmappedN)}
+	unmappedLive, retiredUnmapped := splitRetired(e, buf.ttps, unmappedN)
+	unmapped := set{Dir: "in", Name: "unmapped", Count: len(unmappedLive), Nodes: ttpNodes(e, unmappedLive, len(unmappedLive))}
+
+	// The retired state: every flagged technique, wherever it sat. The three
+	// sets above are disjoint and cover the whole partition, so this union is
+	// too, and it is sorted because the three parts are.
+	retiredIDs := slices.Concat(retiredDefended, retiredUndefended, retiredUnmapped)
+	slices.Sort(retiredIDs)
+	retired := set{Dir: "in", Name: "retired", Count: len(retiredIDs), Nodes: ttpNodes(e, retiredIDs, len(retiredIDs))}
 
 	res := result{
 		Query:    strings.Join(queries, " "),
 		Kind:     "coverage",
 		Deployed: new(len(seen)),
 		Mapped:   new(mappedN),
-		Sets:     []set{defended, undefended, unmapped},
+		Retired:  new(len(retiredIDs)),
+		// The order is the classification's: what is defended, what is not, what
+		// is retired, and what D3FEND never mapped.
+		Sets: []set{defended, undefended, retired, unmapped},
 	}
 	return finish(stdout, stderr, []result{res}, failures, *jsonOut)
+}
+
+// splitRetired partitions a result set into its live and retired members, in
+// that order and keeping the ascending id order of the input: a flagged
+// technique is not a purchase target, so coverage reports it as its own state
+// instead of mixing it into the set a deployment would act on.
+func splitRetired(e *gr4ph.Engine, ids []gr4ph.TTP, n int) (live, retired []gr4ph.TTP) {
+	for _, t := range ids[:n] {
+		if e.TTPRevoked(t) {
+			retired = append(retired, t)
+			continue
+		}
+		live = append(live, t)
+	}
+	return live, retired
 }
 
 // runGain answers `gain <cm>...`: the resolved countermeasures are the deployed
@@ -1220,7 +1249,7 @@ func writeText(w io.Writer, res result) error {
 		fmt.Fprintf(rec, "kev %s%s added=%s ransomware=%t vendor=%q product=%q\n",
 			res.Name, quoted(res.Label), res.Added, res.Ransomware, res.Vendor, res.Product)
 	case "coverage":
-		fmt.Fprintf(rec, "coverage deployed=%d mapped=%d\n", *res.Deployed, *res.Mapped)
+		fmt.Fprintf(rec, "coverage deployed=%d mapped=%d retired=%d\n", *res.Deployed, *res.Mapped, *res.Retired)
 	case "gain":
 		if res.Greedy != nil {
 			fmt.Fprintf(rec, "gain deployed=%d greedy=%d\n", *res.Deployed, *res.Greedy)

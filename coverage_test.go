@@ -236,6 +236,58 @@ func TestCoverageGainsMatchesGain(t *testing.T) {
 	}
 }
 
+// TestCoverageGainMasksRetired pins the live-surface rule: a countermeasure's
+// row may hold a retired technique, and TTPsCovered/TTPsMapped/TTPsBlind still
+// answer about the whole mapping range, but a marginal gain never counts one, so
+// a procurement ranking cannot be told to buy for a technique ATT&CK retired.
+func TestCoverageGainMasksRetired(t *testing.T) {
+	b := NewBuilder()
+	retired, err := b.AddTTP("T1015", "Accessibility Features", DomainEnterprise, NoParent, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, err := b.AddTTP("T1546.008", "Accessibility Features", DomainEnterprise, NoParent, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cm, err := b.AddCountermeasure("RetiredDefender", "Retired Defender")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.AddDefendsEdge(cm, retired); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.AddDefendsEdge(cm, live); err != nil {
+		t.Fatal(err)
+	}
+	e, err := b.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	scratchT := make([]uint64, e.WordsPerRow(KindTTP))
+	empty := selOf(1)
+	if got := e.CountermeasureDegree(cm); got != 2 {
+		t.Fatalf("CountermeasureDegree = %d, want 2 (the row holds both ids)", got)
+	}
+	if got := e.CoverageGain(cm, empty, scratchT); got != 1 {
+		t.Errorf("CoverageGain = %d, want 1 (the retired id is not a purchase target)", got)
+	}
+	gains := make([]int, e.CountermeasureCount())
+	if n := e.CoverageGains(empty, scratchT, gains); n != 1 || gains[cm] != 1 {
+		t.Errorf("CoverageGains = %d %v, want 1 [1]", n, gains)
+	}
+	// The set queries keep the whole range: the split into live and retired is
+	// the caller's, and coverage does it.
+	dstT := make([]TTP, e.TTPCount())
+	if n := e.TTPsCovered(selOf(1, int(cm)), scratchT, dstT); n != 2 || !equalIDs(dstT[:n], []TTP{retired, live}) {
+		t.Errorf("TTPsCovered = %d %v, want both ids in ascending order", n, dstT[:n])
+	}
+	if n := e.TTPsMapped(scratchT, dstT); n != 2 {
+		t.Errorf("TTPsMapped = %d, want 2 (the mapping range does not know about revocation)", n)
+	}
+}
+
 func TestCoverageGuards(t *testing.T) {
 	e := buildSynthetic(t)
 	scratchT := make([]uint64, e.WordsPerRow(KindTTP))
