@@ -128,40 +128,50 @@ for the library. Flags may precede or follow the queries (`-json` may also prece
 | `gain` | countermeasure id, label or alias, or none (`gain`) | `-top <n>`, `-all`, `-greedy`, `-json` | one line per candidate: its gain, id and label |
 | `contain` | technique id, label or alias | `-json` | `out countermeasures` |
 
-`ttp` prints the artifacts a technique touches, the countermeasures that defend it, the data components
-that detect it and the grouping nodes recorded as using it, exact and rolled up (the roll-up adds its
-direct sub-techniques). `artifact` prints the techniques that touch it and the countermeasures linked to
-it, directly and via those techniques. `cm` prints the artifacts and techniques a countermeasure covers.
-`dc`, `group`, `tactic` and `platform` answer the two new partitions and the attribute vocabularies in
-the reverse direction: the techniques a data component detects, the techniques and software a grouping
-node uses plus who uses it, and the techniques of one tactic or platform. `kev`, `cwe` and `product`
-answer the vulnerability family: one catalog entry with its own columns and the weakness classes it
-names, the entries of one weakness class, and — like `coverage` and `gain`, which turn several
-countermeasures into one deployment — the union of the entries filed under any of the products a
-selection names, so `product Apache/Log4j2 Apache/Struts` is the inventory question "which exploited
-vulnerabilities are in the software we run?". `rel` walks a plane instead of
-a node. `-rel` (default `any`, the union plane) picks the offensive plane of `ttp`'s `out
-artifacts` and `artifact`'s `in techniques`; `-defrel` picks the defensive plane of `artifact`'s
-`in countermeasures` and `cm`'s `out artifacts`. Every set whose label carries no `(rel
-…)`/`(defrel …)` suffix is unfiltered — on `ttp`: `in countermeasures`, `in countermeasures
-rollup`, `in data components`, `in data components rollup` and `in groups`; on `artifact`: `in
-countermeasures viaTTPs` (the direct links unioned with the links of the techniques touching the
-artifact); on `cm`: `out techniques` and `out techniques rollup`. The four new commands take no
-relation flag, so every set they print is unfiltered, and neither do `kev`, `cwe` and `product`. Relations exist in the two families
-independently — 11 names, `blocks` among them, are registered in both — so `rel` prints one line
-per family and `-family` narrows it. A technique ATT&CK has revoked or deprecated prints `
-revoked=true` in
-its `ttp` header (`"revoked":true` under `-json`); ATT&CK moved most of its D3FEND mapping to the
-successor id, but 23 of the 222 flagged techniques still carry offensive edges (`T1053.004`,
-`T1070.001`, `T1070.002`, `T1562.001` and `T1574.002` among them). The same
-header carries the ATT&CK attributes: ` subtechnique=true` for a sub-technique, ` tactics=` with the
-`TA` ids of its tactic mask and ` platforms=` with the names of its platform mask, both in vocabulary
-order and both absent when the technique has no ATT&CK object (the D3FEND-named nodes) — under `-json`
-they are `"subtechnique"`, `"tactics"` and `"platforms"`, and `tactic` queries only by `TA` id because
-11 tactic labels name two or three tactics across the three domains. A grouping node's header names its
-kind (`kind=actor|software|campaign`, `"group_kind"` under `-json`) and carries ` revoked=true`
-(`"revoked":true`), the ATT&CK flag its label is resolved live-first by, exactly as a technique's header
-does.
+Each verb answers a different kind of question, and the table above names the sets it prints:
+
+* `ttp` — the artifacts a technique touches, the countermeasures that defend it, the data components that
+  detect it and the grouping nodes recorded as using it, exact and rolled up (the roll-up adds its direct
+  sub-techniques).
+* `artifact` — the techniques that touch it and the countermeasures linked to it, directly and via those
+  techniques.
+* `cm` — the artifacts and techniques a countermeasure covers.
+* `dc`, `group`, `tactic` and `platform` — the two later partitions and the attribute vocabularies in the
+  reverse direction: the techniques a data component detects, the techniques and software a grouping node
+  uses plus who uses it, and the techniques of one tactic or platform.
+* `kev`, `cwe` and `product` — the vulnerability family: one catalog entry with its own columns and the
+  weakness classes it names, the entries of one weakness class, and the union of the entries filed under
+  any of the products a selection names, so `product Apache/Log4j2 Apache/Struts` is the inventory
+  question "which exploited vulnerabilities are in the software we run?".
+* `coverage`, `gain` and `contain` — whole-deployment answers rather than one node's neighbourhood:
+  several countermeasures become one deployment, `gain` ranks what adding one more would cover, and
+  `contain` reads an observed technique set.
+* `rel` — a plane instead of a node: one line per family the name is registered in.
+
+**Relation filters.** Only `ttp`, `artifact` and `cm` take one. `-rel` (default `any`, the union plane)
+picks the offensive plane of `ttp`'s `out artifacts` and `artifact`'s `in techniques`; `-defrel` picks
+the defensive plane of `artifact`'s `in countermeasures` and `cm`'s `out artifacts`. A set whose label
+carries no `(rel …)`/`(defrel …)` suffix is unfiltered, and so is every set of a command without the
+flag. On `ttp` the four `in` sets — `in countermeasures`, `in countermeasures rollup`,
+`in data components`, `in data components rollup` — and `in groups` escape it; on `artifact`
+`in countermeasures viaTTPs` (the direct links unioned with the links of the techniques touching the
+artifact); on `cm` `out techniques` and `out techniques rollup`. Relations exist in the two families
+independently — 11 names, `blocks` among them, are registered in both — so `rel` prints one line per
+family and `-family` narrows it.
+
+**Revoked techniques.** A technique ATT&CK has revoked or deprecated prints ` revoked=true` in its `ttp`
+header (`"revoked":true` under `-json`). ATT&CK moved most of its D3FEND mapping to the successor id, but
+23 of the 222 flagged techniques still carry offensive edges (`T1053.004`, `T1070.001`, `T1070.002`,
+`T1562.001` and `T1574.002` among them).
+
+**Header attributes.** The same header carries the ATT&CK attributes: ` subtechnique=true` for a
+sub-technique, ` tactics=` with the `TA` ids of its tactic mask and ` platforms=` with the names of its
+platform mask, both in vocabulary order; under `-json` they are `"subtechnique"`, `"tactics"` and
+`"platforms"`. Both are absent when the technique has no ATT&CK object (the D3FEND-named nodes), and
+`tactic` therefore queries by `TA` id only: 11 tactic labels name two or three tactics across the three
+domains. A grouping node's header names its kind (`kind=actor|software|campaign`, `"group_kind"` under
+`-json`) and carries ` revoked=true` (`"revoked":true`), the ATT&CK flag its label is resolved
+live-first by, exactly as a technique's header does.
 
 ```sh
 $ ./gr4ph ttp T1003.001
