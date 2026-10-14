@@ -8,6 +8,10 @@
 /d3fendgen
 /cmd/d3fendgen/d3fendgen
 
+# `go build ./cmd/kevgen` does the same for the KEV generator.
+/kevgen
+/cmd/kevgen/kevgen
+
 # `make build` (or `go build ./cmd/gr4ph`) drops the lookup CLI here.
 /gr4ph
 /cmd/gr4ph/gr4ph

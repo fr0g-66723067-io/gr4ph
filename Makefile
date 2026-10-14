@@ -1,19 +1,20 @@
 # gr4ph — SIMD bitmatrix engine for MITRE ATT&CK x D3FEND x CISA KEV.
 #
 # Every library file is gated behind `goexperiment.simd` (only the two
-# generators `cmd/d3fendgen` and `cmd/kevgen`, `internal/simdcheck` and
-# `internal/hotmethods` are outside the tag), so GOEXPERIMENT=simd is required
-# for build, vet and test. The generators are untagged so that they can
-# regenerate the ontology tables on a stock toolchain.
+# generators `cmd/d3fendgen` and `cmd/kevgen`, `internal/simdcheck`,
+# `internal/hotmethods` and `internal/atomicfile` are outside the tag), so
+# GOEXPERIMENT=simd is required for build, vet and test. The generators and
+# their atomicfile helper are untagged so that they can regenerate the ontology
+# tables on a stock toolchain.
 
 export GOEXPERIMENT=simd
 
 GO ?= go
 BIN ?= gr4ph
 
-.PHONY: all build vet test gen bench fmt clean stock
+.PHONY: all build vet test gen bench fmt check clean stock
 
-all: vet test
+all: check vet test
 
 # Builds the lookup CLI (cmd/gr4ph) into ./gr4ph. The command carries the
 # library's build tag, so it needs the experiment exported above, exactly like
@@ -59,6 +60,12 @@ stock:
 fmt:
 	$(GO) fmt ./...
 
+# Formatting as a gate rather than a fix: `fmt` rewrites the tree, so `all` and
+# CI need a target that fails on an unformatted file instead of silently
+# repairing it.
+check:
+	@test -z "$$(gofmt -l .)" || { echo "unformatted files (gofmt -l .):"; gofmt -l .; exit 1; }
+
 clean:
 	$(GO) clean -testcache
-	rm -f $(BIN)
+	rm -f $(BIN) d3fendgen kevgen

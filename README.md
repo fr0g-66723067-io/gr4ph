@@ -26,13 +26,14 @@ techniques that touch it".
 
 The engine is built on Go 1.27's experimental `simd` package, whose files are all gated behind the
 `goexperiment.simd` build tag. Every file here (except `cmd/d3fendgen`, `cmd/kevgen`,
-`internal/simdcheck` and `internal/hotmethods`) carries the same tag, so `GOEXPERIMENT=simd` is required
+`internal/atomicfile`, `internal/simdcheck` and `internal/hotmethods`) carries the same tag, so
+`GOEXPERIMENT=simd` is required
 for the library. On a
 stock toolchain
 `go build .` fails with `build constraints exclude all Go files`, and `internal/simdcheck` makes
 `go build ./...` / `go test ./...` fail the same way — without it they would silently skip every gated
 package and report success while testing nothing. `go test ./cmd/d3fendgen ./cmd/kevgen` works without
-the experiment.
+the experiment, as does the untagged `internal/atomicfile` the two generators write their output with.
 
 ```sh
 GOEXPERIMENT=simd go build ./...     # the Makefile exports this for every target except `make stock`, which unsets it
@@ -44,7 +45,9 @@ stride by the vector width (`wordsPerVector = simd.VectorBitSize()/64`), use the
 `LoadUint64sPart` reports, which is `min(wordsPerVector, len(s))` on hardware but `len(s)` under
 `GODEBUG=simd=0` — advancing by it silently drops the tail of every row that is not a whole number of
 vectors. `make test` therefore runs the suite at the platform width, again under `-race` (the
-concurrency contract), and again with `GODEBUG=simd=0`; all three passes must be green.
+concurrency contract), and again with `GODEBUG=simd=0`; all three passes must be green. `make all` adds
+`go vet` and `make check`, which fails on any file `gofmt -l .` lists (formatting is a gate, not a
+silent rewrite); `make stock` pins the stock-toolchain contract described here.
 
 On the development host (i5-10310U, AVX2, no `vpclmulqdq`) the package feature-reduces to **128-bit /
 2 lanes**, so `GODEBUG=simd=256` panics at init instead of silently emulating. `GODEBUG=simd=+256`
@@ -592,15 +595,18 @@ inventory is never an error.
   every query with 0/false.
 * Engine-dimension misuse panics, because there is no sensible fallback: an offensive relation id
   `>= RelCount()+1`, a defensive relation id `>= DefRelCount()+1`, a `Kind` outside the seven
-  partitions with a row stride (`WordsPerRow`), an undersized `scratch`, or an undersized `selection`
+  `WordsPerRow` maps (the engine has eight row-strided partitions but only seven `Kind` values —
+  grouping nodes have a stride, and no query returns their ids — so `WordsPerRow` panics
+  `gr4ph: unknown kind`), an undersized `scratch`, or an undersized `selection`
   (`gr4ph: selection too small`). The scratch check runs before the id bounds
   check, so an undersized `scratch` panics even when the id is out of range.
 * The overlay queries read the caller's selection and never retain it, so a caller may flip bits
   between calls — an alert stream becomes the observed set, a tool inventory the deployed one.
-* The cold string accessors (`TTPName`, `TTPLabel`, `TTPDomain`, `ArtifactName`, `KEVID`, `KEVName`,
-  `KEVAdded`, `KEVRansomware`, `CWEID`, `KEVProductVendor`, `KEVProductName`, `KEVVendor`, `KEVProduct`,
-  …) panic on an out-of-range id. `Response` / `CountermeasureResponse` are the total boundary
-  formatters: they render `<invalid ttp N>` / `<invalid cm N>` and still count the entry.
+* The cold accessors (`TTPName`, `TTPLabel`, `TTPDomain`, `TTPRevoked`, `GroupKind`, `GroupRevoked`,
+  `ArtifactName`, `KEVID`, `KEVName`, `KEVAdded`, `KEVRansomware`, `CWEID`, `KEVProductVendor`,
+  `KEVProductName`, `KEVVendor`, `KEVProduct`, …) panic on an out-of-range id, as does a relation id
+  outside `RelCount()+1` / `DefRelCount()+1`. `Response` / `CountermeasureResponse` are the total
+  boundary formatters: they render `<invalid ttp N>` / `<invalid cm N>` and still count the entry.
 
 ## Hierarchy
 
@@ -651,9 +657,13 @@ make gen        # go run ./cmd/d3fendgen -out ontology/attack_gen.go   (network 
                 # go run ./cmd/kevgen    -out ontology/kev_gen.go      (network once)
 ```
 
-`cmd/d3fendgen` and `cmd/kevgen` are untagged and import nothing from this module, so they regenerate on
+`cmd/d3fendgen` and `cmd/kevgen` are untagged and import nothing gated from this module (their only
+import is the untagged `internal/atomicfile`), so they regenerate on
 a stock toolchain; `-enterprise`/`-ics`/`-mobile`/`-d3fend` and `-kev` accept local paths for an offline
-rerun, and the output is byte-identical either way. The generated shape is asserted, not assumed, and a
+rerun, and the output is byte-identical either way. Both write the table through
+`internal/atomicfile`: a temporary file in the destination directory, renamed over the target, so an
+interrupted `make gen` (or a full disk) cannot leave a truncated table, and a `format.Source` failure
+writes nothing at all. `cmd/kevgen` re-pins its own source the same way. The generated shape is asserted, not assumed, and a
 run reports exactly what it measured (this is the two generators' stdout on the pinned sources, byte for
 byte, in the order `make gen` runs them):
 
@@ -822,6 +832,30 @@ declared command, so its pre-existing rows differ from the round-3 table by up t
 interleaved medians show that spread is the host and the test-binary layout this round's new tests and
 fixture changes bring, not the one added method, which is why the table is refreshed wholesale rather
 than row by row.
+
+## Versioning and stability
+
+The module is versioned with semantic import versioning: `v0.x` releases declare no compatibility
+promise, and a tag is the release unit — `go get github.com/fr0g-66723067-io/gr4ph@v0.1.0` pins the
+committed tables, the API and the pinned upstream sources together, and the undeclared `@latest`
+pseudo-version of `main` is not a release. Every tag's notes live in [CHANGELOG.md](CHANGELOG.md).
+
+Two release requirements come from the toolchain rather than from this module's API, and both are
+checked by `make all`/`make stock` and by CI:
+
+* **Go 1.27 with `GOEXPERIMENT=simd` exported** — the library's files are gated behind the
+  experimental `simd` build tag, which `go.mod` cannot express; a consumer must export the experiment
+  in the environment that runs `go build`/`go test`, or the build fails with the explicit
+  `build constraints exclude all Go files` error. Consumers that cannot export it are limited to
+  `cmd/d3fendgen`, `cmd/kevgen` and `internal/atomicfile`.
+* **No third-party dependencies** — standard library only, no `go.sum`; the pinned ATT&CK 19.2 ×
+  D3FEND 1.6.0 × CISA KEV 2026.10.08 tables are committed, and the runtime never touches the network.
+
+What a `v0.x` minor bump may change without a major bump: the exported Go API (adding or renaming a
+method, changing a stride or the memory layout, changing an error string or a panic), the CLI's output
+text, and the pinned upstream sources — the generator fails rather than emitting tables whose indices
+no longer match, and the README's numbers are re-measured in the same pass. Nothing in this module is
+deprecated: there are no shims, aliases or compatibility re-exports to carry.
 
 ## License
 
