@@ -27,19 +27,25 @@ import (
 // set can never crash a traversal. Misuse of the *engine*'s own dimensions
 // still panics, because it is a programming error with no sensible fallback:
 // a relation id >= RelCount()+1 (or a defensive relation id >=
-// DefRelCount()+1), a Kind that is not one of the seven partitions with a row
-// stride (WordsPerRow panics "gr4ph: unknown kind"), or a scratch row shorter than
-// WordsPerRow(returned partition). The scratch check runs before the id bounds
-// check, so an undersized scratch panics even when the id is out of range.
+// DefRelCount()+1), a Kind that WordsPerRow does not map (the engine has eight
+// row-strided partitions but only seven Kinds, because no query returns
+// grouping ids; WordsPerRow panics "gr4ph: unknown kind"), or a scratch row
+// shorter than WordsPerRow(returned partition). The scratch check runs before
+// the id bounds check, so an undersized scratch panics even when the id is out
+// of range.
 //
 // The overlay queries take a caller-owned Selection and never retain it; a
 // selection shorter than WordsPerRow of the partition it selects panics
 // "gr4ph: selection too small", the same class of engine misuse as an
 // undersized scratch row.
 //
-// The cold string accessors (TTPName, TTPLabel, TTPDomain, ArtifactName, ...)
-// panic on an out-of-range id; Response and CountermeasureResponse are the
-// total boundary formatters that render "<invalid ...>" instead.
+// The cold accessors that take a dense id panic on an out-of-range id: the id
+// and label getters (TTPName, TTPLabel, TTPDomain, KEVID, KEVName, KEVAdded,
+// CWEID, KEVProductVendor, KEVProductName, KEVVendor, KEVProduct, ...), the
+// flag getters (TTPRevoked, GroupKind, GroupRevoked, KEVRansomware), and the
+// relation-name getters (RelName, DefRelName). Response and
+// CountermeasureResponse are the total boundary formatters that render
+// "<invalid ...>" instead.
 //
 // The zero Engine is not a usable graph: it has no nodes and no planes, so its
 // counts are 0, every id is out of range, and a relation-taking query panics
@@ -201,7 +207,8 @@ func (e *Engine) okDC(dc DataComponent) bool  { return int(dc) < e.nDC }
 func (e *Engine) okGroup(g Group) bool        { return int(g) < e.nGrp }
 func (e *Engine) okKEV(k KEV) bool            { return int(k) < e.nKEV }
 func (e *Engine) okCWE(c CWE) bool            { return int(c) < e.nCWE }
-func (e *Engine) okProduct(p Product) bool    { return int(p) < e.nProduct }
+func (e *Engine) okTactic(ta Tactic) bool     { return int(ta) < e.nTactic }
+func (e *Engine) okPlatform(p Platform) bool  { return int(p) < e.nPlatform }
 
 func (e *Engine) mustTTP(t TTP) {
 	if int(t) >= e.nTTP {
@@ -337,8 +344,8 @@ func (e *Engine) DefRelCount() int { return max(e.nDefRel-1, 0) }
 // ceil(count(cols)/64), i.e. the minimum scratch length for a query returning
 // ids of that partition. KindDataComponent is the scratch kind of
 // DataComponentsForTTPRollup; KindKEV, KindCWE and KindProduct are the scratch
-// kinds of the KEV queries and the partition kinds their selections index. A
-// Kind outside these partitions panics.
+// kinds of the KEV queries and the partition kinds their selections index.
+// It panics if cols is not one of the seven Kinds it maps.
 func (e *Engine) WordsPerRow(cols Kind) int {
 	switch cols {
 	case KindTTP:
@@ -445,6 +452,7 @@ func (e *Engine) Product(vendor, name string) (Product, bool) {
 }
 
 // TacticID returns the tactic id string, e.g. "TA0005".
+// It panics if ta is out of range.
 func (e *Engine) TacticID(ta Tactic) string {
 	e.mustTactic(ta)
 	return e.tacticIDs[ta]
@@ -452,18 +460,21 @@ func (e *Engine) TacticID(ta Tactic) string {
 
 // TacticLabel returns the tactic label, e.g. "Stealth". Labels repeat across
 // domains: TacticID is the unambiguous key.
+// It panics if ta is out of range.
 func (e *Engine) TacticLabel(ta Tactic) string {
 	e.mustTactic(ta)
 	return e.tacticLabels[ta]
 }
 
 // PlatformName returns the platform name, e.g. "Windows".
+// It panics if p is out of range.
 func (e *Engine) PlatformName(p Platform) string {
 	e.mustPlatform(p)
 	return e.platformNames[p]
 }
 
 // DataComponentID returns the data component id string, e.g. "DC0084".
+// It panics if dc is out of range.
 func (e *Engine) DataComponentID(dc DataComponent) string {
 	e.mustDC(dc)
 	return e.dcIDs[dc]
@@ -471,18 +482,21 @@ func (e *Engine) DataComponentID(dc DataComponent) string {
 
 // DataComponentLabel returns the data component label, e.g. "Active Directory
 // Credential Request".
+// It panics if dc is out of range.
 func (e *Engine) DataComponentLabel(dc DataComponent) string {
 	e.mustDC(dc)
 	return e.dcLabels[dc]
 }
 
 // GroupID returns the grouping-node id string, e.g. "G0007".
+// It panics if g is out of range.
 func (e *Engine) GroupID(g Group) string {
 	e.mustGroup(g)
 	return e.groupIDs[g]
 }
 
 // GroupLabel returns the grouping-node label, e.g. "APT28".
+// It panics if g is out of range.
 func (e *Engine) GroupLabel(g Group) string {
 	e.mustGroup(g)
 	return e.groupLabels[g]
@@ -490,6 +504,7 @@ func (e *Engine) GroupLabel(g Group) string {
 
 // GroupKind returns the ATT&CK object type of g: GroupActor, GroupSoftware or
 // GroupCampaign.
+// It panics if g is out of range.
 func (e *Engine) GroupKind(g Group) GroupKind {
 	e.mustGroup(g)
 	return e.groupKinds[g]
@@ -497,54 +512,63 @@ func (e *Engine) GroupKind(g Group) GroupKind {
 
 // GroupRevoked reports whether ATT&CK revoked (or deprecated) the grouping
 // node, which is the flag the label resolution prefers the live twin by.
+// It panics if g is out of range.
 func (e *Engine) GroupRevoked(g Group) bool {
 	e.mustGroup(g)
 	return e.groupRevoked[g]
 }
 
 // TTPName returns the technique id string, e.g. "T1003.001".
+// It panics if t is out of range.
 func (e *Engine) TTPName(t TTP) string {
 	e.mustTTP(t)
 	return e.ttpIDs[t]
 }
 
 // TTPLabel returns the technique label, e.g. "LSASS Memory".
+// It panics if t is out of range.
 func (e *Engine) TTPLabel(t TTP) string {
 	e.mustTTP(t)
 	return e.ttpLabels[t]
 }
 
 // ArtifactName returns the artifact name, e.g. "CreateProcess".
+// It panics if a is out of range.
 func (e *Engine) ArtifactName(a Artifact) string {
 	e.mustArt(a)
 	return e.artNames[a]
 }
 
 // ArtifactLabel returns the artifact label, e.g. "Create Process".
+// It panics if a is out of range.
 func (e *Engine) ArtifactLabel(a Artifact) string {
 	e.mustArt(a)
 	return e.artLabels[a]
 }
 
 // CountermeasureName returns the countermeasure local name.
+// It panics if cm is out of range.
 func (e *Engine) CountermeasureName(cm Countermeasure) string {
 	e.mustCM(cm)
 	return e.cmIDs[cm]
 }
 
 // CountermeasureLabel returns the countermeasure label.
+// It panics if cm is out of range.
 func (e *Engine) CountermeasureLabel(cm Countermeasure) string {
 	e.mustCM(cm)
 	return e.cmLabels[cm]
 }
 
 // KEVID returns the CVE id of a KEV entry, e.g. "CVE-2021-44228".
+// It panics if k is out of range.
 func (e *Engine) KEVID(k KEV) string {
 	e.mustKEV(k)
 	return e.kevIDs[k]
 }
 
 // KEVName returns the vulnerability name of a KEV entry.
+// It panics if k is out of range.
 func (e *Engine) KEVName(k KEV) string {
 	e.mustKEV(k)
 	return e.kevNames[k]
@@ -552,6 +576,7 @@ func (e *Engine) KEVName(k KEV) string {
 
 // KEVAdded returns the date the entry was added to the catalog, e.g.
 // "2021-12-10".
+// It panics if k is out of range.
 func (e *Engine) KEVAdded(k KEV) string {
 	e.mustKEV(k)
 	return e.kevAdded[k]
@@ -559,36 +584,42 @@ func (e *Engine) KEVAdded(k KEV) string {
 
 // KEVRansomware reports whether CISA links the entry to a known ransomware
 // campaign.
+// It panics if k is out of range.
 func (e *Engine) KEVRansomware(k KEV) bool {
 	e.mustKEV(k)
 	return e.kevRansomware[k]
 }
 
 // CWEID returns the weakness id of a CWE, e.g. "CWE-78".
+// It panics if c is out of range.
 func (e *Engine) CWEID(c CWE) string {
 	e.mustCWE(c)
 	return e.cweIDs[c]
 }
 
 // KEVProductVendor returns the vendor of a product, e.g. "Apache".
+// It panics if p is out of range.
 func (e *Engine) KEVProductVendor(p Product) string {
 	e.mustProduct(p)
 	return e.productVendors[p]
 }
 
 // KEVProductName returns the product name of a product, e.g. "Log4j2".
+// It panics if p is out of range.
 func (e *Engine) KEVProductName(p Product) string {
 	e.mustProduct(p)
 	return e.productNames[p]
 }
 
 // KEVVendor returns the vendor of the product entry k is about.
+// It panics if k is out of range.
 func (e *Engine) KEVVendor(k KEV) string {
 	e.mustKEV(k)
 	return e.productVendors[e.kevProductID(k)]
 }
 
 // KEVProduct returns the product name entry k is about, e.g. "Log4j2".
+// It panics if k is out of range.
 func (e *Engine) KEVProduct(k KEV) string {
 	e.mustKEV(k)
 	return e.productNames[e.kevProductID(k)]
@@ -607,6 +638,7 @@ func (e *Engine) kevProductID(k KEV) Product {
 }
 
 // TTPDomain returns the ATT&CK domain a technique came from.
+// It panics if t is out of range.
 func (e *Engine) TTPDomain(t TTP) Domain {
 	e.mustTTP(t)
 	return e.ttpDomains[t]
@@ -621,6 +653,7 @@ func (e *Engine) Rel(name string) (Rel, bool) {
 }
 
 // RelName returns the name of an offensive relation plane (RelAny -> "any").
+// It panics if r is out of range.
 func (e *Engine) RelName(r Rel) string {
 	e.checkRel(r)
 	return e.relNames[r]
@@ -634,6 +667,7 @@ func (e *Engine) DefRel(name string) (DefRel, bool) {
 }
 
 // DefRelName returns the name of a defensive relation plane.
+// It panics if dr is out of range.
 func (e *Engine) DefRelName(dr DefRel) string {
 	e.checkDefRel(dr)
 	return e.defRelNames[dr]
@@ -701,6 +735,7 @@ func (e *Engine) TTPChildCount(t TTP) int {
 
 // TTPRevoked reports whether ATT&CK revoked (or deprecated) the technique, which
 // is the flag Incident's label resolution prefers the live twin by.
+// It panics if t is out of range.
 func (e *Engine) TTPRevoked(t TTP) bool {
 	e.mustTTP(t)
 	return e.ttpRevoked[t]
@@ -726,6 +761,7 @@ func (e *Engine) Adjacent(t TTP, a Artifact) bool { return e.AdjacentRel(t, a, R
 
 // AdjacentRel reports whether t -> a holds under relation r (RelAny for the
 // union plane).
+// It panics if r is out of range.
 func (e *Engine) AdjacentRel(t TTP, a Artifact, r Rel) bool {
 	e.checkRel(r)
 	if !e.okTTP(t) || !e.okArt(a) {
@@ -741,6 +777,7 @@ func (e *Engine) Artifacts(t TTP, dst []Artifact) int { return e.ArtifactsRel(t,
 // ArtifactsRel is Artifacts restricted to relation r.
 // Results are truncated to len(dst) and the return value is the total number
 // of matches.
+// It panics if r is out of range.
 func (e *Engine) ArtifactsRel(t TTP, r Rel, dst []Artifact) int {
 	e.checkRel(r)
 	if !e.okTTP(t) {
@@ -756,6 +793,7 @@ func (e *Engine) TTPs(a Artifact, dst []TTP) int { return e.TTPsRel(a, RelAny, d
 // TTPsRel is TTPs restricted to relation r.
 // Results are truncated to len(dst) and the return value is the total number
 // of matches.
+// It panics if r is out of range.
 func (e *Engine) TTPsRel(a Artifact, r Rel, dst []TTP) int {
 	e.checkRel(r)
 	if !e.okArt(a) {
@@ -765,6 +803,7 @@ func (e *Engine) TTPsRel(a Artifact, r Rel, dst []TTP) int {
 }
 
 // Degree returns the number of artifacts linked from t under r.
+// It panics if r is out of range.
 func (e *Engine) Degree(t TTP, r Rel) int {
 	e.checkRel(r)
 	if !e.okTTP(t) {
@@ -774,6 +813,7 @@ func (e *Engine) Degree(t TTP, r Rel) int {
 }
 
 // ArtifactDegree returns the number of techniques linked to a under r.
+// It panics if r is out of range.
 func (e *Engine) ArtifactDegree(a Artifact, r Rel) int {
 	e.checkRel(r)
 	if !e.okArt(a) {
@@ -788,6 +828,7 @@ func (e *Engine) ArtifactDegree(a Artifact, r Rel) int {
 // the artifact partition are ignored; an empty (or all-invalid) input yields 0.
 // Results are truncated to len(dst) and the return value is the total number
 // of matches.
+// It panics if r is out of range or len(scratch) < WordsPerRow(KindTTP).
 func (e *Engine) TTPsAny(r Rel, scratch []uint64, dst []TTP, arts []Artifact) int {
 	e.checkRel(r)
 	e.checkScratch(scratch, KindTTP)
@@ -806,6 +847,7 @@ func (e *Engine) TTPsAny(r Rel, scratch []uint64, dst []TTP, arts []Artifact) in
 // Invalid ids are ignored; if none remain the result is empty.
 // Results are truncated to len(dst) and the return value is the total number
 // of matches.
+// It panics if r is out of range or len(scratch) < WordsPerRow(KindTTP).
 func (e *Engine) TTPsAll(r Rel, scratch []uint64, dst []TTP, arts []Artifact) int {
 	e.checkRel(r)
 	e.checkScratch(scratch, KindTTP)
@@ -831,6 +873,7 @@ func (e *Engine) TTPsAll(r Rel, scratch []uint64, dst []TTP, arts []Artifact) in
 // input yields 0.
 // Results are truncated to len(dst) and the return value is the total number
 // of matches.
+// It panics if r is out of range or len(scratch) < WordsPerRow(KindArtifact).
 func (e *Engine) ArtifactsAny(r Rel, scratch []uint64, dst []Artifact, ttps []TTP) int {
 	e.checkRel(r)
 	e.checkScratch(scratch, KindArtifact)
@@ -850,6 +893,7 @@ func (e *Engine) ArtifactsAny(r Rel, scratch []uint64, dst []Artifact, ttps []TT
 // input yields 0.
 // Results are truncated to len(dst) and the return value is the total number
 // of matches.
+// It panics if r is out of range or len(scratch) < WordsPerRow(KindArtifact).
 func (e *Engine) ArtifactsAll(r Rel, scratch []uint64, dst []Artifact, ttps []TTP) int {
 	e.checkRel(r)
 	e.checkScratch(scratch, KindArtifact)
@@ -884,6 +928,7 @@ func (e *Engine) ArtifactsRollup(t TTP, scratch []uint64, dst []Artifact) int {
 // ArtifactsRollupRel is ArtifactsRollup restricted to relation r.
 // Results are truncated to len(dst) and the return value is the total number
 // of matches.
+// It panics if r is out of range or len(scratch) < WordsPerRow(KindArtifact).
 func (e *Engine) ArtifactsRollupRel(t TTP, r Rel, scratch []uint64, dst []Artifact) int {
 	e.checkRel(r)
 	e.checkScratch(scratch, KindArtifact)
@@ -909,6 +954,7 @@ func (e *Engine) TTPsRollup(a Artifact, scratch []uint64, dst []TTP) int {
 // TTPsRollupRel is TTPsRollup restricted to relation r.
 // Results are truncated to len(dst) and the return value is the total number
 // of matches.
+// It panics if r is out of range or len(scratch) < WordsPerRow(KindTTP).
 func (e *Engine) TTPsRollupRel(a Artifact, r Rel, scratch []uint64, dst []TTP) int {
 	e.checkRel(r)
 	e.checkScratch(scratch, KindTTP)
@@ -952,6 +998,7 @@ func (e *Engine) CountermeasuresForTTP(t TTP, dst []Countermeasure) int {
 // defending t and all its direct sub-techniques.
 // Results are truncated to len(dst) and the return value is the total number
 // of matches.
+// It panics if len(scratch) < WordsPerRow(KindCountermeasure).
 func (e *Engine) CountermeasuresForTTPRollup(t TTP, scratch []uint64, dst []Countermeasure) int {
 	e.checkScratch(scratch, KindCountermeasure)
 	if !e.okTTP(t) {
@@ -969,6 +1016,7 @@ func (e *Engine) CountermeasuresForTTPRollup(t TTP, scratch []uint64, dst []Coun
 // under defensive relation dr (DefRelAny for the union plane).
 // Results are truncated to len(dst) and the return value is the total number
 // of matches.
+// It panics if dr is out of range.
 func (e *Engine) CountermeasuresForArtifact(a Artifact, dr DefRel, dst []Countermeasure) int {
 	e.checkDefRel(dr)
 	if !e.okArt(a) {
@@ -983,6 +1031,7 @@ func (e *Engine) CountermeasuresForArtifact(a Artifact, dr DefRel, dst []Counter
 // linked (no hierarchy roll-up) — see the package documentation.
 // Results are truncated to len(dst) and the return value is the total number
 // of matches.
+// It panics if len(scratch) < WordsPerRow(KindCountermeasure).
 func (e *Engine) CountermeasuresForArtifactViaTTPs(a Artifact, scratch []uint64, dst []Countermeasure) int {
 	e.checkScratch(scratch, KindCountermeasure)
 	if !e.okArt(a) {
@@ -1005,6 +1054,7 @@ func (e *Engine) CountermeasuresForArtifactViaTTPs(a Artifact, scratch []uint64,
 // defensive relation dr (DefRelAny for the union plane).
 // Results are truncated to len(dst) and the return value is the total number
 // of matches.
+// It panics if dr is out of range.
 func (e *Engine) ArtifactsForCountermeasure(cm Countermeasure, dr DefRel, dst []Artifact) int {
 	e.checkDefRel(dr)
 	if !e.okCM(cm) {
@@ -1028,6 +1078,7 @@ func (e *Engine) TTPsForCountermeasure(cm Countermeasure, dst []TTP) int {
 // sub-technique collapsed onto its parent.
 // Results are truncated to len(dst) and the return value is the total number
 // of matches.
+// It panics if len(scratch) < WordsPerRow(KindTTP).
 func (e *Engine) TTPsForCountermeasureRollup(cm Countermeasure, scratch []uint64, dst []TTP) int {
 	e.checkScratch(scratch, KindTTP)
 	if !e.okCM(cm) {
@@ -1063,6 +1114,7 @@ func (e *Engine) CountermeasureDegree(cm Countermeasure) int {
 // duplicate of a derivable row.
 // Results are truncated to len(dst) and the return value is the total number
 // of matches.
+// It panics if len(scratch) < WordsPerRow(KindTTP).
 func (e *Engine) TTPsMapped(scratch []uint64, dst []TTP) int {
 	e.checkScratch(scratch, KindTTP)
 	row := scratch[:e.wTTP]
@@ -1079,6 +1131,7 @@ func (e *Engine) TTPsMapped(scratch []uint64, dst []TTP) int {
 // fail.
 // Results are truncated to len(dst) and the return value is the total number
 // of matches.
+// It panics if len(sel) < WordsPerRow(KindCountermeasure) or len(scratch) < WordsPerRow(KindTTP).
 func (e *Engine) TTPsCovered(sel Selection, scratch []uint64, dst []TTP) int {
 	e.checkSelection(sel, KindCountermeasure)
 	e.checkScratch(scratch, KindTTP)
@@ -1095,6 +1148,8 @@ func (e *Engine) TTPsCovered(sel Selection, scratch []uint64, dst []TTP) int {
 // rather than inventing an id.
 // Results are truncated to len(dst) and the return value is the total number
 // of matches.
+// It panics if len(active) < WordsPerRow(KindTTP), len(sel) < WordsPerRow(KindCountermeasure)
+// or len(scratch) < WordsPerRow(KindTTP).
 func (e *Engine) TTPsBlind(active Selection, sel Selection, scratch []uint64, dst []TTP) int {
 	e.checkSelection(active, KindTTP)
 	e.checkSelection(sel, KindCountermeasure)
@@ -1121,6 +1176,7 @@ func (e *Engine) TTPsBlind(active Selection, sel Selection, scratch []uint64, ds
 // a procurement ranking sorts by. A retired technique is never a purchase
 // target, so the flagged ones are masked out of the count. An out-of-range cm
 // yields 0.
+// It panics if len(sel) < WordsPerRow(KindCountermeasure) or len(scratch) < WordsPerRow(KindTTP).
 func (e *Engine) CoverageGain(cm Countermeasure, sel Selection, scratch []uint64) int {
 	e.checkSelection(sel, KindCountermeasure)
 	e.checkScratch(scratch, KindTTP)
@@ -1145,6 +1201,7 @@ func (e *Engine) CoverageGain(cm Countermeasure, sel Selection, scratch []uint64
 // masked out exactly as in CoverageGain, so a candidate is never credited for
 // one. Countermeasures at and beyond len(dst) are counted but not written; the
 // return value is the number of countermeasures with a positive gain.
+// It panics if len(sel) < WordsPerRow(KindCountermeasure) or len(scratch) < WordsPerRow(KindTTP).
 func (e *Engine) CoverageGains(sel Selection, scratch []uint64, dst []int) int {
 	e.checkSelection(sel, KindCountermeasure)
 	e.checkScratch(scratch, KindTTP)
@@ -1172,6 +1229,8 @@ func (e *Engine) CoverageGains(sel Selection, scratch []uint64, dst []int) int {
 // the current state of an intrusion. observed is over techniques.
 // Results are truncated to len(dst) and the return value is the total number
 // of matches.
+// It panics if len(observed) < WordsPerRow(KindTTP) or len(scratch) <
+// WordsPerRow(KindCountermeasure).
 func (e *Engine) CountermeasuresForObserved(observed Selection, scratch []uint64, dst []Countermeasure) int {
 	e.checkSelection(observed, KindTTP)
 	e.checkScratch(scratch, KindCountermeasure)
@@ -1223,7 +1282,7 @@ func (e *Engine) TTPSubTechnique(t TTP) bool {
 // Results are truncated to len(dst) and the return value is the total number
 // of matches.
 func (e *Engine) TTPsForTactic(ta Tactic, dst []TTP) int {
-	if int(ta) >= e.nTactic {
+	if !e.okTactic(ta) {
 		return 0
 	}
 	return enumerate(e.row(e.tacticTTP, e.tacticTTPOff(ta), e.wTTP), dst)
@@ -1233,7 +1292,7 @@ func (e *Engine) TTPsForTactic(ta Tactic, dst []TTP) int {
 // Results are truncated to len(dst) and the return value is the total number
 // of matches.
 func (e *Engine) TTPsForPlatform(p Platform, dst []TTP) int {
-	if int(p) >= e.nPlatform {
+	if !e.okPlatform(p) {
 		return 0
 	}
 	return enumerate(e.row(e.platformTTP, e.platformTTPOff(p), e.wTTP), dst)
@@ -1264,6 +1323,7 @@ func (e *Engine) DataComponentsForTTP(t TTP, dst []DataComponent) int {
 // sub-technique, so a parent's own row is usually empty.
 // Results are truncated to len(dst) and the return value is the total number
 // of matches.
+// It panics if len(scratch) < WordsPerRow(KindDataComponent).
 func (e *Engine) DataComponentsForTTPRollup(t TTP, scratch []uint64, dst []DataComponent) int {
 	e.checkScratch(scratch, KindDataComponent)
 	if !e.okTTP(t) {
@@ -1300,6 +1360,7 @@ func (e *Engine) TTPsForGroup(g Group, dst []TTP) int {
 // its parent.
 // Results are truncated to len(dst) and the return value is the total number
 // of matches.
+// It panics if len(scratch) < WordsPerRow(KindTTP).
 func (e *Engine) TTPsForGroupRollup(g Group, scratch []uint64, dst []TTP) int {
 	e.checkScratch(scratch, KindTTP)
 	if !e.okGroup(g) {
@@ -1405,6 +1466,7 @@ func (e *Engine) ProductsForKEV(k KEV, dst []Product) int {
 // products; a bit past the live range selects no row.
 // Results are truncated to len(dst) and the return value is the total number
 // of matches.
+// It panics if len(sel) < WordsPerRow(KindProduct) or len(scratch) < WordsPerRow(KindKEV).
 func (e *Engine) KEVsForProducts(sel Selection, scratch []uint64, dst []KEV) int {
 	e.checkSelection(sel, KindProduct)
 	e.checkScratch(scratch, KindKEV)
@@ -1418,6 +1480,7 @@ func (e *Engine) KEVsForProducts(sel Selection, scratch []uint64, dst []KEV) int
 // of the named weakness classes. sel is over weaknesses.
 // Results are truncated to len(dst) and the return value is the total number
 // of matches.
+// It panics if len(sel) < WordsPerRow(KindCWE) or len(scratch) < WordsPerRow(KindKEV).
 func (e *Engine) KEVsForCWEs(sel Selection, scratch []uint64, dst []KEV) int {
 	e.checkSelection(sel, KindCWE)
 	e.checkScratch(scratch, KindKEV)
