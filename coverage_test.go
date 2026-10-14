@@ -3,6 +3,7 @@
 package gr4ph
 
 import (
+	"slices"
 	"strconv"
 	"testing"
 )
@@ -30,7 +31,7 @@ func TestCoverageMapped(t *testing.T) {
 	if n != 4 {
 		t.Fatalf("TTPsMapped = %d, want 4", n)
 	}
-	if !equalIDs(dstT[:n], []TTP{0, 1, 2, 4}) {
+	if !slices.Equal(dstT[:n], []TTP{0, 1, 2, 4}) {
 		t.Fatalf("TTPsMapped ids = %v, want [0 1 2 4]", dstT[:n])
 	}
 }
@@ -55,7 +56,7 @@ func TestCoverageSelection(t *testing.T) {
 			t.Errorf("TTPsCovered %s = %d, want %d", c.name, n, len(c.want))
 			continue
 		}
-		if !equalIDs(dstT[:n], c.want) {
+		if !slices.Equal(dstT[:n], c.want) {
 			t.Errorf("TTPsCovered %s ids = %v, want %v", c.name, dstT[:n], c.want)
 		}
 	}
@@ -81,7 +82,7 @@ func TestCoverageBlind(t *testing.T) {
 			t.Errorf("TTPsBlind %s = %d, want %d", c.name, n, len(c.want))
 			continue
 		}
-		if !equalIDs(dstT[:n], c.want) {
+		if !slices.Equal(dstT[:n], c.want) {
 			t.Errorf("TTPsBlind %s ids = %v, want %v", c.name, dstT[:n], c.want)
 		}
 	}
@@ -132,7 +133,7 @@ func TestCountermeasuresForObserved(t *testing.T) {
 			t.Errorf("CountermeasuresForObserved %s = %d, want %d", c.name, n, len(c.want))
 			continue
 		}
-		if !equalIDs(dstC[:n], c.want) {
+		if !slices.Equal(dstC[:n], c.want) {
 			t.Errorf("CountermeasuresForObserved %s ids = %v, want %v", c.name, dstC[:n], c.want)
 		}
 	}
@@ -150,11 +151,11 @@ func TestCoverageTotality(t *testing.T) {
 
 	// Bit 40 is past the two live countermeasures: the result equals the
 	// selection without it.
-	if n := e.TTPsCovered(selOf(1, 0, 40), scratchT, dstT); n != 2 || !equalIDs(dstT[:n], []TTP{1, 4}) {
+	if n := e.TTPsCovered(selOf(1, 0, 40), scratchT, dstT); n != 2 || !slices.Equal(dstT[:n], []TTP{1, 4}) {
 		t.Errorf("TTPsCovered with bit 40 = %d %v, want 2 [1 4]", n, dstT[:n])
 	}
 	// The same for an observed set with a bit past the technique range.
-	if n := e.CountermeasuresForObserved(selOf(1, 1, 40), scratchC, dstC); n != 1 || !equalIDs(dstC[:n], []Countermeasure{0}) {
+	if n := e.CountermeasuresForObserved(selOf(1, 1, 40), scratchC, dstC); n != 1 || !slices.Equal(dstC[:n], []Countermeasure{0}) {
 		t.Errorf("CountermeasuresForObserved with bit 40 = %d %v, want 1 [0]", n, dstC[:n])
 	}
 	if got := e.CoverageGain(0, selOf(1, 40), scratchT); got != 2 {
@@ -162,7 +163,7 @@ func TestCoverageTotality(t *testing.T) {
 	}
 	// The active side of TTPsBlind is the caller's technique selection, so the
 	// same rule holds there: bit 40 selects no technique.
-	if n := e.TTPsBlind(selOf(1, 0, 40), selOf(1, 0), scratchT, dstT); n != 1 || !equalIDs(dstT[:n], []TTP{0}) {
+	if n := e.TTPsBlind(selOf(1, 0, 40), selOf(1, 0), scratchT, dstT); n != 1 || !slices.Equal(dstT[:n], []TTP{0}) {
 		t.Errorf("TTPsBlind with an active bit past the range = %d %v, want 1 [0]", n, dstT[:n])
 	}
 
@@ -280,7 +281,7 @@ func TestCoverageGainMasksRetired(t *testing.T) {
 	// The set queries keep the whole range: the split into live and retired is
 	// the caller's, and coverage does it.
 	dstT := make([]TTP, e.TTPCount())
-	if n := e.TTPsCovered(selOf(1, int(cm)), scratchT, dstT); n != 2 || !equalIDs(dstT[:n], []TTP{retired, live}) {
+	if n := e.TTPsCovered(selOf(1, int(cm)), scratchT, dstT); n != 2 || !slices.Equal(dstT[:n], []TTP{retired, live}) {
 		t.Errorf("TTPsCovered = %d %v, want both ids in ascending order", n, dstT[:n])
 	}
 	if n := e.TTPsMapped(scratchT, dstT); n != 2 {
@@ -344,12 +345,12 @@ func TestCoverageMaskTailFullWord(t *testing.T) {
 
 	// Nothing deployed: the blind set is the active set, and bit 63 is both the
 	// last live technique and the last bit of the row's only word.
-	if n := e.TTPsBlind(selOf(2, 0, 63), selOf(1), scratchT, dstT); n != 2 || !equalIDs(dstT[:n], []TTP{0, 63}) {
+	if n := e.TTPsBlind(selOf(2, 0, 63), selOf(1), scratchT, dstT); n != 2 || !slices.Equal(dstT[:n], []TTP{0, 63}) {
 		t.Errorf("TTPsBlind over a full word = %d %v, want 2 [0 63]", n, dstT[:n])
 	}
 	// Bits at and past the live range select nothing, even though the caller's
 	// selection is wide enough to hold them.
-	if n := e.TTPsBlind(selOf(2, 0, 63, 64, 70), selOf(1), scratchT, dstT); n != 2 || !equalIDs(dstT[:n], []TTP{0, 63}) {
+	if n := e.TTPsBlind(selOf(2, 0, 63, 64, 70), selOf(1), scratchT, dstT); n != 2 || !slices.Equal(dstT[:n], []TTP{0, 63}) {
 		t.Errorf("TTPsBlind with bits past the live range = %d %v, want 2 [0 63]", n, dstT[:n])
 	}
 }

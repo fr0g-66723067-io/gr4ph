@@ -5,6 +5,7 @@ package gr4ph
 import (
 	"math/rand/v2"
 	"simd"
+	"slices"
 	"testing"
 )
 
@@ -38,7 +39,7 @@ func TestKernelEquivalence(t *testing.T) {
 			}
 
 			orRowInto(dst, src)
-			if !equalRows(dst, want) {
+			if !slices.Equal(dst, want) {
 				t.Fatalf("orRowInto words=%d: got %x want %x", words, dst, want)
 			}
 			checkCanaries(t, "orRowInto", words, srcBuf, dstBuf)
@@ -53,7 +54,7 @@ func TestKernelEquivalence(t *testing.T) {
 				want[i] = dst[i] & src[i]
 			}
 			andRowInto(dst, src)
-			if !equalRows(dst, want) {
+			if !slices.Equal(dst, want) {
 				t.Fatalf("andRowInto words=%d: got %x want %x", words, dst, want)
 			}
 			checkCanaries(t, "andRowInto", words, srcBuf, dstBuf)
@@ -65,7 +66,7 @@ func TestKernelEquivalence(t *testing.T) {
 			}
 			dst = rowOf(dstBuf, words)
 			copyRow(dst, src)
-			if !equalRows(dst, src) {
+			if !slices.Equal(dst, src) {
 				t.Fatalf("copyRow words=%d: got %x want %x", words, dst, src)
 			}
 			checkCanaries(t, "copyRow", words, srcBuf, dstBuf)
@@ -123,7 +124,7 @@ func TestKernelShortRows(t *testing.T) {
 		dstBuf = make([]uint64, words+2)
 		dst = rowOf(dstBuf, words)
 		copyRow(dst, src)
-		if !equalRows(dst, src) {
+		if !slices.Equal(dst, src) {
 			t.Fatalf("copyRow words=%d: got %x want %x", words, dst, src)
 		}
 		checkCanaries(t, "copyRow", words, srcBuf, dstBuf)
@@ -224,16 +225,4 @@ func TestKernelOrSelectedRows(t *testing.T) {
 	if short[0] != 1 || short[1] != 2 || short[2] != 3 {
 		t.Fatalf("orSelectedRowsInto wrote through a no-op call: %v", short)
 	}
-}
-
-func equalRows(a, b []uint64) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

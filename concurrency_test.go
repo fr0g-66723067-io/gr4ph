@@ -163,51 +163,37 @@ func (r results) equal(o results) bool {
 		r.degree == o.degree &&
 		r.artifactDegree == o.artifactDegree &&
 		r.cmDegree == o.cmDegree &&
-		equalIDs(r.artifactsRel, o.artifactsRel) &&
-		equalIDs(r.ttpsRel, o.ttpsRel) &&
-		equalIDs(r.ttpsAny, o.ttpsAny) &&
-		equalIDs(r.ttpsAll, o.ttpsAll) &&
-		equalIDs(r.artRollup, o.artRollup) &&
-		equalIDs(r.ttpRollup, o.ttpRollup) &&
-		equalIDs(r.ttpForCM, o.ttpForCM) &&
-		equalIDs(r.children, o.children) &&
-		equalIDs(r.cmTTPRollup, o.cmTTPRollup) &&
-		equalIDs(r.cmViaTTPs, o.cmViaTTPs) &&
-		equalIDs(r.cmForTTP, o.cmForTTP) &&
-		equalIDs(r.mapped, o.mapped) &&
-		equalIDs(r.covered, o.covered) &&
-		equalIDs(r.blind, o.blind) &&
-		equalIDs(r.observed, o.observed) &&
-		equalIDs(r.kevEntries, o.kevEntries) &&
-		equalIDs(r.cweEntries, o.cweEntries) &&
-		equalIDs(r.productEntries, o.productEntries) &&
+		slices.Equal(r.artifactsRel, o.artifactsRel) &&
+		slices.Equal(r.ttpsRel, o.ttpsRel) &&
+		slices.Equal(r.ttpsAny, o.ttpsAny) &&
+		slices.Equal(r.ttpsAll, o.ttpsAll) &&
+		slices.Equal(r.artRollup, o.artRollup) &&
+		slices.Equal(r.ttpRollup, o.ttpRollup) &&
+		slices.Equal(r.ttpForCM, o.ttpForCM) &&
+		slices.Equal(r.children, o.children) &&
+		slices.Equal(r.cmTTPRollup, o.cmTTPRollup) &&
+		slices.Equal(r.cmViaTTPs, o.cmViaTTPs) &&
+		slices.Equal(r.cmForTTP, o.cmForTTP) &&
+		slices.Equal(r.mapped, o.mapped) &&
+		slices.Equal(r.covered, o.covered) &&
+		slices.Equal(r.blind, o.blind) &&
+		slices.Equal(r.observed, o.observed) &&
+		slices.Equal(r.kevEntries, o.kevEntries) &&
+		slices.Equal(r.cweEntries, o.cweEntries) &&
+		slices.Equal(r.productEntries, o.productEntries) &&
 		r.kevDegree == o.kevDegree &&
 		r.gain == o.gain &&
-		equalIDs(r.ttpForTactic, o.ttpForTactic) &&
-		equalIDs(r.ttpForPlatform, o.ttpForPlatform) &&
-		equalIDs(r.ttpForDC, o.ttpForDC) &&
-		equalIDs(r.grpRollup, o.grpRollup) &&
-		equalIDs(r.dcsExact, o.dcsExact) &&
-		equalIDs(r.dcsRollup, o.dcsRollup) &&
-		equalIDs(r.groupsForTTP, o.groupsForTTP) &&
-		equalIDs(r.softwareForGroup, o.softwareForGroup) &&
-		equalIDs(r.groupsForSoftware, o.groupsForSoftware) &&
+		slices.Equal(r.ttpForTactic, o.ttpForTactic) &&
+		slices.Equal(r.ttpForPlatform, o.ttpForPlatform) &&
+		slices.Equal(r.ttpForDC, o.ttpForDC) &&
+		slices.Equal(r.grpRollup, o.grpRollup) &&
+		slices.Equal(r.dcsExact, o.dcsExact) &&
+		slices.Equal(r.dcsRollup, o.dcsRollup) &&
+		slices.Equal(r.groupsForTTP, o.groupsForTTP) &&
+		slices.Equal(r.softwareForGroup, o.softwareForGroup) &&
+		slices.Equal(r.groupsForSoftware, o.groupsForSoftware) &&
 		r.tacticMask == o.tacticMask &&
 		r.platformMask == o.platformMask &&
 		r.subTechnique == o.subTechnique &&
 		slices.Equal(r.response, o.response)
-}
-
-// equalIDs compares two id slices element-wise. The root package has no such
-// helper (equalRows in kernel_test.go compares []uint64 rows).
-func equalIDs[T ~uint16](a, b []T) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

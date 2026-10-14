@@ -4,6 +4,7 @@ package gr4ph
 
 import (
 	"errors"
+	"slices"
 	"testing"
 )
 
@@ -40,7 +41,7 @@ func TestKEVWeaknesses(t *testing.T) {
 			t.Errorf("CWEsForKEV(%s) = %d, want %d", c.name, n, len(c.want))
 			continue
 		}
-		if !equalIDs(dstCWE[:n], c.want) {
+		if !slices.Equal(dstCWE[:n], c.want) {
 			t.Errorf("CWEsForKEV(%s) = %v, want %v", c.name, dstCWE[:n], c.want)
 		}
 	}
@@ -60,7 +61,7 @@ func TestKEVWeaknesses(t *testing.T) {
 			t.Errorf("KEVsForCWE(%s) = %d, want %d", c.name, n, len(c.want))
 			continue
 		}
-		if !equalIDs(dstK[:n], c.want) {
+		if !slices.Equal(dstK[:n], c.want) {
 			t.Errorf("KEVsForCWE(%s) = %v, want %v", c.name, dstK[:n], c.want)
 		}
 	}
@@ -103,7 +104,7 @@ func TestKEVProducts(t *testing.T) {
 			t.Errorf("KEVsForProducts(%s) = %d, want %d", c.name, n, len(c.want))
 			continue
 		}
-		if !equalIDs(dstK[:n], c.want) {
+		if !slices.Equal(dstK[:n], c.want) {
 			t.Errorf("KEVsForProducts(%s) = %v, want %v", c.name, dstK[:n], c.want)
 		}
 	}
@@ -138,7 +139,7 @@ func TestKEVsForCWEs(t *testing.T) {
 			t.Errorf("KEVsForCWEs(%s) = %d, want %d", c.name, n, len(c.want))
 			continue
 		}
-		if !equalIDs(dstK[:n], c.want) {
+		if !slices.Equal(dstK[:n], c.want) {
 			t.Errorf("KEVsForCWEs(%s) = %v, want %v", c.name, dstK[:n], c.want)
 		}
 	}
@@ -168,7 +169,7 @@ func TestKEVLayout(t *testing.T) {
 		{"kevProduct", e.kevProduct, []uint64{0b01, 0b10}},
 		{"productKEV", e.productKEV, []uint64{0b01, 0b10}},
 	} {
-		if !equalRows(c.block, c.want) {
+		if !slices.Equal(c.block, c.want) {
 			t.Errorf("%s = %v, want %v", c.name, c.block, c.want)
 		}
 	}
@@ -244,7 +245,7 @@ func TestKEVTotality(t *testing.T) {
 	setBit(sel, 1)
 	setBit(sel, 40) // past the two live weaknesses
 
-	if n := e.KEVsForCWEs(sel, scratch, dstK); n != 2 || !equalIDs(dstK[:n], []KEV{0, 1}) {
+	if n := e.KEVsForCWEs(sel, scratch, dstK); n != 2 || !slices.Equal(dstK[:n], []KEV{0, 1}) {
 		t.Errorf("KEVsForCWEs with a stale bit = %d %v, want 2 [0 1]", n, dstK[:n])
 	}
 	if n := e.CWEsForKEV(KEV(99), dstCWE); n != 0 {
