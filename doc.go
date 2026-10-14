@@ -17,11 +17,11 @@
 //
 // The engine is built on Go 1.27's experimental simd package, whose files are
 // all gated behind the goexperiment.simd build tag. Every file in this module
-// (except cmd/d3fendgen, cmd/kevgen, internal/simdcheck and internal/hotmethods)
-// carries the same tag, so a stock build fails with the explicit constraint
-// error rather than undefined-symbol noise; internal/simdcheck makes that true
-// for ./... too, which would otherwise skip every gated package and report
-// success:
+// (except cmd/d3fendgen, cmd/kevgen, internal/simdcheck, internal/hotmethods
+// and internal/atomicfile) carries the same tag, so a stock build fails with
+// the explicit constraint error rather than undefined-symbol noise;
+// internal/simdcheck makes that true for ./... too, which would otherwise skip
+// every gated package and report success:
 //
 //	GOEXPERIMENT=simd go build ./...
 //
@@ -67,6 +67,24 @@
 // methods (Artifacts, TTPs, CountermeasuresForTTP, DataComponentsForTTP, ...)
 // follow edges only, while the *Rollup variants expand a parent onto its direct
 // children or collapse sub-techniques onto their parent.
+//
+// # Panics
+//
+// Every hot-path query is total over the id space: an id outside its partition
+// answers 0/false instead of panicking, so a stale or foreign id set can never
+// crash a traversal, and the zero Engine answers every query. Three classes of
+// misuse have no sensible fallback and panic instead:
+//
+//   - an id outside its partition passed to a cold accessor (TTPName, TTPLabel,
+//     GroupKind, GroupRevoked, TTPRevoked, KEVRansomware, ...), or a relation id
+//     outside RelCount()+1 (offensive) / DefRelCount()+1 (defensive);
+//   - a scratch row shorter than WordsPerRow of the partition the query returns
+//     ("gr4ph: scratch too small"), or a selection shorter than WordsPerRow of
+//     the partition it indexes ("gr4ph: selection too small");
+//   - a Kind that WordsPerRow does not map ("gr4ph: unknown kind").
+//
+// Response and CountermeasureResponse are the total boundary formatters: they
+// render "<invalid ttp N>" / "<invalid cm N>" and still count the entry.
 //
 // See README.md for the full API, the memory layout and the two end-to-end
 // flows (defensive triage and authorized offensive planning).

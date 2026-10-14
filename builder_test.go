@@ -1247,3 +1247,37 @@ func TestBuilderAddTTPIdempotentArguments(t *testing.T) {
 		t.Fatal("a duplicate's alias must not be registered")
 	}
 }
+
+// TestDomainAndGroupKindString pins the two Stringer methods the CLI and the
+// examples print with: the four domain names, the three object types, and the
+// fallback that keeps a value outside the constants printable instead of
+// silently rendering a number.
+func TestDomainAndGroupKindString(t *testing.T) {
+	for _, c := range []struct {
+		d    Domain
+		want string
+	}{
+		{DomainEnterprise, "enterprise"},
+		{DomainICS, "ics"},
+		{DomainMobile, "mobile"},
+		{DomainSPARTA, "sparta"},
+		{Domain(4), "domain(4)"},
+	} {
+		if got := c.d.String(); got != c.want {
+			t.Errorf("Domain(%d).String() = %q, want %q", int(c.d), got, c.want)
+		}
+	}
+	for _, c := range []struct {
+		k    GroupKind
+		want string
+	}{
+		{GroupActor, "actor"},
+		{GroupSoftware, "software"},
+		{GroupCampaign, "campaign"},
+		{GroupKind(3), "kind(3)"},
+	} {
+		if got := c.k.String(); got != c.want {
+			t.Errorf("GroupKind(%d).String() = %q, want %q", int(c.k), got, c.want)
+		}
+	}
+}
