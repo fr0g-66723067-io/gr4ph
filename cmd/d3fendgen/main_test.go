@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -865,6 +867,9 @@ func TestEmitProducesValidGo(t *testing.T) {
 	}
 	for _, want := range []*regexp.Regexp{
 		regexp.MustCompile(`\bNTTP\s+= 4\b`),
+		regexp.MustCompile(`\bSourceEnterprise\s+= "enterprise-attack-19\.2\.json"`),
+		regexp.MustCompile(`\bSourceICS\s+= "ics-attack-19\.2\.json"`),
+		regexp.MustCompile(`\bSourceMobile\s+= "mobile-attack-19\.2\.json"`),
 		regexp.MustCompile(`\bSourceD3FEND\s+= "d3fend-full-mappings\.csv@1\.6\.0"`),
 		regexp.MustCompile(`\bRelAccesses\s+gr4ph\.Rel = 1\b`),
 		regexp.MustCompile(`\bDefRelAnalyzes\s+gr4ph\.DefRel = 1\b`),
@@ -897,6 +902,210 @@ func TestEmitProducesValidGo(t *testing.T) {
 	if strings.Contains(string(src), "TTPChildCount") {
 		t.Error("generated source must not carry the dead TTPChildCount table")
 	}
+}
+
+// TestCommittedTablesMatchPinnedShape is the offline link for the generator's
+// own literals. It reads the committed ontology/attack_gen.go, re-derives every
+// number pinnedShape and the four provenance constants name from the emitted
+// source, and reports each committed value against its pinned one. It
+// regenerates nothing, so it fails if a committed constant is hand-edited or
+// pinnedShape drifts.
+func TestCommittedTablesMatchPinnedShape(t *testing.T) {
+	path := filepath.Join("..", "..", "ontology", "attack_gen.go")
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	file, err := parser.ParseFile(token.NewFileSet(), path, src, 0)
+	if err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+
+	// Pull every top-level const value and every top-level array literal out of
+	// the emitted file: the consts carry the size pins, the arrays are the
+	// tables the pins describe.
+	consts, strs := map[string]int{}, map[string]string{}
+	arrays := map[string]*ast.CompositeLit{}
+	for _, d := range file.Decls {
+		gd, ok := d.(*ast.GenDecl)
+		if !ok {
+			continue
+		}
+		for _, spec := range gd.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok || len(vs.Values) == 0 {
+				continue
+			}
+			switch gd.Tok {
+			case token.CONST:
+				for i, name := range vs.Names {
+					if v, ok := intLit(vs.Values[i]); ok {
+						consts[name.Name] = v
+					} else if s, ok := strLit(vs.Values[i]); ok {
+						strs[name.Name] = s
+					}
+				}
+			case token.VAR:
+				if cl, ok := vs.Values[0].(*ast.CompositeLit); ok {
+					arrays[vs.Names[0].Name] = cl
+				}
+			}
+		}
+	}
+
+	arrayLen := func(name string) int {
+		cl, ok := arrays[name]
+		if !ok {
+			t.Fatalf("committed tables have no var %s", name)
+		}
+		return len(cl.Elts)
+	}
+	intAt := func(name string, i int) int {
+		n, ok := intLit(arrays[name].Elts[i])
+		if !ok {
+			t.Fatalf("%s[%d] is not an int literal", name, i)
+		}
+		return n
+	}
+
+	// Re-derive the histograms and the two-level hierarchy from the arrays: the
+	// emitted file carries no NDomain* or NHierarchy constants to copy.
+	domainCount := map[string]int{}
+	for _, e := range arrays["TTPDomains"].Elts {
+		domainCount[selName(e)]++
+	}
+	kindCount := map[string]int{}
+	for _, e := range arrays["GroupKinds"].Elts {
+		kindCount[selName(e)]++
+	}
+	topLevel, maxChild := 0, 0
+	parents, children := map[int]bool{}, map[int]int{}
+	for _, e := range arrays["TTPParents"].Elts {
+		// uint16(gr4ph.NoParent) is a call, every actual parent is an int literal.
+		if _, ok := e.(*ast.CallExpr); ok {
+			topLevel++
+			continue
+		}
+		p, ok := intLit(e)
+		if !ok {
+			t.Fatalf("TTPParents carries an unexpected element %T", e)
+		}
+		parents[p] = true
+		children[p]++
+		if children[p] > maxChild {
+			maxChild = children[p]
+		}
+	}
+	pairs := map[[2]int]bool{}
+	for i := range arrays["OffEdgeTTP"].Elts {
+		pairs[[2]int{intAt("OffEdgeTTP", i), intAt("OffEdgeArt", i)}] = true
+	}
+	sumRowsOf := func(name string) int {
+		total := 0
+		for _, e := range arrays[name].Elts {
+			switch row := e.(type) {
+			case *ast.CompositeLit:
+				total += len(row.Elts)
+			case *ast.Ident: // nil row
+			default:
+				t.Fatalf("%s carries an unexpected row %T", name, e)
+			}
+		}
+		return total
+	}
+
+	checks := []struct {
+		name string
+		got  int
+		want int
+	}{
+		{"NTTP", consts["NTTP"], pinnedShape.ttps},
+		{"NArtifact", consts["NArtifact"], pinnedShape.artifacts},
+		{"NCountermeasure", consts["NCountermeasure"], pinnedShape.cms},
+		{"NRel", consts["NRel"], pinnedShape.offRels},
+		{"NDefRel", consts["NDefRel"], pinnedShape.defRels},
+		{"NOffEdges", consts["NOffEdges"], pinnedShape.offEdges},
+		{"NDefEdges", consts["NDefEdges"], pinnedShape.defEdges},
+		{"NDefends", consts["NDefends"], pinnedShape.defends},
+		{"NTactic", consts["NTactic"], pinnedShape.tactics},
+		{"NPlatform", consts["NPlatform"], pinnedShape.platforms},
+		{"NDataComponent", consts["NDataComponent"], pinnedShape.dataComponents},
+		{"NGroup", consts["NGroup"], pinnedShape.groups},
+		{"NDetects", consts["NDetects"], pinnedShape.detectsPairs},
+		{"NUses", consts["NUses"], pinnedShape.groupUses},
+		{"NSoftwareUses", consts["NSoftwareUses"], pinnedShape.softwareUses},
+		{"len(TTPIDs)", arrayLen("TTPIDs"), pinnedShape.ttps},
+		{"len(ArtifactNames)", arrayLen("ArtifactNames"), pinnedShape.artifacts},
+		{"len(CountermeasureIDs)", arrayLen("CountermeasureIDs"), pinnedShape.cms},
+		{"len(RelNames)", arrayLen("RelNames"), pinnedShape.offRels},
+		{"len(DefRelNames)", arrayLen("DefRelNames"), pinnedShape.defRels},
+		{"len(OffEdgeTTP)", arrayLen("OffEdgeTTP"), pinnedShape.offEdges},
+		{"len(DefEdgeCM)", arrayLen("DefEdgeCM"), pinnedShape.defEdges},
+		{"len(DefendsCM)", arrayLen("DefendsCM"), pinnedShape.defends},
+		{"len(TTPDomains)", arrayLen("TTPDomains"), pinnedShape.ttps},
+		{"distinct offensive pairs", len(pairs), pinnedShape.offPairs},
+		{"enterprise domains", domainCount["DomainEnterprise"], pinnedShape.enterprise},
+		{"mobile domains", domainCount["DomainMobile"], pinnedShape.mobile},
+		{"ics domains", domainCount["DomainICS"], pinnedShape.ics},
+		{"sparta domains", domainCount["DomainSPARTA"], pinnedShape.sparta},
+		{"top-level techniques", topLevel, pinnedShape.topLevel},
+		{"sub-techniques", arrayLen("TTPParents") - topLevel, pinnedShape.subs},
+		{"distinct parents", len(parents), pinnedShape.parents},
+		{"max children", maxChild, pinnedShape.maxChildren},
+		{"tactic assignments", sumRowsOf("TacticTTP"), pinnedShape.tacticAssignments},
+		{"platform assignments", sumRowsOf("PlatformTTP"), pinnedShape.platformAssignments},
+		{"actors", kindCount["GroupActor"], pinnedShape.actors},
+		{"software", kindCount["GroupSoftware"], pinnedShape.software},
+		{"campaigns", kindCount["GroupCampaign"], pinnedShape.campaigns},
+	}
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("%s: committed %d, pinnedShape %d", c.name, c.got, c.want)
+		}
+	}
+
+	prov := []struct {
+		name, got, want string
+	}{
+		{"SourceEnterprise", strs["SourceEnterprise"], sourceEnterprise},
+		{"SourceICS", strs["SourceICS"], sourceICS},
+		{"SourceMobile", strs["SourceMobile"], sourceMobile},
+		{"SourceD3FEND", strs["SourceD3FEND"], sourceD3FEND},
+	}
+	for _, c := range prov {
+		if c.got != c.want {
+			t.Errorf("%s: committed %q, pinned %q", c.name, c.got, c.want)
+		}
+	}
+}
+
+// intLit returns the value of an integer literal.
+func intLit(e ast.Expr) (int, bool) {
+	bl, ok := e.(*ast.BasicLit)
+	if !ok || bl.Kind != token.INT {
+		return 0, false
+	}
+	n, err := strconv.Atoi(bl.Value)
+	return n, err == nil
+}
+
+// strLit returns the value of a string literal.
+func strLit(e ast.Expr) (string, bool) {
+	bl, ok := e.(*ast.BasicLit)
+	if !ok || bl.Kind != token.STRING {
+		return "", false
+	}
+	s, err := strconv.Unquote(bl.Value)
+	return s, err == nil
+}
+
+// selName returns the selector of a pkg.Name expression ("GroupActor" for
+// gr4ph.GroupActor), or "" for anything else.
+func selName(e ast.Expr) string {
+	if sel, ok := e.(*ast.SelectorExpr); ok {
+		return sel.Sel.Name
+	}
+	return ""
 }
 
 // --- label resolution and node derivation ---

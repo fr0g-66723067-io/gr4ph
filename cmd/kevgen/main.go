@@ -4,8 +4,9 @@
 // vendor/product pairs name.
 //
 // It is deliberately untagged (no goexperiment.simd) and imports nothing from
-// this module, so the tables can be regenerated on a stock toolchain; the file
-// it writes is tagged and lives in the ontology package.
+// this module except the untagged, standard-library-only internal/atomicfile, so
+// the tables can be regenerated on a stock toolchain; the file it writes is
+// tagged and lives in the ontology package.
 //
 // KEV is a rolling feed: CISA revises the catalog and bumps catalogVersion.
 // When the fetched version differs from the pinned one this generator re-pins
@@ -47,6 +48,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/fr0g-66723067-io/gr4ph/internal/atomicfile"
 )
 
 const (
@@ -158,7 +161,7 @@ func run(kevSrc, out string, w io.Writer, want shape, repin bool) error {
 			return err
 		}
 	}
-	if err := os.WriteFile(out, file, 0o644); err != nil {
+	if err := atomicfile.Write(out, file); err != nil {
 		return err
 	}
 
@@ -563,8 +566,9 @@ func emit(m *model) ([]byte, error) {
 
 	formatted, err := format.Source(b.Bytes())
 	if err != nil {
-		// Emit the unformatted source so the syntax error is visible.
-		return b.Bytes(), fmt.Errorf("format generated source: %w", err)
+		// A format.Source failure is a generator bug, not a data problem:
+		// report it and write nothing, so a broken table never lands.
+		return nil, fmt.Errorf("format generated source: %w", err)
 	}
 	return formatted, nil
 }
@@ -654,7 +658,7 @@ func repinPath(measured shape, path string) error {
 	if err != nil {
 		return fmt.Errorf("re-pin: format %s: %w", path, err)
 	}
-	if err := os.WriteFile(path, formatted, 0o644); err != nil {
+	if err := atomicfile.Write(path, formatted); err != nil {
 		return fmt.Errorf("re-pin: %w", err)
 	}
 	return nil
