@@ -595,10 +595,11 @@ inventory is never an error.
   every query with 0/false.
 * Engine-dimension misuse panics, because there is no sensible fallback: an offensive relation id
   `>= RelCount()+1`, a defensive relation id `>= DefRelCount()+1`, a `Kind` outside the seven
-  `WordsPerRow` maps (the engine has eight row-strided partitions but only seven `Kind` values —
-  grouping nodes have a stride, and no query returns their ids — so `WordsPerRow` panics
-  `gr4ph: unknown kind`), an undersized `scratch`, or an undersized `selection`
-  (`gr4ph: selection too small`). The scratch check runs before the id bounds
+  `WordsPerRow` maps, an undersized `scratch`, or an undersized `selection`
+  (`gr4ph: selection too small`). The engine has eight row-strided partitions but only seven `Kind`
+  values — grouping rows are always read into a caller-sized `dst`, never through the scratch or
+  selection protocol, so no `Kind` names them — which is why `WordsPerRow` panics
+  `gr4ph: unknown kind`. The scratch check runs before the id bounds
   check, so an undersized `scratch` panics even when the id is out of range.
 * The overlay queries read the caller's selection and never retain it, so a caller may flip bits
   between calls — an alert stream becomes the observed set, a tool inventory the deployed one.

@@ -1,6 +1,7 @@
 // assemble.go: the graph assembly, the model statistics and the pinned-shape
 // check. It is untagged, like the rest of cmd/d3fendgen, so the generator
 // rebuilds on a stock toolchain.
+
 package main
 
 import (

@@ -1,4 +1,5 @@
 // parse.go: ATT&CK STIX, D3FEND CSV and graph-assembly parsing.
+
 package main
 
 import (
@@ -208,8 +209,8 @@ type groupNode struct {
 	bad   bool
 }
 
-// groupKind mirrors gr4ph.GroupKind, kept local so this package stays
-// dependency-free.
+// groupKind mirrors gr4ph.GroupKind, kept local so this package imports nothing
+// gated (its only module import is the untagged internal/atomicfile).
 type groupKind uint8
 
 const (

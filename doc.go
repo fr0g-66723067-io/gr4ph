@@ -70,10 +70,12 @@
 //
 // # Panics
 //
-// Every hot-path query is total over the id space: an id outside its partition
-// answers 0/false instead of panicking, so a stale or foreign id set can never
-// crash a traversal, and the zero Engine answers every query. Three classes of
-// misuse have no sensible fallback and panic instead:
+// Every hot-path query is total over the id space of a built engine: an id
+// outside its partition answers 0/false instead of panicking, so a stale or
+// foreign id set can never crash a traversal. (The zero Engine is not a built
+// engine: it has no plane 0, so a relation-taking query panics there — see
+// Engine.) Three classes of misuse have no sensible fallback and panic
+// instead:
 //
 //   - an id outside its partition passed to a cold accessor (TTPName, TTPLabel,
 //     GroupKind, GroupRevoked, TTPRevoked, KEVRansomware, ...), or a relation id

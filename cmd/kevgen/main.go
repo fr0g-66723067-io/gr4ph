@@ -78,8 +78,9 @@ const (
 	shapeMarker = "var pinnedShape" + " = shape{"
 )
 
-// maxNodes mirrors gr4ph.MaxNodes (the uint16 id space) without importing this
-// module: this package stays dependency-free, like cmd/d3fendgen.
+// maxNodes mirrors gr4ph.MaxNodes (the uint16 id space) without importing the
+// gated library: apart from the untagged internal/atomicfile, this package
+// imports nothing from this module, like cmd/d3fendgen.
 const maxNodes = 65536
 
 // shape is the measured shape of the pinned catalog. kevgen re-pins these

@@ -5,7 +5,7 @@ package gr4ph
 // --- hot path: offensive traversals ---
 
 // Adjacent reports whether technique t is linked to artifact a under any
-// relation.
+// relation. It panics on the zero Engine, which has no plane 0.
 func (e *Engine) Adjacent(t TTP, a Artifact) bool { return e.AdjacentRel(t, a, RelAny) }
 
 // AdjacentRel reports whether t -> a holds under relation r (RelAny for the
@@ -20,7 +20,8 @@ func (e *Engine) AdjacentRel(t TTP, a Artifact, r Rel) bool {
 }
 
 // Artifacts writes the artifacts linked to t under any relation into dst,
-// truncated to len(dst), and returns the total number of matches.
+// truncated to len(dst), and returns the total number of matches. It panics on
+// the zero Engine, which has no plane 0.
 func (e *Engine) Artifacts(t TTP, dst []Artifact) int { return e.ArtifactsRel(t, RelAny, dst) }
 
 // ArtifactsRel is Artifacts restricted to relation r.
@@ -36,7 +37,8 @@ func (e *Engine) ArtifactsRel(t TTP, r Rel, dst []Artifact) int {
 }
 
 // TTPs writes the techniques linked to a under any relation into dst,
-// truncated to len(dst), and returns the total number of matches.
+// truncated to len(dst), and returns the total number of matches. It panics on
+// the zero Engine, which has no plane 0.
 func (e *Engine) TTPs(a Artifact, dst []TTP) int { return e.TTPsRel(a, RelAny, dst) }
 
 // TTPsRel is TTPs restricted to relation r.
@@ -169,7 +171,7 @@ func (e *Engine) ArtifactsAll(r Rel, scratch []uint64, dst []Artifact, ttps []TT
 // direct sub-techniques under any relation. For a sub-technique this is
 // exactly its own row (the hierarchy is two levels deep).
 // Results are truncated to len(dst) and the return value is the total number
-// of matches.
+// of matches. It panics on the zero Engine, which has no plane 0.
 func (e *Engine) ArtifactsRollup(t TTP, scratch []uint64, dst []Artifact) int {
 	return e.ArtifactsRollupRel(t, RelAny, scratch, dst)
 }
@@ -195,7 +197,7 @@ func (e *Engine) ArtifactsRollupRel(t TTP, r Rel, scratch []uint64, dst []Artifa
 // TTPsRollup writes the techniques linked to a under any relation, with every
 // sub-technique collapsed onto its parent.
 // Results are truncated to len(dst) and the return value is the total number
-// of matches.
+// of matches. It panics on the zero Engine, which has no plane 0.
 func (e *Engine) TTPsRollup(a Artifact, scratch []uint64, dst []TTP) int {
 	return e.TTPsRollupRel(a, RelAny, scratch, dst)
 }

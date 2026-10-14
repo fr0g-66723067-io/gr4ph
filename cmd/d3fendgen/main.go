@@ -94,7 +94,8 @@ var pinnedShape = shape{
 	groupUses: 18885, softwareUses: 1339,
 }
 
-// domain mirrors gr4ph.Domain, kept local so this package stays dependency-free.
+// domain mirrors gr4ph.Domain, kept local so this package imports nothing gated
+// (its only module import is the untagged internal/atomicfile).
 type domain uint8
 
 const (

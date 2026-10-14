@@ -1,4 +1,5 @@
 // emit.go: emission of the generated Go tables.
+
 package main
 
 import (

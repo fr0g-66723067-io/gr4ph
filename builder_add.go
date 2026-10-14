@@ -6,8 +6,10 @@ import "strings"
 
 // --- registration: relation planes, vocabularies, nodes and edges ---
 //
-// Every Add* is idempotent on the normalised key, seeds the zero value first,
-// and rejects a used Builder with ErrBuilderUsed.
+// The relation, vocabulary and node registrations are idempotent on the
+// normalised key, seed the zero value first, and reject a used Builder with
+// ErrBuilderUsed. The edge registrations append to their index lists instead,
+// where a duplicate is harmless (each edge method says so).
 
 // AddRel registers an offensive relation predicate and returns its plane id
 // (1..255). Idempotent on the normalised name. The name "any" is reserved for the

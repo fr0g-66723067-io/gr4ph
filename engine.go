@@ -23,8 +23,9 @@ package gr4ph
 // still panics, because it is a programming error with no sensible fallback:
 // a relation id >= RelCount()+1 (or a defensive relation id >=
 // DefRelCount()+1), a Kind that WordsPerRow does not map (the engine has eight
-// row-strided partitions but only seven Kinds, because no query returns
-// grouping ids; WordsPerRow panics "gr4ph: unknown kind"), or a scratch row
+// row-strided partitions but only seven Kinds: grouping rows are always read
+// into a caller-sized dst, never through the scratch/selection protocol, so no
+// Kind names them; WordsPerRow panics "gr4ph: unknown kind"), or a scratch row
 // shorter than WordsPerRow(returned partition). The scratch check runs before
 // the id bounds check, so an undersized scratch panics even when the id is out
 // of range.
