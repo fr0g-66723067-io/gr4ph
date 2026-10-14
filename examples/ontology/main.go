@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/fr0g-66723067-io/gr4ph"
@@ -164,7 +163,7 @@ func run(w io.Writer) error {
 			detail = ", sub of " + e.TTPName(parent)
 		}
 		fmt.Fprintf(w, "incident %q -> %s (%s%s), %d artifacts\n",
-			alert, e.TTPName(id), domainName(e.TTPDomain(id)), detail, e.Degree(id, gr4ph.RelAny))
+			alert, e.TTPName(id), e.TTPDomain(id).String(), detail, e.Degree(id, gr4ph.RelAny))
 	}
 
 	// --- ATT&CK attributes and the data-component and grouping partitions ---
@@ -198,7 +197,7 @@ func run(w io.Writer) error {
 	n = e.TTPsForGroup(actor, ttps)
 	software := e.SoftwareForGroup(actor, groups)
 	fmt.Fprintf(w, "group(%s) = %s, %d techniques, %d software\n",
-		e.GroupID(actor), groupKindName(e.GroupKind(actor)), n, software)
+		e.GroupID(actor), e.GroupKind(actor).String(), n, software)
 
 	// A software node answers the other direction: who uses it.
 	mimikatz := lookupGroup(e, "S0002")
@@ -280,19 +279,6 @@ func platformNames(e *gr4ph.Engine, mask uint64) []string {
 	return out
 }
 
-// groupKindName renders a grouping kind the way the CLI does.
-func groupKindName(k gr4ph.GroupKind) string {
-	switch k {
-	case gr4ph.GroupActor:
-		return "actor"
-	case gr4ph.GroupSoftware:
-		return "software"
-	case gr4ph.GroupCampaign:
-		return "campaign"
-	}
-	return "kind(" + strconv.Itoa(int(k)) + ")"
-}
-
 func lookupRel(e *gr4ph.Engine, name string) gr4ph.Rel {
 	r, ok := e.Rel(name)
 	if !ok {
@@ -324,18 +310,6 @@ func histogram(e *gr4ph.Engine) string {
 		}
 	}
 	return fmt.Sprintf("%d enterprise, %d mobile, %d ics, %d sparta", enterprise, mobile, ics, sparta)
-}
-
-func domainName(d gr4ph.Domain) string {
-	switch d {
-	case gr4ph.DomainEnterprise:
-		return "enterprise"
-	case gr4ph.DomainICS:
-		return "ics"
-	case gr4ph.DomainMobile:
-		return "mobile"
-	}
-	return "sparta"
 }
 
 func join(names []string, limit int) string {

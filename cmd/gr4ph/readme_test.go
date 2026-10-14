@@ -44,12 +44,17 @@ func TestReadmeBlocks(t *testing.T) {
 	}
 	t.Logf("%d commands replayed", len(cases))
 	for _, c := range cases {
-		var stdout, stderr strings.Builder
-		status := run(e, c.args, &stdout, &stderr)
+		// One buffer for both streams: `run` writes every resolved result to
+		// stdout and only then the failures to stderr, so merging the two
+		// buffers afterwards would reverse the real order of a block that
+		// documents both. Every current block writes one stream, but the replay
+		// must not depend on that.
+		var out strings.Builder
+		status := run(e, c.args, &out, &out)
 		if c.status >= 0 && status != c.status {
 			t.Errorf("README.md:%d: status = %d, want %d", c.line, status, c.status)
 		}
-		got := outputLines(stderr.String() + stdout.String())
+		got := outputLines(out.String())
 		if linesEqual(got, c.want) {
 			continue
 		}

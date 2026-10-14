@@ -539,289 +539,316 @@ func TestTextPartialOutput(t *testing.T) {
 func TestJSONFixture(t *testing.T) {
 	e := fixtureEngine(t)
 
-	// A leading -json is accepted before the command, as in the usage-era form
-	// `gr4ph -json ttp T1003.001`.
-	out, stderr, status := runCase(t, e, "-json", "ttp", "T1003.001")
-	if status != 0 || stderr != "" {
-		t.Fatalf("status = %d, stderr = %q, want 0 and empty", status, stderr)
-	}
-	var got result
-	if err := json.Unmarshal([]byte(out), &got); err != nil {
-		t.Fatalf("decode %q: %v", out, err)
-	}
-	if got.Query != "T1003.001" || got.Kind != "ttp" || got.ID == nil || *got.ID != 1 {
-		t.Fatalf("query/kind/id = %q/%q/%v, want T1003.001/ttp/1", got.Query, got.Kind, got.ID)
-	}
-	if got.Name != "T1003.001" || got.Label != "LSASS Memory" || got.Domain != "enterprise" || got.Parent != "T1003" {
-		t.Fatalf("name/label/domain/parent = %q/%q/%q/%q", got.Name, got.Label, got.Domain, got.Parent)
-	}
-	if got.Children == nil || *got.Children != 0 {
-		t.Fatalf("children = %v, want 0", got.Children)
-	}
-	if len(got.Sets) != 7 {
-		t.Fatalf("sets = %d, want 7", len(got.Sets))
-	}
-	if strings.Join(got.Tactics, ",") != "TA0002" || strings.Join(got.Platforms, ",") != "Windows" || !got.SubTechnique {
-		t.Fatalf("tactics/platforms/subtechnique = %v/%v/%v, want [TA0002]/[Windows]/true",
-			got.Tactics, got.Platforms, got.SubTechnique)
-	}
-	if dcs := got.Sets[4]; dcs.Dir != "in" || dcs.Name != "data components" || dcs.Count != 1 {
-		t.Fatalf("sets[4] = %+v, want in data components 1", dcs)
-	}
-	arts := got.Sets[0]
-	if arts.Dir != "out" || arts.Name != "artifacts" || arts.Count != 2 {
-		t.Fatalf("sets[0] = %+v, want out artifacts 2", arts)
-	}
-	wantNodes := []node{
-		{ID: 0, Name: "Process"},
-		{ID: 1, Name: "AuthenticationService", Label: "Authentication Service"},
-	}
-	if len(arts.Nodes) != len(wantNodes) {
-		t.Fatalf("sets[0] nodes = %+v, want %+v", arts.Nodes, wantNodes)
-	}
-	for i, want := range wantNodes {
-		if arts.Nodes[i] != want {
-			t.Errorf("sets[0].nodes[%d] = %+v, want %+v", i, arts.Nodes[i], want)
+	t.Run("ttp by id", func(t *testing.T) {
+		// A leading -json is accepted before the command, as in the usage-era form
+		// `gr4ph -json ttp T1003.001`.
+		out, stderr, status := runCase(t, e, "-json", "ttp", "T1003.001")
+		if status != 0 || stderr != "" {
+			t.Fatalf("status = %d, stderr = %q, want 0 and empty", status, stderr)
 		}
-	}
-	if cms := got.Sets[2]; cms.Dir != "in" || cms.Name != "countermeasures" || cms.Count != 2 {
-		t.Fatalf("sets[2] = %+v, want in countermeasures 2", cms)
-	}
+		var got result
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatalf("decode %q: %v", out, err)
+		}
+		if got.Query != "T1003.001" || got.Kind != "ttp" || got.ID == nil || *got.ID != 1 {
+			t.Fatalf("query/kind/id = %q/%q/%v, want T1003.001/ttp/1", got.Query, got.Kind, got.ID)
+		}
+		if got.Name != "T1003.001" || got.Label != "LSASS Memory" || got.Domain != "enterprise" || got.Parent != "T1003" {
+			t.Fatalf("name/label/domain/parent = %q/%q/%q/%q", got.Name, got.Label, got.Domain, got.Parent)
+		}
+		if got.Children == nil || *got.Children != 0 {
+			t.Fatalf("children = %v, want 0", got.Children)
+		}
+		if len(got.Sets) != 7 {
+			t.Fatalf("sets = %d, want 7", len(got.Sets))
+		}
+		if strings.Join(got.Tactics, ",") != "TA0002" || strings.Join(got.Platforms, ",") != "Windows" || !got.SubTechnique {
+			t.Fatalf("tactics/platforms/subtechnique = %v/%v/%v, want [TA0002]/[Windows]/true",
+				got.Tactics, got.Platforms, got.SubTechnique)
+		}
+		if dcs := got.Sets[4]; dcs.Dir != "in" || dcs.Name != "data components" || dcs.Count != 1 {
+			t.Fatalf("sets[4] = %+v, want in data components 1", dcs)
+		}
+		arts := got.Sets[0]
+		if arts.Dir != "out" || arts.Name != "artifacts" || arts.Count != 2 {
+			t.Fatalf("sets[0] = %+v, want out artifacts 2", arts)
+		}
+		wantNodes := []node{
+			{ID: 0, Name: "Process"},
+			{ID: 1, Name: "AuthenticationService", Label: "Authentication Service"},
+		}
+		if len(arts.Nodes) != len(wantNodes) {
+			t.Fatalf("sets[0] nodes = %+v, want %+v", arts.Nodes, wantNodes)
+		}
+		for i, want := range wantNodes {
+			if arts.Nodes[i] != want {
+				t.Errorf("sets[0].nodes[%d] = %+v, want %+v", i, arts.Nodes[i], want)
+			}
+		}
+		if cms := got.Sets[2]; cms.Dir != "in" || cms.Name != "countermeasures" || cms.Count != 2 {
+			t.Fatalf("sets[2] = %+v, want in countermeasures 2", cms)
+		}
+	})
 
-	// A revoked technique carries "revoked":true; the live carrier of the same
-	// label has the field absent (omitempty) and is reachable by the label.
-	out, stderr, status = runCase(t, e, "-json", "ttp", "T1015")
-	if status != 0 || stderr != "" {
-		t.Fatalf("status = %d, stderr = %q, want 0 and empty", status, stderr)
-	}
-	var revokedTT result
-	if err := json.Unmarshal([]byte(out), &revokedTT); err != nil {
-		t.Fatalf("decode %q: %v", out, err)
-	}
-	if revokedTT.Name != "T1015" || !revokedTT.Revoked {
-		t.Fatalf("revoked ttp = %q revoked=%v, want T1015 true", revokedTT.Name, revokedTT.Revoked)
-	}
-	out, _, status = runCase(t, e, "-json", "ttp", "Accessibility Features")
-	if status != 0 {
-		t.Fatalf("status = %d, want 0", status)
-	}
-	var liveTT result
-	if err := json.Unmarshal([]byte(out), &liveTT); err != nil {
-		t.Fatalf("decode %q: %v", out, err)
-	}
-	if liveTT.Name != "T1546.008" || liveTT.Revoked {
-		t.Fatalf("live ttp = %q revoked=%v, want T1546.008 false", liveTT.Name, liveTT.Revoked)
-	}
-	if strings.Contains(out, "revoked") {
-		t.Fatalf("a live technique must not carry the field: %s", out)
-	}
+	t.Run("shared label resolves live", func(t *testing.T) {
+		// A revoked technique carries "revoked":true; the live carrier of the same
+		// label has the field absent (omitempty) and is reachable by the label.
+		out, stderr, status := runCase(t, e, "-json", "ttp", "T1015")
+		if status != 0 || stderr != "" {
+			t.Fatalf("status = %d, stderr = %q, want 0 and empty", status, stderr)
+		}
+		var revokedTT result
+		if err := json.Unmarshal([]byte(out), &revokedTT); err != nil {
+			t.Fatalf("decode %q: %v", out, err)
+		}
+		if revokedTT.Name != "T1015" || !revokedTT.Revoked {
+			t.Fatalf("revoked ttp = %q revoked=%v, want T1015 true", revokedTT.Name, revokedTT.Revoked)
+		}
+		out, _, status = runCase(t, e, "-json", "ttp", "Accessibility Features")
+		if status != 0 {
+			t.Fatalf("status = %d, want 0", status)
+		}
+		var liveTT result
+		if err := json.Unmarshal([]byte(out), &liveTT); err != nil {
+			t.Fatalf("decode %q: %v", out, err)
+		}
+		if liveTT.Name != "T1546.008" || liveTT.Revoked {
+			t.Fatalf("live ttp = %q revoked=%v, want T1546.008 false", liveTT.Name, liveTT.Revoked)
+		}
+		if strings.Contains(out, "revoked") {
+			t.Fatalf("a live technique must not carry the field: %s", out)
+		}
+	})
 
 	// A live top-level technique has no subtechnique key (omitempty), and the
 	// group header carries the kind as a field.
-	out, _, status = runCase(t, e, "-json", "ttp", "T1003")
-	if status != 0 {
-		t.Fatalf("status = %d, want 0", status)
-	}
-	if strings.Contains(out, "subtechnique") {
-		t.Fatalf("a top-level technique must not carry the field: %s", out)
-	}
-	var topLevel result
-	if err := json.Unmarshal([]byte(out), &topLevel); err != nil {
-		t.Fatalf("decode %q: %v", out, err)
-	}
-	if strings.Join(topLevel.Tactics, ",") != "TA0001" || strings.Join(topLevel.Platforms, ",") != "Windows,Linux" {
-		t.Fatalf("tactics/platforms = %v/%v, want [TA0001]/[Windows Linux]", topLevel.Tactics, topLevel.Platforms)
-	}
-	out, _, status = runCase(t, e, "-json", "group", "S0001")
-	if status != 0 {
-		t.Fatalf("status = %d, want 0", status)
-	}
-	var grp result
-	if err := json.Unmarshal([]byte(out), &grp); err != nil {
-		t.Fatalf("decode %q: %v", out, err)
-	}
-	if grp.Kind != "group" || grp.GroupKind != "software" || grp.Name != "S0001" || grp.Label != "Software One" {
-		t.Fatalf("group result = %+v, want S0001 software Software One", grp)
-	}
-
-	// rel has planes and no node id; the union plane is plane 0 of a family
-	// whose plane count is the number of registered predicates.
-	out, stderr, status = runCase(t, e, "rel", "-json", "any")
-	if status != 0 || stderr != "" {
-		t.Fatalf("status = %d, stderr = %q, want 0 and empty", status, stderr)
-	}
-	var rel result
-	if err := json.Unmarshal([]byte(out), &rel); err != nil {
-		t.Fatalf("decode %q: %v", out, err)
-	}
-	if rel.ID != nil {
-		t.Errorf("id = %v, want absent", rel.ID)
-	}
-	if rel.Sets != nil {
-		t.Errorf("sets = %+v, want absent", rel.Sets)
-	}
-	wantPlanes := []plane{
-		{Family: "offensive", ID: 0, Count: 2, Edges: 2, Sources: 1},
-		{Family: "defensive", ID: 0, Count: 3, Edges: 3, Sources: 2},
-	}
-	if len(rel.Planes) != len(wantPlanes) {
-		t.Fatalf("planes = %+v, want %+v", rel.Planes, wantPlanes)
-	}
-	for i, want := range wantPlanes {
-		if rel.Planes[i] != want {
-			t.Errorf("planes[%d] = %+v, want %+v", i, rel.Planes[i], want)
+	t.Run("subtechnique key is omitted", func(t *testing.T) {
+		out, _, status := runCase(t, e, "-json", "ttp", "T1003")
+		if status != 0 {
+			t.Fatalf("status = %d, want 0", status)
 		}
-	}
+		if strings.Contains(out, "subtechnique") {
+			t.Fatalf("a top-level technique must not carry the field: %s", out)
+		}
+		var topLevel result
+		if err := json.Unmarshal([]byte(out), &topLevel); err != nil {
+			t.Fatalf("decode %q: %v", out, err)
+		}
+		if strings.Join(topLevel.Tactics, ",") != "TA0001" || strings.Join(topLevel.Platforms, ",") != "Windows,Linux" {
+			t.Fatalf("tactics/platforms = %v/%v, want [TA0001]/[Windows Linux]", topLevel.Tactics, topLevel.Platforms)
+		}
+	})
 
-	// Two resolved queries are exactly two lines.
-	out, _, status = runCase(t, e, "-json", "ttp", "T1003.001", "T1059")
-	if status != 0 || strings.Count(out, "\n") != 2 {
-		t.Fatalf("status = %d, lines = %d in\n%s", status, strings.Count(out, "\n"), out)
-	}
+	t.Run("group header carries kind", func(t *testing.T) {
+		out, _, status := runCase(t, e, "-json", "group", "S0001")
+		if status != 0 {
+			t.Fatalf("status = %d, want 0", status)
+		}
+		var grp result
+		if err := json.Unmarshal([]byte(out), &grp); err != nil {
+			t.Fatalf("decode %q: %v", out, err)
+		}
+		if grp.Kind != "group" || grp.GroupKind != "software" || grp.Name != "S0001" || grp.Label != "Software One" {
+			t.Fatalf("group result = %+v, want S0001 software Software One", grp)
+		}
+	})
+
+	t.Run("rel planes", func(t *testing.T) {
+		// rel has planes and no node id; the union plane is plane 0 of a family
+		// whose plane count is the number of registered predicates.
+		out, stderr, status := runCase(t, e, "rel", "-json", "any")
+		if status != 0 || stderr != "" {
+			t.Fatalf("status = %d, stderr = %q, want 0 and empty", status, stderr)
+		}
+		var rel result
+		if err := json.Unmarshal([]byte(out), &rel); err != nil {
+			t.Fatalf("decode %q: %v", out, err)
+		}
+		if rel.ID != nil {
+			t.Errorf("id = %v, want absent", rel.ID)
+		}
+		if rel.Sets != nil {
+			t.Errorf("sets = %+v, want absent", rel.Sets)
+		}
+		wantPlanes := []plane{
+			{Family: "offensive", ID: 0, Count: 2, Edges: 2, Sources: 1},
+			{Family: "defensive", ID: 0, Count: 3, Edges: 3, Sources: 2},
+		}
+		if len(rel.Planes) != len(wantPlanes) {
+			t.Fatalf("planes = %+v, want %+v", rel.Planes, wantPlanes)
+		}
+		for i, want := range wantPlanes {
+			if rel.Planes[i] != want {
+				t.Errorf("planes[%d] = %+v, want %+v", i, rel.Planes[i], want)
+			}
+		}
+	})
+
+	t.Run("two queries two lines", func(t *testing.T) {
+		// Two resolved queries are exactly two lines.
+		out, _, status := runCase(t, e, "-json", "ttp", "T1003.001", "T1059")
+		if status != 0 || strings.Count(out, "\n") != 2 {
+			t.Fatalf("status = %d, lines = %d in\n%s", status, strings.Count(out, "\n"), out)
+		}
+	})
 
 	// The KEV verbs: a kev result carries the catalog's columns and one set of
 	// weakness ids; a cwe result the entries of the class; a product selection
 	// is one result whatever the number of queries.
-	out, stderr, status = runCase(t, e, "-json", "kev", "CVE-2099-0001")
-	if status != 0 || stderr != "" {
-		t.Fatalf("status = %d, stderr = %q, want 0 and empty", status, stderr)
-	}
-	var kevRes result
-	if err := json.Unmarshal([]byte(out), &kevRes); err != nil {
-		t.Fatalf("decode %q: %v", out, err)
-	}
-	if kevRes.Kind != "kev" || kevRes.Name != "CVE-2099-0001" || kevRes.Label != "Alpha Flaw" {
-		t.Fatalf("kev result = %+v, want CVE-2099-0001 Alpha Flaw", kevRes)
-	}
-	if kevRes.Added != "2099-01-01" || !kevRes.Ransomware || kevRes.Vendor != "Avendor" || kevRes.Product != "Alpha" {
-		t.Fatalf("kev columns = %q/%v/%q/%q, want 2099-01-01/true/Avendor/Alpha",
-			kevRes.Added, kevRes.Ransomware, kevRes.Vendor, kevRes.Product)
-	}
-	wantCWEs := []node{{ID: 0, Name: "CWE-20"}, {ID: 1, Name: "CWE-502"}}
-	if len(kevRes.Sets) != 1 || kevRes.Sets[0].Dir != "out" || kevRes.Sets[0].Name != "weaknesses" {
-		t.Fatalf("kev sets = %+v, want one out weaknesses set", kevRes.Sets)
-	}
-	if got := kevRes.Sets[0].Nodes; len(got) != len(wantCWEs) {
-		t.Fatalf("kev weaknesses = %+v, want %+v", got, wantCWEs)
-	} else {
-		for i, want := range wantCWEs {
-			if got[i] != want {
-				t.Errorf("weaknesses[%d] = %+v, want %+v", i, got[i], want)
+	t.Run("kev entry", func(t *testing.T) {
+		out, stderr, status := runCase(t, e, "-json", "kev", "CVE-2099-0001")
+		if status != 0 || stderr != "" {
+			t.Fatalf("status = %d, stderr = %q, want 0 and empty", status, stderr)
+		}
+		var kevRes result
+		if err := json.Unmarshal([]byte(out), &kevRes); err != nil {
+			t.Fatalf("decode %q: %v", out, err)
+		}
+		if kevRes.Kind != "kev" || kevRes.Name != "CVE-2099-0001" || kevRes.Label != "Alpha Flaw" {
+			t.Fatalf("kev result = %+v, want CVE-2099-0001 Alpha Flaw", kevRes)
+		}
+		if kevRes.Added != "2099-01-01" || !kevRes.Ransomware || kevRes.Vendor != "Avendor" || kevRes.Product != "Alpha" {
+			t.Fatalf("kev columns = %q/%v/%q/%q, want 2099-01-01/true/Avendor/Alpha",
+				kevRes.Added, kevRes.Ransomware, kevRes.Vendor, kevRes.Product)
+		}
+		wantCWEs := []node{{ID: 0, Name: "CWE-20"}, {ID: 1, Name: "CWE-502"}}
+		if len(kevRes.Sets) != 1 || kevRes.Sets[0].Dir != "out" || kevRes.Sets[0].Name != "weaknesses" {
+			t.Fatalf("kev sets = %+v, want one out weaknesses set", kevRes.Sets)
+		}
+		if got := kevRes.Sets[0].Nodes; len(got) != len(wantCWEs) {
+			t.Fatalf("kev weaknesses = %+v, want %+v", got, wantCWEs)
+		} else {
+			for i, want := range wantCWEs {
+				if got[i] != want {
+					t.Errorf("weaknesses[%d] = %+v, want %+v", i, got[i], want)
+				}
 			}
 		}
-	}
+	})
 
-	// A false ransomware flag is absent from the JSON: the column is only
-	// meaningful when set, like revoked.
-	out, _, status = runCase(t, e, "-json", "kev", "CVE-2099-0003")
-	if status != 0 {
-		t.Fatalf("status = %d, want 0", status)
-	}
-	if !strings.Contains(out, `"name":"CVE-2099-0003"`) || strings.Contains(out, "ransomware") {
-		t.Errorf("kev CVE-2099-0003 = %s, want the ransomware field absent", out)
-	}
+	t.Run("false ransomware flag is omitted", func(t *testing.T) {
+		// A false ransomware flag is absent from the JSON: the column is only
+		// meaningful when set, like revoked.
+		out, _, status := runCase(t, e, "-json", "kev", "CVE-2099-0003")
+		if status != 0 {
+			t.Fatalf("status = %d, want 0", status)
+		}
+		if !strings.Contains(out, `"name":"CVE-2099-0003"`) || strings.Contains(out, "ransomware") {
+			t.Errorf("kev CVE-2099-0003 = %s, want the ransomware field absent", out)
+		}
+	})
 
-	out, _, status = runCase(t, e, "-json", "cwe", "CWE-502")
-	if status != 0 {
-		t.Fatalf("status = %d, want 0", status)
-	}
-	var cweRes result
-	if err := json.Unmarshal([]byte(out), &cweRes); err != nil {
-		t.Fatalf("decode %q: %v", out, err)
-	}
-	if cweRes.Kind != "cwe" || cweRes.Name != "CWE-502" || cweRes.Label != "" || cweRes.Added != "" {
-		t.Fatalf("cwe result = %+v, want CWE-502 with no label or columns", cweRes)
-	}
-	if len(cweRes.Sets) != 1 || cweRes.Sets[0].Dir != "in" || cweRes.Sets[0].Name != "entries" || cweRes.Sets[0].Count != 2 {
-		t.Fatalf("cwe sets = %+v, want in entries 2", cweRes.Sets)
-	}
+	t.Run("cwe entries", func(t *testing.T) {
+		out, _, status := runCase(t, e, "-json", "cwe", "CWE-502")
+		if status != 0 {
+			t.Fatalf("status = %d, want 0", status)
+		}
+		var cweRes result
+		if err := json.Unmarshal([]byte(out), &cweRes); err != nil {
+			t.Fatalf("decode %q: %v", out, err)
+		}
+		if cweRes.Kind != "cwe" || cweRes.Name != "CWE-502" || cweRes.Label != "" || cweRes.Added != "" {
+			t.Fatalf("cwe result = %+v, want CWE-502 with no label or columns", cweRes)
+		}
+		if len(cweRes.Sets) != 1 || cweRes.Sets[0].Dir != "in" || cweRes.Sets[0].Name != "entries" || cweRes.Sets[0].Count != 2 {
+			t.Fatalf("cwe sets = %+v, want in entries 2", cweRes.Sets)
+		}
+	})
 
-	out, _, status = runCase(t, e, "-json", "product", "Avendor/Alpha", "Bvendor/Beta")
-	if status != 0 {
-		t.Fatalf("status = %d, want 0", status)
-	}
-	if lines := strings.Count(out, "\n"); lines != 1 {
-		t.Fatalf("product of two queries = %d lines, want one result", lines)
-	}
-	var prodRes result
-	if err := json.Unmarshal([]byte(out), &prodRes); err != nil {
-		t.Fatalf("decode %q: %v", out, err)
-	}
-	if prodRes.Kind != "product" || prodRes.Name != "Avendor/Alpha Bvendor/Beta" {
-		t.Fatalf("product result = %+v, want both resolved keys in name", prodRes)
-	}
-	if len(prodRes.Sets) != 1 || prodRes.Sets[0].Dir != "out" || prodRes.Sets[0].Name != "entries" || prodRes.Sets[0].Count != 3 {
-		t.Fatalf("product sets = %+v, want out entries 3", prodRes.Sets)
-	}
+	t.Run("product selection", func(t *testing.T) {
+		out, _, status := runCase(t, e, "-json", "product", "Avendor/Alpha", "Bvendor/Beta")
+		if status != 0 {
+			t.Fatalf("status = %d, want 0", status)
+		}
+		if lines := strings.Count(out, "\n"); lines != 1 {
+			t.Fatalf("product of two queries = %d lines, want one result", lines)
+		}
+		var prodRes result
+		if err := json.Unmarshal([]byte(out), &prodRes); err != nil {
+			t.Fatalf("decode %q: %v", out, err)
+		}
+		if prodRes.Kind != "product" || prodRes.Name != "Avendor/Alpha Bvendor/Beta" {
+			t.Fatalf("product result = %+v, want both resolved keys in name", prodRes)
+		}
+		if len(prodRes.Sets) != 1 || prodRes.Sets[0].Dir != "out" || prodRes.Sets[0].Name != "entries" || prodRes.Sets[0].Count != 3 {
+			t.Fatalf("product sets = %+v, want out entries 3", prodRes.Sets)
+		}
+	})
 
 	// The overlay verbs: coverage carries the deployment and the three states,
 	// gain the candidate ranking with its counts, contain the observed count.
-	out, stderr, status = runCase(t, e, "-json", "coverage", "ContentQuarantine")
-	if status != 0 || stderr != "" {
-		t.Fatalf("status = %d, stderr = %q, want 0 and empty", status, stderr)
-	}
-	if !strings.Contains(out, `"deployed":1`) || !strings.Contains(out, `"mapped":1`) {
-		t.Errorf("coverage JSON must carry the deployment and the mapped count: %s", out)
-	}
-	for _, want := range []string{`"name":"defended"`, `"name":"undefended"`, `"name":"unmapped"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("coverage JSON lacks %s: %s", want, out)
+	t.Run("coverage states", func(t *testing.T) {
+		out, stderr, status := runCase(t, e, "-json", "coverage", "ContentQuarantine")
+		if status != 0 || stderr != "" {
+			t.Fatalf("status = %d, stderr = %q, want 0 and empty", status, stderr)
 		}
-	}
-	var cov result
-	if err := json.Unmarshal([]byte(out), &cov); err != nil {
-		t.Fatalf("decode %q: %v", out, err)
-	}
-	if cov.Deployed == nil || *cov.Deployed != 1 || cov.Mapped == nil || *cov.Mapped != 1 ||
-		cov.Retired == nil || *cov.Retired != 1 {
-		t.Fatalf("coverage counts = %v/%v/%v, want 1/1/1", cov.Deployed, cov.Mapped, cov.Retired)
-	}
-	if len(cov.Sets) != 4 || cov.Sets[0].Dir != "in" || cov.Sets[0].Count != 1 ||
-		cov.Sets[1].Count != 0 || cov.Sets[2].Count != 1 || cov.Sets[3].Count != 3 {
-		t.Fatalf("coverage sets = %+v, want in defended 1, undefended 0, retired 1, unmapped 3", cov.Sets)
-	}
-	if cov.Sets[2].Name != "retired" || cov.Sets[2].Nodes[0].Name != "T1015" {
-		t.Fatalf("the retired set must be the flagged technique: %+v", cov.Sets[2])
-	}
+		if !strings.Contains(out, `"deployed":1`) || !strings.Contains(out, `"mapped":1`) {
+			t.Errorf("coverage JSON must carry the deployment and the mapped count: %s", out)
+		}
+		for _, want := range []string{`"name":"defended"`, `"name":"undefended"`, `"name":"unmapped"`} {
+			if !strings.Contains(out, want) {
+				t.Errorf("coverage JSON lacks %s: %s", want, out)
+			}
+		}
+		var cov result
+		if err := json.Unmarshal([]byte(out), &cov); err != nil {
+			t.Fatalf("decode %q: %v", out, err)
+		}
+		if cov.Deployed == nil || *cov.Deployed != 1 || cov.Mapped == nil || *cov.Mapped != 1 ||
+			cov.Retired == nil || *cov.Retired != 1 {
+			t.Fatalf("coverage counts = %v/%v/%v, want 1/1/1", cov.Deployed, cov.Mapped, cov.Retired)
+		}
+		if len(cov.Sets) != 4 || cov.Sets[0].Dir != "in" || cov.Sets[0].Count != 1 ||
+			cov.Sets[1].Count != 0 || cov.Sets[2].Count != 1 || cov.Sets[3].Count != 3 {
+			t.Fatalf("coverage sets = %+v, want in defended 1, undefended 0, retired 1, unmapped 3", cov.Sets)
+		}
+		if cov.Sets[2].Name != "retired" || cov.Sets[2].Nodes[0].Name != "T1015" {
+			t.Fatalf("the retired set must be the flagged technique: %+v", cov.Sets[2])
+		}
+	})
 
-	out, stderr, status = runCase(t, e, "-json", "gain", "-all")
-	if status != 0 || stderr != "" {
-		t.Fatalf("status = %d, stderr = %q, want 0 and empty", status, stderr)
-	}
-	if !strings.Contains(out, `"candidates":2`) || !strings.Contains(out, `"gain":1`) {
-		t.Errorf("gain JSON must carry the candidate count and the gains: %s", out)
-	}
-	var gn result
-	if err := json.Unmarshal([]byte(out), &gn); err != nil {
-		t.Fatalf("decode %q: %v", out, err)
-	}
-	if gn.Candidates == nil || *gn.Candidates != 2 || len(gn.Gains) != 2 {
-		t.Fatalf("gain counts = %v gains %+v, want 2 candidates", gn.Candidates, gn.Gains)
-	}
-	if gn.Gains[0].Name != "ContentQuarantine" || gn.Gains[0].Gain != 1 || gn.Gains[0].Label != "Content Quarantine" {
-		t.Fatalf("gain[0] = %+v, want ContentQuarantine 1", gn.Gains[0])
-	}
-	if gn.Sets != nil || gn.ID != nil {
-		t.Errorf("gain carries sets %+v / id %v, want neither", gn.Sets, gn.ID)
-	}
+	t.Run("gain ranking", func(t *testing.T) {
+		out, stderr, status := runCase(t, e, "-json", "gain", "-all")
+		if status != 0 || stderr != "" {
+			t.Fatalf("status = %d, stderr = %q, want 0 and empty", status, stderr)
+		}
+		if !strings.Contains(out, `"candidates":2`) || !strings.Contains(out, `"gain":1`) {
+			t.Errorf("gain JSON must carry the candidate count and the gains: %s", out)
+		}
+		var gn result
+		if err := json.Unmarshal([]byte(out), &gn); err != nil {
+			t.Fatalf("decode %q: %v", out, err)
+		}
+		if gn.Candidates == nil || *gn.Candidates != 2 || len(gn.Gains) != 2 {
+			t.Fatalf("gain counts = %v gains %+v, want 2 candidates", gn.Candidates, gn.Gains)
+		}
+		if gn.Gains[0].Name != "ContentQuarantine" || gn.Gains[0].Gain != 1 || gn.Gains[0].Label != "Content Quarantine" {
+			t.Fatalf("gain[0] = %+v, want ContentQuarantine 1", gn.Gains[0])
+		}
+		if gn.Sets != nil || gn.ID != nil {
+			t.Errorf("gain carries sets %+v / id %v, want neither", gn.Sets, gn.ID)
+		}
+	})
 
-	out, stderr, status = runCase(t, e, "-json", "contain", "T1003.001")
-	if status != 0 || stderr != "" {
-		t.Fatalf("status = %d, stderr = %q, want 0 and empty", status, stderr)
-	}
-	if !strings.Contains(out, `"observed":1`) {
-		t.Errorf("contain JSON must carry the observed count: %s", out)
-	}
-	var ct result
-	if err := json.Unmarshal([]byte(out), &ct); err != nil {
-		t.Fatalf("decode %q: %v", out, err)
-	}
-	if ct.Observed == nil || *ct.Observed != 1 {
-		t.Fatalf("contain observed = %v, want 1", ct.Observed)
-	}
-	if len(ct.Sets) != 1 || ct.Sets[0].Dir != "out" || ct.Sets[0].Name != "countermeasures" || ct.Sets[0].Count != 2 {
-		t.Fatalf("contain sets = %+v, want out countermeasures 2", ct.Sets)
-	}
+	t.Run("contain count", func(t *testing.T) {
+		out, stderr, status := runCase(t, e, "-json", "contain", "T1003.001")
+		if status != 0 || stderr != "" {
+			t.Fatalf("status = %d, stderr = %q, want 0 and empty", status, stderr)
+		}
+		if !strings.Contains(out, `"observed":1`) {
+			t.Errorf("contain JSON must carry the observed count: %s", out)
+		}
+		var ct result
+		if err := json.Unmarshal([]byte(out), &ct); err != nil {
+			t.Fatalf("decode %q: %v", out, err)
+		}
+		if ct.Observed == nil || *ct.Observed != 1 {
+			t.Fatalf("contain observed = %v, want 1", ct.Observed)
+		}
+		if len(ct.Sets) != 1 || ct.Sets[0].Dir != "out" || ct.Sets[0].Name != "countermeasures" || ct.Sets[0].Count != 2 {
+			t.Fatalf("contain sets = %+v, want out countermeasures 2", ct.Sets)
+		}
+	})
 }
 
 // TestOntologyValues runs the pinned numbers of the committed tables through the
@@ -1021,12 +1048,16 @@ func TestOntologyValues(t *testing.T) {
 		})
 	}
 
-	// The plane walk is an end-to-end check of the tables: the offensive union
-	// plane equals the distinct (technique, artifact) pairs of the edge lists,
-	// the defensive one the defensive edge count, both recomputed here.
+	// The plane walk is an end-to-end check of the tables: each union plane
+	// prints the distinct pairs of its edge lists, both recomputed here from
+	// the raw index columns rather than from the printed count.
 	distinct := make(map[[2]uint16]struct{}, len(ontology.OffEdgeTTP))
 	for i := range ontology.OffEdgeTTP {
 		distinct[[2]uint16{ontology.OffEdgeTTP[i], ontology.OffEdgeArt[i]}] = struct{}{}
+	}
+	distinctDef := make(map[[2]uint16]struct{}, len(ontology.DefEdgeCM))
+	for i := range ontology.DefEdgeCM {
+		distinctDef[[2]uint16{ontology.DefEdgeCM[i], ontology.DefEdgeArt[i]}] = struct{}{}
 	}
 	planes := []struct {
 		name string
@@ -1038,7 +1069,7 @@ func TestOntologyValues(t *testing.T) {
 			[]string{"rel", "any"},
 			fmt.Sprintf("rel any offensive union plane 0/41 (technique -> artifact): edges=%d sources=427\n"+
 				"rel any defensive union plane 0/38 (countermeasure -> artifact): edges=%d sources=157\n",
-				len(distinct), len(ontology.DefEdgeCM)),
+				len(distinct), len(distinctDef)),
 		},
 		{
 			"offensive plane",
@@ -1062,6 +1093,13 @@ func TestOntologyValues(t *testing.T) {
 	}
 	if want := 182; len(ontology.DefEdgeCM) != want {
 		t.Fatalf("defensive edges = %d, want %d", len(ontology.DefEdgeCM), want)
+	}
+	// The defensive expectation above counts distinct pairs, so a repeated
+	// (countermeasure, artifact) pair in the tables would make the raw column
+	// stop being a valid proxy for the printed count: pin the equality here.
+	if len(distinctDef) != len(ontology.DefEdgeCM) {
+		t.Fatalf("distinct defensive pairs = %d, raw defensive edges = %d; the plane prints the distinct pairs",
+			len(distinctDef), len(ontology.DefEdgeCM))
 	}
 	for _, tt := range planes {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1595,6 +1633,11 @@ func TestErrors(t *testing.T) {
 		{"tactic without a query", []string{"tactic"}, "gr4ph: missing query\n", 2, "", false},
 		{"platform without a query", []string{"platform"}, "gr4ph: missing query\n", 2, "", false},
 		{"contain without a query", []string{"contain"}, "gr4ph: missing query\n", 2, "", false},
+		{"kev without a query", []string{"kev"}, "gr4ph: missing query\n", 2, "", false},
+		{"cwe without a query", []string{"cwe"}, "gr4ph: missing query\n", 2, "", false},
+		{"product without a query", []string{"product"}, "gr4ph: missing query\n", 2, "", false},
+		{"lone dash is a query", []string{"ttp", "-"}, "gr4ph: no such technique: -\n", 1, "", false},
+		{"empty flag name", []string{"ttp", "-=x"}, "gr4ph: bad flag syntax: -=x\n", 2, "", true},
 		{"undefined flag", []string{"ttp", "-nope", "X"}, "gr4ph: flag provided but not defined: -nope\n", 2, "", true},
 		{"undefined flag in artifact", []string{"artifact", "-nope", "X"}, "gr4ph: flag provided but not defined: -nope\n", 2, "", true},
 		{"undefined flag in cm", []string{"cm", "-nope", "X"}, "gr4ph: flag provided but not defined: -nope\n", 2, "", true},
