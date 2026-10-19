@@ -32,15 +32,15 @@ type readmeCase struct {
 // TestReadmeBlocks replays every documented command and compares its merged
 // stderr+stdout with the block, line for line. A block that is not complete
 // output, a command that no longer resolves and a table that moved all fail
-// here, which is what keeps the 20 blocks from drifting again.
+// here, which is what keeps the 17 replayed commands from drifting again.
 func TestReadmeBlocks(t *testing.T) {
 	e, err := readmeEngine()
 	if err != nil {
 		t.Fatalf("build engine: %v", err)
 	}
 	cases := readmeBlocks(t)
-	if len(cases) < 20 {
-		t.Fatalf("README.md replays %d commands, want at least 20", len(cases))
+	if len(cases) < 17 {
+		t.Fatalf("README.md replays %d commands, want at least 17", len(cases))
 	}
 	t.Logf("%d commands replayed", len(cases))
 	for _, c := range cases {

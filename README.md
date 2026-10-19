@@ -369,19 +369,8 @@ and whether it is linked to a ransomware campaign — plus the weakness classes 
 the entries of one class, and `product` the union of the entries filed under any of the products a
 selection names. The two families are the `kevCWE`/`cweKEV` matrix and the `kevProduct`/`productKEV`
 one, which holds exactly one edge per entry; the CVE id is the only key, because vulnerability titles
-repeat across entries, so a title never resolves.
-
-```sh
-$ ./gr4ph kev CVE-2021-44228
-kev CVE-2021-44228 "Apache Log4j2 Remote Code Execution Vulnerability" added=2021-12-10 ransomware=true vendor="Apache" product="Log4j2"
-  out weaknesses (3): CWE-20, CWE-400, CWE-502
-$ ./gr4ph cwe CWE-78
-cwe CWE-78
-  in  entries (111): CVE-2014-6271 "GNU Bourne-Again Shell (Bash) Arbitrary Code Execution Vulnerability", CVE-2014-6278 "GNU Bash OS Command Injection Vulnerability", CVE-2014-7169 "GNU Bourne-Again Shell (Bash) Arbitrary Code Execution Vulnerability", CVE-2016-11021 "D-Link DCS-930L Devices OS Command Injection Vulnerability", CVE-2017-18368 "Zyxel P660HN-T1A Routers Command Injection Vulnerability", CVE-2017-3506 "Oracle WebLogic Server OS Command Injection Vulnerability", CVE-2017-6077 "NETGEAR DGN2200 Remote Code Execution Vulnerability", CVE-2017-6334 "NETGEAR DGN2200 Devices OS Command Injection Vulnerability", CVE-2017-6884 "Zyxel EMG2926 Routers Command Injection Vulnerability", CVE-2018-10562 "Dasan GPON Routers Command Injection Vulnerability", CVE-2018-11138 "Quest KACE System Management Appliance Remote Command Execution Vulnerability", CVE-2018-14558 "Tenda AC7, AC9, and AC10 Routers Command Injection Vulnerability", CVE-2018-14839 "LG N1A1 NAS Remote Command Execution Vulnerability", CVE-2018-14933 "NUUO NVRmini Devices OS Command Injection Vulnerability", CVE-2018-19949 "QNAP NAS File Station Command Injection Vulnerability", CVE-2018-6530 "D-Link Multiple Routers OS Command Injection Vulnerability", CVE-2018-6961 "VMware SD-WAN Edge by VeloCloud Command Injection Vulnerability", CVE-2018-9276 "Paessler PRTG Network Monitor OS Command Injection Vulnerability", CVE-2019-10149 "Exim Mail Transfer Agent (MTA) Improper Input Validation", CVE-2019-11001 "Reolink Multiple IP Cameras OS Command Injection Vulnerability", CVE-2019-11539 "Ivanti Pulse Connect Secure and Policy Secure Command Injection Vulnerability", CVE-2019-12991 "Citrix SD-WAN and NetScaler Command Injection Vulnerability", CVE-2019-15107 "Webmin Command Injection Vulnerability", CVE-2019-15949 "Nagios XI Remote Code Execution Vulnerability", CVE-2019-16057 "D-Link DNS-320 Remote Code Execution Vulnerability", CVE-2019-16920 "D-Link Multiple Routers Command Injection Vulnerability", CVE-2019-17621 "D-Link DIR-859 Router Command Execution Vulnerability", CVE-2019-19356 "Netis WF2419 Devices Remote Code Execution Vulnerability", CVE-2019-20500 "D-Link DWL-2600AP Access Point Command Injection Vulnerability", CVE-2019-7256 "Nice Linear eMerge E3-Series OS Command Injection Vulnerability", CVE-2020-10221 "rConfig OS Command Injection Vulnerability", CVE-2020-10987 "Tenda AC1900 Router AC15 Model Remote Code Execution Vulnerability", CVE-2020-11978 "Apache Airflow Command Injection", CVE-2020-12641 "Roundcube Webmail Remote Code Execution Vulnerability", CVE-2020-15415 "DrayTek Multiple Vigor Routers OS Command Injection Vulnerability", CVE-2020-16846 "SaltStack Salt Shell Injection Vulnerability", CVE-2020-1956 "Apache Kylin OS Command Injection Vulnerability", CVE-2020-2509 "QNAP Network-Attached Storage (NAS) Command Injection Vulnerability", CVE-2020-25223 "Sophos SG UTM Remote Code Execution Vulnerability", CVE-2020-25506 "D-Link DNS-320 Device Command Injection Vulnerability", CVE-2020-4006 "Multiple VMware Products Command Injection Vulnerability", CVE-2020-4428 "IBM Data Risk Manager Remote Code Execution Vulnerability", CVE-2020-7247 "OpenSMTPD Remote Code Execution Vulnerability", CVE-2020-8515 "Multiple DrayTek Vigor Routers Web Management Page Vulnerability", CVE-2020-8816 "Pi-Hole AdminLTE Remote Code Execution Vulnerability", CVE-2020-9054 "Zyxel Multiple NAS Devices OS Command Injection Vulnerability", CVE-2020-9377 "D-Link DIR-610 Devices Remote Command Execution", CVE-2021-1497 "Cisco HyperFlex HX Installer Virtual Machine Command Injection Vulnerability", CVE-2021-1498 "Cisco HyperFlex HX Data Platform Command Injection Vulnerability", CVE-2021-20035 "SonicWall SMA100 Appliances OS Command Injection Vulnerability", CVE-2021-21315 "System Information Library for Node.JS Command Injection", CVE-2021-22502 "Micro Focus Operation Bridge Report (OBR) Remote Code Execution Vulnerability", CVE-2021-25296 "Nagios XI OS Command Injection", CVE-2021-25297 "Nagios XI OS Command Injection", CVE-2021-25298 "Nagios XI OS Command Injection", CVE-2021-27102 "Accellion FTA OS Command Injection Vulnerability", CVE-2021-27104 "Accellion FTA OS Command Injection Vulnerability", CVE-2021-27561 "Yealink Device Management Server-Side Request Forgery (SSRF) Vulnerability", CVE-2021-35394 "Realtek Jungle SDK Remote Code Execution Vulnerability", CVE-2021-36260 "Hikvision Improper Input Validation", CVE-2021-36380 "Sunhillo SureLine OS Command Injection Vulnerablity", CVE-2021-40407 "Reolink RLC-410W IP Camera OS Command Injection Vulnerability", CVE-2021-45382 "D-Link Multiple Routers Remote Code Execution Vulnerability", CVE-2022-26258 "D-Link DIR-820L Remote Code Execution Vulnerability", CVE-2022-28810 "Zoho ManageEngine ADSelfService Plus Remote Code Execution Vulnerability", CVE-2022-29303 "SolarView Compact Command Injection Vulnerability", CVE-2022-30525 "Zyxel Multiple Firewalls OS Command Injection Vulnerability", CVE-2022-33891 "Apache Spark Command Injection Vulnerability", CVE-2022-36804 "Atlassian Bitbucket Server and Data Center Command Injection Vulnerability", CVE-2022-44877 "CWP Control Web Panel OS Command Injection Vulnerability", CVE-2023-20273 "Cisco IOS XE Web UI Command Injection Vulnerability", CVE-2023-25280 "D-Link DIR-820 Router OS Command Injection Vulnerability", CVE-2023-27992 "Zyxel Multiple NAS Devices Command Injection Vulnerability", CVE-2023-28771 "Zyxel Multiple Firewalls OS Command Injection Vulnerability", CVE-2023-39780 "ASUS RT-AX55 Routers OS Command Injection Vulnerability", CVE-2023-44221 "SonicWall SMA100 Appliances OS Command Injection Vulnerability", CVE-2023-47565 "QNAP VioStor NVR OS Command Injection Vulnerability", CVE-2023-49897 "FXC AE1021, AE1021PE OS Command Injection Vulnerability", CVE-2024-11120 "GeoVision Devices OS Command Injection Vulnerability", CVE-2024-1212 "Progress Kemp LoadMaster OS Command Injection Vulnerability", CVE-2024-12686 "BeyondTrust Privileged Remote Access (PRA) and Remote Support (RS) OS Command Injection Vulnerability", CVE-2024-12987 "DrayTek Vigor Routers OS Command Injection Vulnerability", CVE-2024-20399 "Cisco NX-OS Command Injection Vulnerability", CVE-2024-40890 "Zyxel DSL CPE OS Command Injection Vulnerability", CVE-2024-40891 "Zyxel DSL CPE OS Command Injection Vulnerability", CVE-2024-4577 "PHP-CGI OS Command Injection Vulnerability", CVE-2024-50603 "Aviatrix Controllers OS Command Injection Vulnerability", CVE-2024-6047 "GeoVision Devices OS Command Injection Vulnerability", CVE-2024-8190 "Ivanti Cloud Services Appliance OS Command Injection Vulnerability", CVE-2024-8957 "PTZOptics PT30X-SDI/NDI Cameras OS Command Injection Vulnerability", CVE-2024-9463 "Palo Alto Networks Expedition OS Command Injection Vulnerability", CVE-2025-11953 "React Native Community CLI OS Command Injection Vulnerability", CVE-2025-1316 "Edimax IC-7100 IP Camera OS Command Injection Vulnerability", CVE-2025-48703 "CWP Control Web Panel OS Command Injection Vulnerability", CVE-2025-54948 "Trend Micro Apex One OS Command Injection Vulnerability", CVE-2025-58034 "Fortinet FortiWeb OS Command Injection Vulnerability", CVE-2025-64328 "Sangoma FreePBX OS Command Injection Vulnerability", CVE-2025-66644 "Array Networks ArrayOS AG OS Command Injection Vulnerability", CVE-2025-67038 "Lantronix EDS5000 Code Injection Vulnerability", CVE-2025-9377 "TP-Link Archer C7(EU) and TL-WR841N/ND(MS) OS Command Injection Vulnerability", CVE-2026-105134 "Ahsay AhsayCBS Command Injection Vulnerability", CVE-2026-10520 "Ivanti Sentry OS Command Injection Vulnerability", CVE-2026-16812 "Arista VeloCloud Orchestrator On-Prem OS Command Injection Vulnerability", CVE-2026-1731 "BeyondTrust Remote Support (RS) and Privileged Remote Access (PRA) OS Command Injection Vulnerability", CVE-2026-25089 "Fortinet FortiSandbox OS Command Injection Vulnerability", CVE-2026-25108 "Soliton Systems K.K FileZen OS Command Injection Vulnerability", CVE-2026-39808 "Fortinet FortiSandbox OS Command Injection Vulnerability", CVE-2026-42271 "BerriAI LiteLLM Command Injection Vulnerability", CVE-2026-49869 "Kestra OSS OS Command Injection Vulnerability", CVE-2026-73570 "Zimbra Collaboration Suite (ZCS) OS Command Injection Vulnerability", CVE-2026-83549 "SonicWall SMA1000 Appliances OS Command Injection Vulnerability"
-$ ./gr4ph product Apache/Log4j2
-product Apache/Log4j2
-  out entries (2): CVE-2021-44228 "Apache Log4j2 Remote Code Execution Vulnerability", CVE-2021-45046 "Apache Log4j2 Deserialization of Untrusted Data Vulnerability"
-```
+repeat across entries, so a title never resolves. The three verbs and their flags are listed in the command
+table above and in `gr4ph help`.
 
 ## Data model
 
@@ -417,38 +406,43 @@ one more row: `ttpRevokedRow`, the 19-word live mask of the cold `ttpRevoked` co
 | `kevProduct` | `[nKEV][wProduct]` | KEV entry → product (about) |
 | `productKEV` | `[nProduct][wKEV]` | product → KEV entry (transpose) |
 
-Rows are exact-length (no padding), LSB-first within each `uint64`. For the pinned dataset
-(1186 techniques, 247 artifacts, 157 countermeasures, 123 data components, 1212 groups, 1748 KEV
-entries, 189 weaknesses, 726 products, 41 tactics, 15 platforms, 41 + 38 predicates):
+Rows are exact-length (no padding), LSB-first within each `uint64`. The sizes below are written in terms
+of the generated constants (`ontology.NTTP`, `NArtifact`, `NCountermeasure`, `NDataComponent`, `NGroup`,
+`NKEV`, `NCWE`, `NProduct`, `NTactic`, `NPlatform`, `NRel`, `NDefRel`), with `nX` the count of partition X
+and `wX` its row stride, `ceil(nX/64)`, so every row holds for any pinned release; `nRel`/`nDefRel` are the
+plane counts (`NRel+1`, `NDefRel+1`), because plane 0 of each family is the union. The grouping partition has
+no `Kind`, so `wGrp = ceil(nGrp/64)` is the one stride `WordsPerRow` does not publish, and the attribute
+masks are one word (`wTactic = wPlatform = 1`). `GOEXPERIMENT=simd go doc -all ./ontology` prints the
+current values.
 
 | block | planes | words | bytes |
 |---|---|---|---|
-| `ttpArt` | 42 | 199,248 | 1,593,984 |
-| `artTTP` | 42 | 197,106 | 1,576,848 |
-| `cmArt` | 39 | 24,492 | 195,936 |
-| `artCM` | 39 | 28,899 | 231,192 |
-| `cmTTP` | 1 | 2,983 | 23,864 |
-| `ttpCM` | 1 | 3,558 | 28,464 |
-| **six-block subtotal** | | **456,286** | **3,650,288 (3.48 MiB)** |
-| `tacticTTP` | 1 | 779 | 6,232 |
-| `ttpTactic` | 1 | 1,186 | 9,488 |
-| `platformTTP` | 1 | 285 | 2,280 |
-| `ttpPlatform` | 1 | 1,186 | 9,488 |
-| `ttpFlags` | 1 | 1,186 | 9,488 |
-| `dcTTP` | 1 | 2,337 | 18,696 |
-| `ttpDC` | 1 | 2,372 | 18,976 |
-| `grpTTP` | 1 | 23,028 | 184,224 |
-| `ttpGrp` | 1 | 22,534 | 180,272 |
-| `grpSoftware` | 1 | 23,028 | 184,224 |
-| `softwareGrp` | 1 | 23,028 | 184,224 |
-| `kevCWE` | 1 | 5,244 | 41,952 |
-| `cweKEV` | 1 | 5,292 | 42,336 |
-| `kevProduct` | 1 | 20,976 | 167,808 |
-| `productKEV` | 1 | 20,328 | 162,624 |
-| **total** | | **609,075** | **4,872,600 (4.647 MiB)** |
+| `ttpArt` | 42 | `nTTP × wArt` | `words × 8` |
+| `artTTP` | 42 | `nArt × wTTP` | `words × 8` |
+| `cmArt` | 39 | `nCM × wArt` | `words × 8` |
+| `artCM` | 39 | `nArt × wCM` | `words × 8` |
+| `cmTTP` | 1 | `nCM × wTTP` | `words × 8` |
+| `ttpCM` | 1 | `nTTP × wCM` | `words × 8` |
+| **six-block subtotal** | | sum of the six blocks above | `words × 8` |
+| `tacticTTP` | 1 | `nTactic × wTTP` | `words × 8` |
+| `ttpTactic` | 1 | `nTTP × 1` | `words × 8` |
+| `platformTTP` | 1 | `nPlatform × wTTP` | `words × 8` |
+| `ttpPlatform` | 1 | `nTTP × 1` | `words × 8` |
+| `ttpFlags` | 1 | `nTTP` | `words × 8` |
+| `dcTTP` | 1 | `nDC × wTTP` | `words × 8` |
+| `ttpDC` | 1 | `nTTP × wDC` | `words × 8` |
+| `grpTTP` | 1 | `nGrp × wTTP` | `words × 8` |
+| `ttpGrp` | 1 | `nTTP × wGrp` | `words × 8` |
+| `grpSoftware` | 1 | `nGrp × wGrp` | `words × 8` |
+| `softwareGrp` | 1 | `nGrp × wGrp` | `words × 8` |
+| `kevCWE` | 1 | `nKEV × wCWE` | `words × 8` |
+| `cweKEV` | 1 | `nCWE × wKEV` | `words × 8` |
+| `kevProduct` | 1 | `nKEV × wProduct` | `words × 8` |
+| `productKEV` | 1 | `nProduct × wKEV` | `words × 8` |
+| **total** | | sum of every row above | `words × 8` |
 | hierarchy (`ttpParents` + `ttpChildCount`) | | | 4,744 |
 | revoked flag (`ttpRevoked`) | | | 1,186 |
-| revocation row (`ttpRevokedRow`) | | 19 | 152 |
+| revocation row (`ttpRevokedRow`) | | `WordsPerRow(TTP)` | `words × 8` |
 | grouping revocation flag (`GroupRevoked`) | | | 1,212 |
 | tactic vocabulary (`tacticIDs` + `tacticLabels` + `tacticIndex`) | | | cold |
 | platform vocabulary (`platformNames` + `platformIndex`) | | | cold |
@@ -458,34 +452,38 @@ entries, 189 weaknesses, 726 products, 41 tactics, 15 platforms, 41 + 38 predica
 | weakness vocabulary (`cweIDs` + `cweIndex`) | | | cold |
 | product vocabulary (`productVendors` + `productNames` + `productIndex`) | | | cold |
 
-Strides: `WordsPerRow(KindTTP)` = 19, `KindArtifact` = 4, `KindCountermeasure` = 3,
-`KindDataComponent` = 2, `KindKEV` = 28, `KindCWE` = 3, `KindProduct` = 12; the attribute masks are one
-word per technique (`wTactic` = `wPlatform` = 1).
-A single plane is 37,952 B technique-side and 37,544 B artifact-side, so a plane is L2-resident; the
-six existing blocks keep their address range, and the new arrays follow them, so the hot six are
-unchanged.
+Strides are `ceil(count/64)` over the partition a row addresses: `WordsPerRow(KindTTP)` =
+`ceil(nTTP/64)`, `KindArtifact` = `ceil(nArt/64)`, `KindCountermeasure` = `ceil(nCM/64)`,
+`KindDataComponent` = `ceil(nDC/64)`, `KindKEV` = `ceil(nKEV/64)`, `KindCWE` = `ceil(nCWE/64)`,
+`KindProduct` = `ceil(nProduct/64)`; the attribute masks are one word per technique (`wTactic` =
+`wPlatform` = 1).
+A single offensive plane is `nTTP × wArt` words technique-side and `nArt × wTTP` words artifact-side, so a
+plane is L2-resident; the six existing blocks keep their address range, and the new arrays follow them, so
+the hot six are unchanged.
 
 ### KEV and the product partition
 
-The vulnerability family is two joins over the same entries: **KEV → CWE** (1689 edges over 189
-weaknesses, reaching 1573 of the 1748 entries — 175 cataloged vulnerabilities carry no weakness class at
-all) and **KEV → product** (exactly one edge per entry, over 726 vendor products; the 736 raw product
-spellings of the feed collapse to those 726 keys). Both are stored in both directions, because both are
-asked: `cwe CWE-78` walks `cweKEV` (111 entries) while `kev CVE-2021-44228` walks `kevCWE` (3 classes),
-and `product Apache/Log4j2` walks `productKEV` (2 entries). An entry row is 3 words wide over the
-weakness vocabulary and 12 over the product one (`kevCWE`, `kevProduct`), while a vocabulary row is 28
-words wide over the entries (`cweKEV`, `productKEV`), so the four blocks cost 405 KiB. There is no
-roll-up variant of any of these queries: neither the weakness vocabulary nor the product vocabulary is
-hierarchical, so every one of them follows edges exactly.
+The vulnerability family is two joins over the same entries: **KEV → CWE**, a weakness edge per class an
+entry is filed under (`NKEVCWE` edges over `NCWE` weaknesses, reaching `NKEVWithCWE` of the `NKEV`
+entries — the rest carry no weakness class at all), and **KEV → product**, exactly one edge per entry
+over `NProduct` vendor products. The feed carries raw product spellings that differ only in surrounding
+whitespace or case; they collapse on trim + lower, and `NProduct` counts the collapsed keys, not the raw
+spellings. Both joins are stored in both directions, because both are asked: `cwe CWE-78` walks
+`cweKEV` while `kev CVE-2021-44228` walks `kevCWE`, and `product Apache/Log4j2` walks `productKEV`. An
+entry row is `ceil(NCWE/64)` words wide over the weakness vocabulary and `ceil(NProduct/64)` over the
+product one (`kevCWE`, `kevProduct`), while a vocabulary row is `ceil(NKEV/64)` words wide over the
+entries (`cweKEV`, `productKEV`). There is no roll-up variant of any of these queries: neither the
+weakness vocabulary nor the product vocabulary is hierarchical, so every one of them follows edges
+exactly.
 
 There is deliberately **no KEV ↔ ATT&CK `software` block**, because the two name different things: the
 catalog names the victim-side products that were exploited (`Microsoft Windows`, `Apache Log4j2`, `Cisco
-IOS`), while ATT&CK's 957 malware and tool nodes name attacker tooling (`Mimikatz`, `Cobalt Strike`). The
-measurement over the pinned sources: normalizing the 957 software node names and their aliases (1252
-distinct keys) and comparing them with the 726 product names matches 3 — `Spark` (S0543), `Cobalt
-Strike` (S0154) and `ScreenConnect`, an alias of the `ConnectWise` node S0591 — which is 0.4%, and a
-token-set comparison that ignores word order matches the same 3. A join on that overlap would be a
-three-row lookup table that is wrong for the other 723 products, so `kev` prints the catalog's own
+IOS`), while ATT&CK's malware and tool nodes name attacker tooling (`Mimikatz`, `Cobalt Strike`). The
+measurement over the pinned sources: normalizing the software node names and their aliases and comparing
+them with the product names matches a handful — `Spark` (S0543), `Cobalt Strike` (S0154) and
+`ScreenConnect`, an alias of the `ConnectWise` node S0591 — which is a fraction of a percent of
+`NProduct`, and a token-set comparison that ignores word order matches the same names. A join on that
+overlap would be a lookup table that is wrong for nearly every product, so `kev` prints the catalog's own
 vendor and product strings and nothing maps them onto the ATT&CK software partition.
 
 ## API
@@ -657,11 +655,11 @@ touches the network. Sources are pinned by version:
 
 | source | value |
 |---|---|
-| ATT&CK enterprise | `enterprise-attack-19.2.json` |
-| ATT&CK ICS | `ics-attack-19.2.json` |
-| ATT&CK mobile | `mobile-attack-19.2.json` |
-| D3FEND | `d3fend-full-mappings.csv@1.6.0` |
-| CISA KEV | `known_exploited_vulnerabilities.json@2026.10.16` |
+| ATT&CK enterprise | `ontology.SourceEnterprise` |
+| ATT&CK ICS | `ontology.SourceICS` |
+| ATT&CK mobile | `ontology.SourceMobile` |
+| D3FEND | `ontology.SourceD3FEND` |
+| CISA KEV | `ontology.SourceKEV` |
 
 ```sh
 make gen        # go run ./cmd/d3fendgen -out ontology/attack_gen.go   (network once)
@@ -674,49 +672,38 @@ a stock toolchain; `-enterprise`/`-ics`/`-mobile`/`-d3fend` and `-kev` accept lo
 rerun, and the output is byte-identical either way. Both write the table through
 `internal/atomicfile`: a temporary file in the destination directory, renamed over the target, so an
 interrupted `make gen` (or a full disk) cannot leave a truncated table, and a `format.Source` failure
-writes nothing at all. `cmd/kevgen` re-pins its own source the same way. The generated shape is asserted, not assumed, and a
-run reports exactly what it measured (this is the two generators' stdout on the pinned sources, byte for
-byte, in the order `make gen` runs them):
+writes nothing at all. `cmd/kevgen` re-pins its own source the same way. The generated shape is asserted, not
+assumed, and a run reports exactly what it measured: `cmd/d3fendgen` prints one line per partition it built
+(`ttps`, `artifacts`, `countermeasures`, `relations`, `edges`, `hierarchy`, `revoked`, `tactics`, `data
+components`, `groups`) with the counts it measured, and `cmd/kevgen` prints `catalog`, `entries`,
+`weaknesses` and `products`. The values are whatever the pinned sources measure; `make gen` prints them,
+and `GOEXPERIMENT=simd go doc -all ./ontology` prints the counts the committed tables carry.
 
-```
-d3fendgen: wrote ontology/attack_gen.go
-  ttps           1186 (858 enterprise, 176 mobile, 106 ics, 46 sparta)
-  artifacts      247
-  countermeasures 157
-  relations      41 offensive, 38 defensive
-  edges          670 offensive, 182 defensive, 4133 defends-against
-  hierarchy      605 top-level, 581 sub-techniques, 148 parents, max 18 children
-  revoked        222
-  tactics        41, platforms 15, assignments 1431/2527
-  data components 123, detects edges 3263
-  groups         1212 (195 actors, 957 software, 60 campaigns), uses edges 18885 technique, 1339 software
-kevgen: wrote ontology/kev_gen.go
-  catalog        known_exploited_vulnerabilities.json@2026.10.16
-  entries        1748 (361 ransomware)
-  weaknesses     1689 references over 189 CWEs, 1573 entries with at least one
-  products       726 (one per entry)
-```
-
-If a future upstream release changes any of those, the generator fails with the actual counts instead
-of emitting tables whose indices no longer match — re-pin the sources and re-derive the expectations.
+If a future upstream release changes any of those, the generator fails with the actual counts instead of
+emitting tables whose indices no longer match. Re-pinning a versioned ATT&CK/D3FEND release is a
+deliberate edit: `cmd/d3fendgen`'s release URLs and `pinnedShape`, the literal counts in the ontology
+tests, and the release numbers this README quotes all move together. A KEV catalog roll is the exception:
+`cmd/kevgen` re-pins itself, and the suite derives every KEV expectation from the emitted constants, so
+nothing else is edited.
 
 KEV is a rolling feed, unlike the three versioned ATT&CK releases: CISA revises the catalog in place and
 bumps its `catalogVersion`. When the fetched version differs from the pinned one, `cmd/kevgen` re-pins
 its own `sourceKEV`/`pinnedShape` literals in place, emits with the freshly measured counts and prints
-`kevgen: re-pinned known_exploited_vulnerabilities.json@<old> -> @<new> (re-measure the count pins in
-ontology/ontology_test.go and cmd/gr4ph/main_test.go, and the README's numbers by hand)` — the two count
-pins then fail until they are re-measured, which is the forcing function. The README's own numbers are
-read by no test, so they are re-measured by hand in the same pass. `-re-pin=false` turns the same
-condition into a hard error instead (`KEV catalog <pinned> expected, got <fetched> (re-run without
--re-pin to re-pin in place)`), and a count change under an *unchanged* version is always an error: the
-version is the contract, the counts are the measurement that keeps the emitted tables honest.
+`kevgen: re-pinned known_exploited_vulnerabilities.json@<old> -> @<new> (review this file's pinnedShape
+diff; tests and docs derive from the generated constants, so make all must pass with no edits)`. That
+`pinnedShape` diff is the one human review a catalog roll needs: the tests read the generated constants
+and the tables themselves, and the sizes above are formulas over those constants, so there is nothing
+else to re-measure. `-re-pin=false` turns the same condition into a hard error instead (`KEV catalog
+<pinned> expected, got <fetched> (re-run without -re-pin to re-pin in place)`), and a count change under
+an *unchanged* version is always an error: the version is the contract, the counts are the measurement
+that keeps the emitted tables honest.
 
 Three ingestion rules keep the emitted dense ids equal to the ones the builder assigns: entries are sorted
 by normalized CVE id (the feed's own order is neither sorted nor stable), every ingested string is trimmed
-and lower-cased — the feed carries surrounding whitespace on 27 names, 6 vendors and 13 products, three
-product names differ only in case, and the ten product pairs that collapse are why the pinned product
-count is 726 rather than the 736 raw spellings — and every vocabulary and per-entry reference list is
-deduped on that normalized key, one element per node the builder registers.
+and lower-cased — the feed carries surrounding whitespace on some names, vendors and products, and a few
+product names differ only in case, so `NProduct` counts fewer keys than the feed has raw spellings — and
+every vocabulary and per-entry reference list is deduped on that normalized key, one element per node the
+builder registers.
 
 Registration order is load-bearing (`ontology.Register`): relations first (so `RelNames[i]` becomes
 plane `i+1`, matching the generated constants) and then the tactic and platform vocabularies (so
@@ -744,8 +731,8 @@ and every benchmark reports 0 B/op and 0 allocs/op. The real-table rows run agai
 1186-node engine; the synthetic rows run against three root-package fixtures — `benchEngine`'s generated graph
 (1200 techniques, 250 artifacts, 160 countermeasures), `attributedEngine` (1200 techniques with
 41 tactics, 15 platforms and 1212 grouping nodes, and no artifacts, countermeasures or data
-components) and `kevEngine` (the catalog's shape: 1748 KEV entries, 189 weaknesses, 726 products, 1689
-weakness edges and one product edge per entry):
+components) and `kevEngine` (a KEV fixture sized to exercise the entry, weakness and product row strides,
+with distinct weakness edges and one product edge per entry):
 
 | benchmark | fixture | ns/op |
 |---|---|---|
@@ -770,7 +757,7 @@ weakness edges and one product edge per entry):
 | `TTPsRollup` (one artifact row) | synthetic | 80 |
 | `TTPsAny` (RelAny, two artifacts) | synthetic | 89 |
 | `TTPsMapped` (all 160 countermeasures) | synthetic | 5077 |
-| `KEVsForProducts` (50 of 726 products) | synthetic | 2299 |
+| `KEVsForProducts` (50 products) | synthetic | 2299 |
 | `KEVsForCWEs` (all 189 weaknesses) | synthetic | 9187 |
 | `CWEsForKEV` (one entry) | synthetic | 15 |
 | `KEVCWEDegree` (one entry) | synthetic | 5 |
@@ -859,14 +846,15 @@ checked by `make all`/`make stock` and by CI:
   in the environment that runs `go build`/`go test`, or the build fails with the explicit
   `build constraints exclude all Go files` error. Consumers that cannot export it are limited to
   `cmd/d3fendgen`, `cmd/kevgen` and `internal/atomicfile`.
-* **No third-party dependencies** — standard library only, no `go.sum`; the pinned ATT&CK 19.2 ×
-  D3FEND 1.6.0 × CISA KEV 2026.10.16 tables are committed, and the runtime never touches the network.
+* **No third-party dependencies** — standard library only, no `go.sum`; the tables pinned by the
+  `ontology.Source*` constants are committed, and the runtime never touches the network.
 
 What a `v0.x` minor bump may change without a major bump: the exported Go API (adding or renaming a
 method, changing a stride or the memory layout, changing an error string or a panic), the CLI's output
-text, and the pinned upstream sources — the generator fails rather than emitting tables whose indices
-no longer match, and the README's numbers are re-measured in the same pass. Nothing in this module is
-deprecated: there are no shims, aliases or compatibility re-exports to carry.
+text, and the pinned upstream sources — each generator fails rather than emitting tables whose indices no
+longer match; a versioned ATT&CK/D3FEND bump moves the literal release counts with it, while a KEV
+catalog roll re-pins itself and edits no prose. Nothing in this module is deprecated: there are no shims,
+aliases or compatibility re-exports to carry.
 
 ## License
 

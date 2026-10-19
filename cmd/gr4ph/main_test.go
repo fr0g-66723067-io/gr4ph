@@ -1146,81 +1146,129 @@ func TestOntologyValues(t *testing.T) {
 		})
 	}
 
-	// The KEV verbs on the committed tables: the catalog's own columns in the
-	// kev header, the weakness and product directions, and an entry the catalog
-	// leaves without a weakness class.
-	kevCommands := []struct {
-		name   string
-		args   []string
-		header string
-		set    string
-		count  int
-		first  string
-		last   string
-		// entries marks the rows whose nodes are KEV entries: their labels are
-		// CVE titles, which contain commas and quoted names, so the rows pin
-		// the first node and that every node is an entry.
-		entries bool
-	}{
-		{
-			"KEV entry with three weakness classes",
-			[]string{"kev", "CVE-2021-44228"},
-			`kev CVE-2021-44228 "Apache Log4j2 Remote Code Execution Vulnerability" added=2021-12-10 ransomware=true vendor="Apache" product="Log4j2"`,
-			"out weaknesses", 3, "CWE-20", "CWE-502", false,
-		},
-		{
-			"KEV entry with no weakness class",
-			[]string{"kev", "CVE-2002-0367"},
-			`kev CVE-2002-0367 "Microsoft Windows Privilege Escalation Vulnerability" added=2022-03-03 ransomware=false vendor="Microsoft" product="Windows"`,
-			"out weaknesses", 0, "", "", false,
-		},
-		{
-			"weakness class",
-			[]string{"cwe", "CWE-78"},
-			"cwe CWE-78", "in entries", 111,
-			`CVE-2014-6271 "GNU Bourne-Again Shell (Bash) Arbitrary Code Execution Vulnerability"`, "", true,
-		},
-		{
-			"one product",
-			[]string{"product", "Apache/Log4j2"},
-			"product Apache/Log4j2", "out entries", 2,
-			`CVE-2021-44228 "Apache Log4j2 Remote Code Execution Vulnerability"`, "", true,
-		},
-		{
-			"two products in one selection",
-			[]string{"product", "Apache/Log4j2", "Apache/Struts"},
-			"product Apache/Log4j2 Apache/Struts", "out entries", 8,
-			`CVE-2013-2251 "Apache Struts Improper Input Validation Vulnerability"`, "", true,
-		},
+	// The KEV verbs on the committed tables: every count and id list the
+	// renderer prints must be the engine's own answer, and the kev header's
+	// columns must be the entry's fields. The queries come from the tables, not
+	// from literals, so a catalog re-pin does not edit this test.
+	firstField := func(n string) string {
+		id, _, _ := strings.Cut(n, " ")
+		return id
 	}
-	for _, tt := range kevCommands {
-		t.Run(tt.name, func(t *testing.T) {
-			out, stderr, status := runCase(t, e, tt.args...)
-			if status != 0 || stderr != "" {
-				t.Fatalf("status = %d, stderr = %q, want 0 and empty", status, stderr)
+	checkSet := func(t *testing.T, out, set string, want []string) {
+		t.Helper()
+		count, nodes := setLine(t, out, set)
+		if count != len(want) || len(nodes) != len(want) {
+			t.Fatalf("%s = %d nodes/%d count, want %d", set, len(nodes), count, len(want))
+		}
+		for i, node := range nodes {
+			if got := firstField(node); got != want[i] {
+				t.Fatalf("%s node %d = %q, want %q", set, i, got, want[i])
 			}
-			if got := strings.SplitN(out, "\n", 2)[0]; got != tt.header {
-				t.Errorf("header = %q, want %q", got, tt.header)
-			}
-			count, nodes := setLine(t, out, tt.set)
-			if count != tt.count || len(nodes) != tt.count {
-				t.Fatalf("%s = %d nodes/%d count, want %d", tt.set, len(nodes), count, tt.count)
-			}
-			if tt.first != "" && nodes[0] != tt.first {
-				t.Errorf("%s first = %q, want %q", tt.set, nodes[0], tt.first)
-			}
-			if tt.last != "" && nodes[len(nodes)-1] != tt.last {
-				t.Errorf("%s last = %q, want %q", tt.set, nodes[len(nodes)-1], tt.last)
-			}
-			if tt.entries {
-				for _, node := range nodes {
-					if !strings.HasPrefix(node, "CVE-") {
-						t.Errorf("%s node %q is not a CVE id", tt.set, node)
-					}
-				}
-			}
-		})
+		}
 	}
+	setBit := func(sel []uint64, i int) { sel[i>>6] |= 1 << uint(i&63) }
+
+	dstCWE := make([]gr4ph.CWE, e.CWECount())
+	dstK := make([]gr4ph.KEV, e.KEVCount())
+
+	// An entry that names a weakness class, seen from its own header and its
+	// weakness row.
+	entry := gr4ph.KEV(0)
+	for i := range e.KEVCount() {
+		if e.KEVCWEDegree(gr4ph.KEV(i)) > 0 {
+			entry = gr4ph.KEV(i)
+			break
+		}
+	}
+	outK, stderr, status := runCase(t, e, "kev", e.KEVID(entry))
+	if status != 0 || stderr != "" {
+		t.Fatalf("kev %s: status = %d, stderr = %q", e.KEVID(entry), status, stderr)
+	}
+	wantHeader := fmt.Sprintf("kev %s \"%s\" added=%s ransomware=%t vendor=\"%s\" product=\"%s\"",
+		e.KEVID(entry), e.KEVName(entry), e.KEVAdded(entry), e.KEVRansomware(entry),
+		e.KEVVendor(entry), e.KEVProduct(entry))
+	if got := strings.SplitN(outK, "\n", 2)[0]; got != wantHeader {
+		t.Errorf("kev header = %q, want %q", got, wantHeader)
+	}
+	nCWE := e.CWEsForKEV(entry, dstCWE)
+	wantCWEs := make([]string, nCWE)
+	for i, c := range dstCWE[:nCWE] {
+		wantCWEs[i] = e.CWEID(c)
+	}
+	checkSet(t, outK, "out weaknesses", wantCWEs)
+
+	// The best-populated weakness class, in the entry direction.
+	degree := make([]int, e.CWECount())
+	for i := range ontology.KEVWeaknessCWE {
+		degree[ontology.KEVWeaknessCWE[i]]++
+	}
+	top := 0
+	for c := range degree {
+		if degree[c] > degree[top] {
+			top = c
+		}
+	}
+	class := gr4ph.CWE(top)
+	outC, stderr, status := runCase(t, e, "cwe", e.CWEID(class))
+	if status != 0 || stderr != "" {
+		t.Fatalf("cwe %s: status = %d, stderr = %q", e.CWEID(class), status, stderr)
+	}
+	if got, want := strings.SplitN(outC, "\n", 2)[0], "cwe "+e.CWEID(class); got != want {
+		t.Errorf("cwe header = %q, want %q", got, want)
+	}
+	nK := e.KEVsForCWE(class, dstK)
+	wantK := make([]string, nK)
+	for i, k := range dstK[:nK] {
+		wantK[i] = e.KEVID(k)
+	}
+	checkSet(t, outC, "in entries", wantK)
+	for _, id := range wantK {
+		if !strings.HasPrefix(id, "CVE-") {
+			t.Fatalf("cwe node %q is not a CVE id", id)
+		}
+	}
+
+	// Two products in one selection: the widest product and its neighbour in
+	// the vocabulary.
+	productDegree := make([]int, e.ProductCount())
+	for k := range ontology.KEVProductIndex {
+		productDegree[ontology.KEVProductIndex[k]]++
+	}
+	best := 0
+	for p := range productDegree {
+		if productDegree[p] > productDegree[best] {
+			best = p
+		}
+	}
+	p0, p1 := gr4ph.Product(best), gr4ph.Product(0)
+	if p1 == p0 {
+		p1 = gr4ph.Product(1)
+	}
+	key := func(p gr4ph.Product) string { return e.KEVProductVendor(p) + "/" + e.KEVProductName(p) }
+	// The product key the catalog does not carry, used by both failure paths
+	// below: derived from the widest product plus a suffix and checked absent, so
+	// a catalog re-pin cannot turn those checks into data pins.
+	absent := key(p0) + "-absent"
+	if _, ok := e.Product(e.KEVProductVendor(p0), e.KEVProductName(p0)+"-absent"); ok {
+		t.Fatalf("%q unexpectedly resolves; pick another suffix", absent)
+	}
+	scratchK := make([]uint64, e.WordsPerRow(gr4ph.KindKEV))
+	sel := make([]uint64, e.WordsPerRow(gr4ph.KindProduct))
+	outP, stderr, status := runCase(t, e, "product", key(p0), key(p1))
+	if status != 0 || stderr != "" {
+		t.Fatalf("product %s %s: status = %d, stderr = %q", key(p0), key(p1), status, stderr)
+	}
+	if got, want := strings.SplitN(outP, "\n", 2)[0], "product "+key(p0)+" "+key(p1); got != want {
+		t.Errorf("product header = %q, want %q", got, want)
+	}
+	setBit(sel, int(p0))
+	setBit(sel, int(p1))
+	nP := e.KEVsForProducts(sel, scratchK, dstK)
+	wantP := make([]string, nP)
+	for i, k := range dstK[:nP] {
+		wantP[i] = e.KEVID(k)
+	}
+	checkSet(t, outP, "out entries", wantP)
 
 	// The failure paths: an unknown key is a failure with the exact message, and
 	// a product query that carries no "/" cannot be read as a pair at all. All
@@ -1232,7 +1280,7 @@ func TestOntologyValues(t *testing.T) {
 	}{
 		{"unknown KEV entry", []string{"kev", "CVE-2099-99999"}, "gr4ph: no such KEV entry: CVE-2099-99999\n"},
 		{"unknown weakness", []string{"cwe", "CWE-9999"}, "gr4ph: no such cwe: CWE-9999\n"},
-		{"unknown product", []string{"product", "Apache/Log4j"}, "gr4ph: no such product: Apache/Log4j\n"},
+		{"unknown product", []string{"product", absent}, "gr4ph: no such product: " + absent + "\n"},
 		{"product query without a slash", []string{"product", "Log4j2"}, "gr4ph: product query must be Vendor/Product: Log4j2\n"},
 	}
 	for _, tt := range kevFailures {
@@ -1251,13 +1299,14 @@ func TestOntologyValues(t *testing.T) {
 	}
 
 	// A partial product selection keeps the block of the queries that did
-	// resolve, exactly as the per-node verbs do.
-	out, stderr, status = runCase(t, e, "product", "Apache/Log4j2", "Apache/Log4j")
-	if status != 1 || stderr != "gr4ph: no such product: Apache/Log4j\n" {
+	// resolve, exactly as the per-node verbs do. The resolving key and its count
+	// come from the tables, so a catalog re-pin cannot turn this into a data pin.
+	out, stderr, status = runCase(t, e, "product", key(p0), absent)
+	if status != 1 || stderr != "gr4ph: no such product: "+absent+"\n" {
 		t.Fatalf("status = %d, stderr = %q, want 1 and the failure", status, stderr)
 	}
-	if count, _ := setLine(t, out, "out entries"); count != 2 {
-		t.Errorf("partial product entries = %d, want 2", count)
+	if count, _ := setLine(t, out, "out entries"); count != productDegree[best] {
+		t.Errorf("partial product entries = %d, want %d", count, productDegree[best])
 	}
 
 	// The overlay verbs on the committed tables: one deployment's three states

@@ -112,33 +112,6 @@ func defRel(tb testing.TB, e *gr4ph.Engine, name string) gr4ph.DefRel {
 	return r
 }
 
-func kev(tb testing.TB, e *gr4ph.Engine, id string) gr4ph.KEV {
-	tb.Helper()
-	v, ok := e.KEV(id)
-	if !ok {
-		tb.Fatalf("unknown KEV entry %q", id)
-	}
-	return v
-}
-
-func cwe(tb testing.TB, e *gr4ph.Engine, id string) gr4ph.CWE {
-	tb.Helper()
-	v, ok := e.CWE(id)
-	if !ok {
-		tb.Fatalf("unknown CWE %q", id)
-	}
-	return v
-}
-
-func prod(tb testing.TB, e *gr4ph.Engine, vendor, name string) gr4ph.Product {
-	tb.Helper()
-	v, ok := e.Product(vendor, name)
-	if !ok {
-		tb.Fatalf("unknown product %q/%q", vendor, name)
-	}
-	return v
-}
-
 // eqTTPs compares ids against expected technique names, in order.
 func eqTTPs(tb testing.TB, label string, e *gr4ph.Engine, got []gr4ph.TTP, want ...string) {
 	tb.Helper()
@@ -260,12 +233,17 @@ func TestRegisterAcceptsZeroValueBuilder(t *testing.T) {
 	}
 }
 
-// TestOntologySizes pins the frozen table sizes against the pinned release.
+// TestOntologySizes pins the engine's partitions to the generated constants,
+// the KEV arrays to the constants that describe them, and the versioned
+// ATT&CK/D3FEND counts to their release literals (the other half of
+// cmd/d3fendgen's pinnedShape).
 func TestOntologySizes(t *testing.T) {
 	e := build(t)
 
-	// The engine must match the generated table sizes, and those sizes must
-	// match the pinned release.
+	// The engine must match the generated table sizes. The ATT&CK/D3FEND rows
+	// are the release pins (cmd/d3fendgen's pinnedShape, restated); the KEV rows
+	// tie each emitted array to the constant that describes it, so a catalog
+	// roll moves them with the generated table.
 	sizes := []struct {
 		name string
 		got  int
@@ -298,12 +276,13 @@ func TestOntologySizes(t *testing.T) {
 		{"engine KEV entries / NKEV", e.KEVCount(), NKEV},
 		{"engine weaknesses / NCWE", e.CWECount(), NCWE},
 		{"engine products / NProduct", e.ProductCount(), NProduct},
-		{"NKEV", NKEV, 1748},
-		{"NKEVCWE", NKEVCWE, 1689},
-		{"NKEVWithCWE", NKEVWithCWE, 1573},
-		{"NCWE", NCWE, 189},
-		{"NProduct", NProduct, 726},
-		{"NKEVRansomware", NKEVRansomware, 361},
+		{"KEVIDs", len(KEVIDs), NKEV},
+		{"KEVNames", len(KEVNames), NKEV},
+		{"KEVAdded", len(KEVAdded), NKEV},
+		{"KEVRansomware", len(KEVRansomware), NKEV},
+		{"CWEIDs", len(CWEIDs), NCWE},
+		{"KEVProductVendors", len(KEVProductVendors), NProduct},
+		{"KEVProductNames", len(KEVProductNames), NProduct},
 	}
 	for _, s := range sizes {
 		if s.got != s.want {
@@ -311,29 +290,25 @@ func TestOntologySizes(t *testing.T) {
 		}
 	}
 
-	// WordsPerRow: 1186/64 = 19, 247/64 = 4, 157/64 = 3.
-	if got := e.WordsPerRow(gr4ph.KindTTP); got != 19 {
-		t.Fatalf("WordsPerRow(TTP) = %d, want 19", got)
-	}
-	if got := e.WordsPerRow(gr4ph.KindArtifact); got != 4 {
-		t.Fatalf("WordsPerRow(Artifact) = %d, want 4", got)
-	}
-	if got := e.WordsPerRow(gr4ph.KindCountermeasure); got != 3 {
-		t.Fatalf("WordsPerRow(Countermeasure) = %d, want 3", got)
-	}
-	// 123/64 = 2.
-	if got := e.WordsPerRow(gr4ph.KindDataComponent); got != 2 {
-		t.Fatalf("WordsPerRow(DataComponent) = %d, want 2", got)
-	}
-	// 1748/64 = 28, 189/64 = 3, 726/64 = 12.
-	if got := e.WordsPerRow(gr4ph.KindKEV); got != 28 {
-		t.Fatalf("WordsPerRow(KEV) = %d, want 28", got)
-	}
-	if got := e.WordsPerRow(gr4ph.KindCWE); got != 3 {
-		t.Fatalf("WordsPerRow(CWE) = %d, want 3", got)
-	}
-	if got := e.WordsPerRow(gr4ph.KindProduct); got != 12 {
-		t.Fatalf("WordsPerRow(Product) = %d, want 12", got)
+	// Strides are ceil(count/64) over the registered partitions, cached on the
+	// engine; restating the formula here is the check (wordsFor is private to
+	// the root package).
+	for _, s := range []struct {
+		name string
+		got  int
+		want int
+	}{
+		{"TTP", e.WordsPerRow(gr4ph.KindTTP), (NTTP + 63) / 64},
+		{"Artifact", e.WordsPerRow(gr4ph.KindArtifact), (NArtifact + 63) / 64},
+		{"Countermeasure", e.WordsPerRow(gr4ph.KindCountermeasure), (NCountermeasure + 63) / 64},
+		{"DataComponent", e.WordsPerRow(gr4ph.KindDataComponent), (NDataComponent + 63) / 64},
+		{"KEV", e.WordsPerRow(gr4ph.KindKEV), (NKEV + 63) / 64},
+		{"CWE", e.WordsPerRow(gr4ph.KindCWE), (NCWE + 63) / 64},
+		{"Product", e.WordsPerRow(gr4ph.KindProduct), (NProduct + 63) / 64},
+	} {
+		if s.got != s.want {
+			t.Fatalf("WordsPerRow(%s) = %d, want (%s count+63)/64 = %d", s.name, s.got, s.name, s.want)
+		}
 	}
 
 	// Every table name resolves to the plane the generated constant claims.
@@ -372,12 +347,12 @@ func TestOntologySizes(t *testing.T) {
 	}
 }
 
-// TestOntologyLayoutArithmetic recomputes the README's block table from the
-// tables themselves — the generated counts and the engine's own strides — so a
-// re-pin that moves a count cannot leave the published arithmetic green.
-// builder_test.go's TestLayoutMatchesReadme reads the same numbers off a
-// registered builder, which is what pins the table's shape; this test pins the
-// arithmetic the row widths and plane counts imply.
+// TestOntologyLayoutArithmetic recomputes the versioned ATT&CK/D3FEND block
+// sizes from the generated counts and the engine's own strides, so a release
+// bump that moves a count cannot leave the published arithmetic green. The four
+// KEV rows are not asserted here: this package has no accessor for a block's
+// length, and builder_test.go's TestLayoutMatchesReadme evaluates the same
+// formula for every row on a fixture sized to the same strides.
 func TestOntologyLayoutArithmetic(t *testing.T) {
 	e := build(t)
 
@@ -385,50 +360,42 @@ func TestOntologyLayoutArithmetic(t *testing.T) {
 	wArt := e.WordsPerRow(gr4ph.KindArtifact)
 	wCM := e.WordsPerRow(gr4ph.KindCountermeasure)
 	wDC := e.WordsPerRow(gr4ph.KindDataComponent)
-	wKEV := e.WordsPerRow(gr4ph.KindKEV)
-	wCWE := e.WordsPerRow(gr4ph.KindCWE)
-	wProduct := e.WordsPerRow(gr4ph.KindProduct)
 	// The grouping partition has no Kind, so its row width is the one stride
 	// WordsPerRow does not publish.
 	wGrp := (NGroup + 63) / 64
 	offPlanes, defPlanes := NRel+1, NDefRel+1 // plane 0 of each family is the union
 	wTactic, wPlatform := 1, 1                // one uint64 mask per technique
 
+	// Every block's size is planes × rows × row stride. All of these are literal
+	// pins: ATT&CK and D3FEND are versioned releases, so a change here is a
+	// deliberate release event, not a catalog roll.
 	blocks := []struct {
 		name  string
 		words int
+		want  int
 	}{
-		{"ttpArt", offPlanes * NTTP * wArt},
-		{"artTTP", offPlanes * NArtifact * wTTP},
-		{"cmArt", defPlanes * NCountermeasure * wArt},
-		{"artCM", defPlanes * NArtifact * wCM},
-		{"cmTTP", NCountermeasure * wTTP},
-		{"ttpCM", NTTP * wCM},
-		{"tacticTTP", NTactic * wTTP},
-		{"ttpTactic", NTTP * wTactic},
-		{"platformTTP", NPlatform * wTTP},
-		{"ttpPlatform", NTTP * wPlatform},
-		{"ttpFlags", NTTP},
-		{"dcTTP", NDataComponent * wTTP},
-		{"ttpDC", NTTP * wDC},
-		{"grpTTP", NGroup * wTTP},
-		{"ttpGrp", NTTP * wGrp},
-		{"grpSoftware", NGroup * wGrp},
-		{"softwareGrp", NGroup * wGrp},
-		{"kevCWE", NKEV * wCWE},
-		{"cweKEV", NCWE * wKEV},
-		{"kevProduct", NKEV * wProduct},
-		{"productKEV", NProduct * wKEV},
-	}
-	want := []int{
-		199248, 197106, 24492, 28899, 2983, 3558,
-		779, 1186, 285, 1186, 1186, 2337, 2372, 23028, 22534, 23028, 23028,
-		5244, 5292, 20976, 20328,
+		{"ttpArt", offPlanes * NTTP * wArt, 199248},
+		{"artTTP", offPlanes * NArtifact * wTTP, 197106},
+		{"cmArt", defPlanes * NCountermeasure * wArt, 24492},
+		{"artCM", defPlanes * NArtifact * wCM, 28899},
+		{"cmTTP", NCountermeasure * wTTP, 2983},
+		{"ttpCM", NTTP * wCM, 3558},
+		{"tacticTTP", NTactic * wTTP, 779},
+		{"ttpTactic", NTTP * wTactic, 1186},
+		{"platformTTP", NPlatform * wTTP, 285},
+		{"ttpPlatform", NTTP * wPlatform, 1186},
+		{"ttpFlags", NTTP, 1186},
+		{"dcTTP", NDataComponent * wTTP, 2337},
+		{"ttpDC", NTTP * wDC, 2372},
+		{"grpTTP", NGroup * wTTP, 23028},
+		{"ttpGrp", NTTP * wGrp, 22534},
+		{"grpSoftware", NGroup * wGrp, 23028},
+		{"softwareGrp", NGroup * wGrp, 23028},
 	}
 	subtotal, newArrays := 0, 0
 	for i, bl := range blocks {
-		if bl.words != want[i] {
-			t.Errorf("%s = %d words, want %d (README block table)", bl.name, bl.words, want[i])
+		if bl.words != bl.want {
+			t.Errorf("%s = %d words, want %d (README block table)", bl.name, bl.words, bl.want)
 		}
 		if i < 6 {
 			subtotal += bl.words
@@ -436,10 +403,10 @@ func TestOntologyLayoutArithmetic(t *testing.T) {
 			newArrays += bl.words
 		}
 	}
-	if subtotal != 456286 || newArrays != 152789 || subtotal+newArrays != 609075 {
-		t.Errorf("six-block subtotal %d, new arrays %d, total %d, want 456286/152789/609075",
-			subtotal, newArrays, subtotal+newArrays)
+	if subtotal != 456286 {
+		t.Errorf("six-block subtotal %d, want 456286 (README block table)", subtotal)
 	}
+	t.Logf("six blocks %d words, eleven other arrays %d words, total %d", subtotal, newArrays, subtotal+newArrays)
 }
 
 // TestOntologyRelationConstants pins every generated constant to its plane, so
@@ -1370,9 +1337,21 @@ func TestZeroAllocOntology(t *testing.T) {
 	bufCWE := make([]gr4ph.CWE, e.CWECount())
 	bufP := make([]gr4ph.Product, e.ProductCount())
 	scrK := make([]uint64, e.WordsPerRow(gr4ph.KindKEV))
-	kevEntry := kev(t, e, "CVE-2021-44228")
-	weak := cwe(t, e, "CWE-78")
-	vendored := prod(t, e, "Apache", "Log4j2")
+	// Exercise a row that actually resolves: the widest entry and its first
+	// weakness, plus the entry's product, derived from the tables rather than a
+	// fixed index, so the case does not depend on what the feed's first entry
+	// happens to carry.
+	kevEntry := gr4ph.KEV(0)
+	for i := range e.KEVCount() {
+		if e.KEVCWEDegree(gr4ph.KEV(i)) > e.KEVCWEDegree(kevEntry) {
+			kevEntry = gr4ph.KEV(i)
+		}
+	}
+	if n := e.CWEsForKEV(kevEntry, bufCWE); n == 0 {
+		t.Fatalf("entry %d has no weakness, want the widest row", kevEntry)
+	}
+	weak := bufCWE[0]
+	vendored := gr4ph.Product(KEVProductIndex[kevEntry])
 	selP := make([]uint64, e.WordsPerRow(gr4ph.KindProduct))
 	setSel(selP, int(vendored))
 	selCWE := make([]uint64, e.WordsPerRow(gr4ph.KindCWE))
@@ -1868,9 +1847,10 @@ func TestOntologyAttributes(t *testing.T) {
 }
 
 // TestOntologyKEV pins the weakness and product families on the real tables:
-// the row and column sums of both matrices, the per-class counts of the
-// best-populated weaknesses, the Log4j golden and the reverse resolvers. Every
-// literal is re-measured from the committed ontology, not copied from a plan.
+// the row and column sums of both matrices, the ordering and range of the
+// emitted pair arrays, and the reverse resolvers. Nothing here is a count
+// copied from a catalog release: every expected value comes from the generated
+// constants and the arrays themselves, so a re-pin does not edit this file.
 func TestOntologyKEV(t *testing.T) {
 	e := build(t)
 	if len(KEVWeaknessKEV) != NKEVCWE || len(KEVWeaknessCWE) != NKEVCWE {
@@ -1880,19 +1860,16 @@ func TestOntologyKEV(t *testing.T) {
 		t.Fatalf("KEVProductIndex = %d, want %d", len(KEVProductIndex), NKEV)
 	}
 
-	// The weakness matrix: 1689 edges over 1573 of the 1748 entries, at most 4
-	// per entry, and no entry names a weakness twice.
+	// The weakness matrix: NKEVCWE edges over NKEVWithCWE of the NKEV entries,
+	// and no entry names a weakness twice.
 	dstCWE := make([]gr4ph.CWE, e.CWECount())
-	degSum, withCWE, maxDeg, ransom := 0, 0, 0, 0
+	degSum, withCWE, ransom := 0, 0, 0
 	for i := range e.KEVCount() {
 		k := gr4ph.KEV(i)
 		d := e.KEVCWEDegree(k)
 		degSum += d
 		if d > 0 {
 			withCWE++
-		}
-		if d > maxDeg {
-			maxDeg = d
 		}
 		if e.KEVRansomware(k) {
 			ransom++
@@ -1904,9 +1881,6 @@ func TestOntologyKEV(t *testing.T) {
 	if withCWE != NKEVWithCWE {
 		t.Errorf("entries naming a weakness = %d, want %d", withCWE, NKEVWithCWE)
 	}
-	if maxDeg != 4 {
-		t.Errorf("max weakness degree = %d, want 4", maxDeg)
-	}
 	if ransom != NKEVRansomware {
 		t.Errorf("ransomware entries = %d, want %d", ransom, NKEVRansomware)
 	}
@@ -1915,14 +1889,23 @@ func TestOntologyKEV(t *testing.T) {
 	}
 
 	// The transpose: the column sums are the row sums, every class is
-	// referenced at least once, and every id is in range.
+	// referenced at least once, every id is in range, and each class's column
+	// agrees with the pair array that describes it (a total-preserving
+	// mis-assignment would pass the sums alone).
 	dstK := make([]gr4ph.KEV, e.KEVCount())
+	byClass := make([]int, NCWE)
+	for i := range KEVWeaknessCWE {
+		byClass[KEVWeaknessCWE[i]]++
+	}
 	colSum := 0
 	minCol := 1 << 30
 	for i := range e.CWECount() {
 		n := e.KEVsForCWE(gr4ph.CWE(i), dstK)
 		colSum += n
 		minCol = min(minCol, n)
+		if n != byClass[i] {
+			t.Fatalf("KEVsForCWE(%s) = %d, but %d pairs name it", e.CWEID(gr4ph.CWE(i)), n, byClass[i])
+		}
 		for _, k := range dstK[:n] {
 			if int(k) >= e.KEVCount() {
 				t.Fatalf("KEVsForCWE(%s) returned out-of-range entry %d", e.CWEID(gr4ph.CWE(i)), k)
@@ -1936,98 +1919,121 @@ func TestOntologyKEV(t *testing.T) {
 		t.Errorf("some weakness class has no entries")
 	}
 
-	// One product edge per entry, and the per-class counts of the largest
-	// weaknesses.
-	prodEdges := 0
-	for i := range e.KEVCount() {
-		prodEdges += e.ProductsForKEV(gr4ph.KEV(i), nil)
+	// The pair arrays are the generator's second view of the same matrix:
+	// sorted by entry, strictly ascending within an entry, and in range. That
+	// catches a transposed, duplicated or out-of-range pair without pinning any
+	// per-class count.
+	for i := range KEVWeaknessKEV {
+		if int(KEVWeaknessKEV[i]) >= NKEV {
+			t.Fatalf("pair %d names entry %d, want < %d", i, KEVWeaknessKEV[i], NKEV)
+		}
+		if int(KEVWeaknessCWE[i]) >= NCWE {
+			t.Fatalf("pair %d names class %d, want < %d", i, KEVWeaknessCWE[i], NCWE)
+		}
+		if i == 0 {
+			continue
+		}
+		if KEVWeaknessKEV[i] < KEVWeaknessKEV[i-1] {
+			t.Fatalf("pairs are not sorted by entry at %d (%d after %d)",
+				i, KEVWeaknessKEV[i], KEVWeaknessKEV[i-1])
+		}
+		if KEVWeaknessKEV[i] == KEVWeaknessKEV[i-1] && KEVWeaknessCWE[i] <= KEVWeaknessCWE[i-1] {
+			t.Fatalf("entry %d repeats or reorders class %d at pair %d",
+				KEVWeaknessKEV[i], KEVWeaknessCWE[i], i)
+		}
 	}
-	if prodEdges != NKEV {
-		t.Errorf("product edges = %d, want %d", prodEdges, NKEV)
-	}
-	for _, c := range []struct {
-		id   string
-		want int
-	}{
-		{"CWE-20", 119},
-		{"CWE-78", 111},
-		{"CWE-787", 105},
-		{"CWE-416", 93},
-		{"CWE-119", 88},
-		{"CWE-22", 82},
-		{"CWE-502", 71},
-		{"CWE-94", 72},
-		{"CWE-79", 33},
-		{"CWE-89", 32},
-		{"CWE-400", 5},
-	} {
-		if got := e.KEVsForCWE(cwe(t, e, c.id), nil); got != c.want {
-			t.Errorf("KEVsForCWE(%s) = %d, want %d", c.id, got, c.want)
+	for k := range KEVProductIndex {
+		if int(KEVProductIndex[k]) >= NProduct {
+			t.Fatalf("KEVProductIndex[%d] = %d, want < %d", k, KEVProductIndex[k], NProduct)
 		}
 	}
 
-	// The union over a weakness selection: the classes of the Log4j entry
-	// overlap, so the union is smaller than the 195 ids their columns sum to;
-	// the three best-populated classes happen to be disjoint, so there the
-	// union equals the sum.
+	// All three vocabularies are sorted by their folded key (trim, lower-case,
+	// raw spelling as tie-break): Build indexes each by that order, so a
+	// mixed-case feed must not trip these.
+	fold := func(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
+	for i := 1; i < len(KEVIDs); i++ {
+		if fold(KEVIDs[i-1]) >= fold(KEVIDs[i]) {
+			t.Fatalf("KEVIDs out of key order at %d: %q then %q", i, KEVIDs[i-1], KEVIDs[i])
+		}
+	}
+	for i := 1; i < len(CWEIDs); i++ {
+		if fold(CWEIDs[i-1]) >= fold(CWEIDs[i]) {
+			t.Fatalf("CWEIDs out of key order at %d: %q then %q", i, CWEIDs[i-1], CWEIDs[i])
+		}
+	}
+	for i := 1; i < len(KEVProductVendors); i++ {
+		pv, pn := fold(KEVProductVendors[i-1]), fold(KEVProductNames[i-1])
+		cv, cn := fold(KEVProductVendors[i]), fold(KEVProductNames[i])
+		if pv > cv || (pv == cv && pn >= cn) {
+			t.Fatalf("product vocabulary out of folded order at %d: %s/%s then %s/%s",
+				i, pv, pn, cv, cn)
+		}
+	}
+
+	// Exactly one product edge per entry.
+	for i := range e.KEVCount() {
+		if n := e.ProductsForKEV(gr4ph.KEV(i), nil); n != 1 {
+			t.Fatalf("entry %s has %d product edges, want exactly one", e.KEVID(gr4ph.KEV(i)), n)
+		}
+	}
+
+	// The union over a class selection: the selection mask's answer must be the
+	// set union of the per-class answers, element for element, so a wrong mask
+	// or an off-by-one in the union cannot pass.
 	sel := make([]uint64, e.WordsPerRow(gr4ph.KindCWE))
 	scratch := make([]uint64, e.WordsPerRow(gr4ph.KindKEV))
-	union := func(ids ...string) (int, int) {
-		for i := range sel {
-			sel[i] = 0
+	topA, topB := -1, -1
+	for c := range byClass {
+		if topA < 0 || byClass[c] > byClass[topA] {
+			topB, topA = topA, c
+		} else if topB < 0 || byClass[c] > byClass[topB] {
+			topB = c
 		}
-		sum := 0
-		for _, id := range ids {
-			c := cwe(t, e, id)
-			setSel(sel, int(c))
-			sum += e.KEVsForCWE(c, nil)
-		}
-		n := e.KEVsForCWEs(sel, scratch, dstK)
-		for i := 1; i < n; i++ {
-			if dstK[i-1] >= dstK[i] {
-				t.Fatalf("union of %v is not ascending or has duplicates: %v", ids, dstK[:n])
-			}
-		}
-		return n, sum
 	}
-	if n, sum := union("CWE-79", "CWE-89", "CWE-78"); n != 176 || sum != 176 {
-		t.Errorf("union of the top three classes = %d of %d ids, want 176 (disjoint)", n, sum)
+	if topA < 0 || topB < 0 {
+		t.Fatalf("need two populated classes, found %d and %d", topA, topB)
 	}
-	if n, sum := union("CWE-20", "CWE-400", "CWE-502"); n != 191 || sum != 195 {
-		t.Errorf("union of the Log4j classes = %d of %d ids, want 191 of 195", n, sum)
+	setSel(sel, topA)
+	setSel(sel, topB)
+	n := e.KEVsForCWEs(sel, scratch, dstK)
+	unionIDs := slices.Clone(dstK[:n])
+	merged := make([]gr4ph.KEV, 0, byClass[topA]+byClass[topB])
+	na := e.KEVsForCWE(gr4ph.CWE(topA), dstK)
+	merged = append(merged, dstK[:na]...)
+	nb := e.KEVsForCWE(gr4ph.CWE(topB), dstK)
+	merged = append(merged, dstK[:nb]...)
+	slices.Sort(merged)
+	wantUnion := slices.Compact(merged)
+	if !slices.Equal(unionIDs, wantUnion) {
+		t.Fatalf("union of %s and %s = %d ids, want the %d-id set union",
+			e.CWEID(gr4ph.CWE(topA)), e.CWEID(gr4ph.CWE(topB)), len(unionIDs), len(wantUnion))
 	}
 
-	// The Log4j golden: its CVE record, the three weaknesses it names and the
-	// product it is filed under, seen from both directions.
-	log4j := kev(t, e, "CVE-2021-44228")
-	if got := e.KEVName(log4j); got != "Apache Log4j2 Remote Code Execution Vulnerability" {
-		t.Errorf("Log4j name = %q", got)
+	// One entry seen from both directions, chosen from the tables (the widest
+	// weakness row) rather than by a literal CVE id: its record names exactly
+	// the weaknesses its row holds, it is filed under exactly one product, and
+	// that product's column contains it.
+	widest := gr4ph.KEV(0)
+	for i := 1; i < e.KEVCount(); i++ {
+		if e.KEVCWEDegree(gr4ph.KEV(i)) > e.KEVCWEDegree(widest) {
+			widest = gr4ph.KEV(i)
+		}
 	}
-	ndc := e.CWEsForKEV(log4j, dstCWE)
-	names := make([]string, 0, ndc)
-	for _, c := range dstCWE[:ndc] {
-		names = append(names, e.CWEID(c))
-	}
-	if want := "CWE-20,CWE-400,CWE-502"; strings.Join(names, ",") != want {
-		t.Errorf("Log4j weaknesses = %v, want %s", names, want)
-	}
-	log4jProduct := prod(t, e, "Apache", "Log4j2")
-	if n := e.ProductsForKEV(log4j, make([]gr4ph.Product, 1)); n != 1 {
-		t.Errorf("Log4j products = %d, want 1", n)
+	if ndc := e.CWEsForKEV(widest, dstCWE); ndc != e.KEVCWEDegree(widest) {
+		t.Errorf("%s: CWEsForKEV = %d, KEVCWEDegree = %d", e.KEVID(widest), ndc, e.KEVCWEDegree(widest))
 	}
 	dstP := make([]gr4ph.Product, 4)
-	np := e.ProductsForKEV(log4j, dstP)
-	if np != 1 || dstP[0] != log4jProduct {
-		t.Errorf("ProductsForKEV(Log4j) = %d %v, want 1 [%d]", np, dstP[:np], log4jProduct)
+	np := e.ProductsForKEV(widest, dstP)
+	if np != 1 || int(dstP[0]) >= e.ProductCount() {
+		t.Fatalf("%s: ProductsForKEV = %d %v, want exactly one in-range product", e.KEVID(widest), np, dstP[:np])
 	}
 	selP := make([]uint64, e.WordsPerRow(gr4ph.KindProduct))
-	setSel(selP, int(log4jProduct))
+	setSel(selP, int(dstP[0]))
 	nk := e.KEVsForProducts(selP, scratch, dstK)
-	if nk != 2 {
-		t.Fatalf("KEVsForProducts(Apache/Log4j2) = %d, want 2", nk)
-	}
-	if !slices.Contains(dstK[:nk], log4j) {
-		t.Errorf("KEVsForProducts(Apache/Log4j2) = %v, want it to contain %d", dstK[:nk], log4j)
+	if !slices.Contains(dstK[:nk], widest) {
+		t.Fatalf("KEVsForProducts(%s/%s) does not contain %s",
+			e.KEVProductVendor(dstP[0]), e.KEVProductName(dstP[0]), e.KEVID(widest))
 	}
 
 	// The reverse resolvers round-trip over the whole vocabulary.

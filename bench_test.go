@@ -290,40 +290,44 @@ func BenchmarkTTPsMapped(b *testing.B) {
 	}
 }
 
+// fixKEVEdges is the fixture's weakness-edge count: enough distinct pairs to
+// populate the rows without depending on any catalog release.
+const fixKEVEdges = 1689
+
 // kevEngine is a standalone KEV fixture, kept separate from the ATT&CK
-// fixtures so their stride contracts stay untouched. It registers the pinned
-// catalog's shape — 1748 entries, 189 weaknesses, 726 products (the 736 raw
-// spellings are 726 keys) — with 1689 distinct weakness edges and one product
-// edge per entry, so the KEV strides are the real ones: 28 words over entries,
-// 3 over weaknesses, 12 over products.
+// fixtures so their stride contracts stay untouched. It registers fixKEV
+// entries, fixCWE weaknesses and fixProduct products with fixKEVEdges distinct
+// weakness edges and one product edge per entry: a fixture sized to exercise the
+// 28/3/12-word rows through this package's fixture constants, so a catalog roll
+// never edits this file.
 func kevEngine(tb testing.TB) *Engine {
 	tb.Helper()
 	b := NewBuilder()
 	rng := rand.New(rand.NewPCG(0xfeed_face, 0xdead_beef))
 
-	for i := range 189 {
+	for i := range fixCWE {
 		id := "CWE-" + strconv.Itoa(i)
 		if _, err := b.AddCWE(id, id); err != nil {
 			tb.Fatalf("AddCWE: %v", err)
 		}
 	}
-	for i := range 726 {
+	for i := range fixProduct {
 		if _, err := b.AddProduct("Vendor"+strconv.Itoa(i%97), "Product "+strconv.Itoa(i)); err != nil {
 			tb.Fatalf("AddProduct: %v", err)
 		}
 	}
-	for i := range 1748 {
+	for i := range fixKEV {
 		id := "CVE-2000-" + strconv.Itoa(10000+i)
 		if _, err := b.AddKEV(id, "Entry "+strconv.Itoa(i), "2000-01-01", i%5 == 0); err != nil {
 			tb.Fatalf("AddKEV: %v", err)
 		}
 	}
-	// The 1689 weakness references are distinct pairs, as the catalog's are: a
-	// draw that repeats one would leave the matrix short of the shape this
-	// fixture documents, silently changing what the KEV row widths cost.
-	seen := make(map[[2]uint16]struct{}, 1689)
-	for len(seen) < 1689 {
-		k, c := uint16(rng.IntN(1748)), uint16(rng.IntN(189))
+	// The fixKEVEdges weakness references are distinct pairs: a draw that
+	// repeats one would leave the matrix short of the shape this fixture
+	// documents, silently changing what the KEV row widths cost.
+	seen := make(map[[2]uint16]struct{}, fixKEVEdges)
+	for len(seen) < fixKEVEdges {
+		k, c := uint16(rng.IntN(fixKEV)), uint16(rng.IntN(fixCWE))
 		if _, dup := seen[[2]uint16{k, c}]; dup {
 			continue
 		}
@@ -332,8 +336,8 @@ func kevEngine(tb testing.TB) *Engine {
 			tb.Fatalf("AddKEVWeaknessEdge: %v", err)
 		}
 	}
-	for i := range 1748 {
-		if err := b.AddKEVProductEdge(KEV(i), Product(rng.IntN(726))); err != nil {
+	for i := range fixKEV {
+		if err := b.AddKEVProductEdge(KEV(i), Product(rng.IntN(fixProduct))); err != nil {
 			tb.Fatalf("AddKEVProductEdge: %v", err)
 		}
 	}
@@ -352,17 +356,17 @@ func kevEngine(tb testing.TB) *Engine {
 		tb.Fatalf("WordsPerRow(Product) = %d, want 12", got)
 	}
 	edges := 0
-	for i := range 1748 {
+	for i := range fixKEV {
 		edges += e.KEVCWEDegree(KEV(i))
 	}
-	if edges != 1689 {
-		tb.Fatalf("the fixture's KEVCWEDegree sums to %d, want the catalog's 1689 edges", edges)
+	if edges != fixKEVEdges {
+		tb.Fatalf("the fixture's KEVCWEDegree sums to %d, want its own %d edges", edges, fixKEVEdges)
 	}
 	return e
 }
 
-// BenchmarkKEVsForProducts is the asset-inventory query: the union of 50 of the
-// 726 productKEV rows, one kevCWE row per entry named.
+// BenchmarkKEVsForProducts is the asset-inventory query: the union of the first
+// 50 productKEV rows, one kevCWE row per entry named.
 func BenchmarkKEVsForProducts(b *testing.B) {
 	e := kevEngine(b)
 	sel := make([]uint64, e.WordsPerRow(KindProduct))
@@ -379,7 +383,7 @@ func BenchmarkKEVsForProducts(b *testing.B) {
 }
 
 // BenchmarkKEVsForCWEs is the weakness-class query over the whole vocabulary:
-// the union of all 189 cweKEV rows.
+// the union of every cweKEV row.
 func BenchmarkKEVsForCWEs(b *testing.B) {
 	e := kevEngine(b)
 	sel := make([]uint64, e.WordsPerRow(KindCWE))
@@ -402,7 +406,7 @@ func BenchmarkCWEsForKEV(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := range b.N {
-		sink += e.CWEsForKEV(KEV(i%1748), dst)
+		sink += e.CWEsForKEV(KEV(i%fixKEV), dst)
 	}
 }
 
@@ -413,7 +417,7 @@ func BenchmarkKEVCWEDegree(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := range b.N {
-		sink += e.KEVCWEDegree(KEV(i % 1748))
+		sink += e.KEVCWEDegree(KEV(i % fixKEV))
 	}
 }
 
@@ -425,7 +429,7 @@ func BenchmarkKEVsForCWE(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := range b.N {
-		sink += e.KEVsForCWE(CWE(i%189), dst)
+		sink += e.KEVsForCWE(CWE(i%fixCWE), dst)
 	}
 }
 
@@ -437,7 +441,7 @@ func BenchmarkProductsForKEV(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := range b.N {
-		sink += e.ProductsForKEV(KEV(i%1748), dst)
+		sink += e.ProductsForKEV(KEV(i%fixKEV), dst)
 	}
 }
 
