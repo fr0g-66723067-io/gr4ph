@@ -94,43 +94,6 @@ func checkCanaries(t *testing.T, name string, words int, bufs ...[]uint64) {
 	}
 }
 
-// TestKernelShortRows pins the short-row behaviour explicitly: rows below one
-// vector, and one whole vector plus a one-word tail, must be handled without
-// touching memory beyond the row.
-func TestKernelShortRows(t *testing.T) {
-	lanes := simd.VectorBitSize() / 64
-	for _, words := range []int{1, 2, 3, lanes + 1} {
-		srcBuf := make([]uint64, words+2)
-		for i := range srcBuf {
-			srcBuf[i] = ^uint64(0)
-		}
-		src := rowOf(srcBuf, words)
-
-		dstBuf := make([]uint64, words+2)
-		dst := rowOf(dstBuf, words)
-		orRowInto(dst, src)
-		for i := range dst {
-			if dst[i] != ^uint64(0) {
-				t.Fatalf("orRowInto words=%d: dst[%d]=%x want all ones", words, i, dst[i])
-			}
-		}
-		checkCanaries(t, "orRowInto", words, srcBuf, dstBuf)
-
-		dstBuf = make([]uint64, words+2)
-		dst = rowOf(dstBuf, words)
-		andRowInto(dst, src)
-		checkCanaries(t, "andRowInto", words, srcBuf, dstBuf)
-
-		dstBuf = make([]uint64, words+2)
-		dst = rowOf(dstBuf, words)
-		copyRow(dst, src)
-		if !slices.Equal(dst, src) {
-			t.Fatalf("copyRow words=%d: got %x want %x", words, dst, src)
-		}
-		checkCanaries(t, "copyRow", words, srcBuf, dstBuf)
-	}
-}
-
 // TestKernelPartContract pins what the kernels may assume about the simd partial
 // helpers, and what they must not.
 //

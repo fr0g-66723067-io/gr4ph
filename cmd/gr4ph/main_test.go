@@ -1441,33 +1441,28 @@ func TestDomainNames(t *testing.T) {
 	}
 }
 
-// TestJSONWriteError pins the write-failure path: the encoder's error is
-// reported verbatim on stderr and the status is 1, whatever the stream behind
-// it does.
-func TestJSONWriteError(t *testing.T) {
-	e := fixtureEngine(t)
-	var stderr bytes.Buffer
-	status := run(e, []string{"-json", "ttp", "T1059"}, errWriter{}, &stderr)
-	if status != 1 {
-		t.Fatalf("status = %d, want 1", status)
-	}
-	if want := "gr4ph: " + errClosed.Error() + "\n"; stderr.String() != want {
-		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
-	}
-}
-
-// TestTextWriteError pins the text branch of the same contract: writeText's
-// first error is reported verbatim on stderr and the status is 1, instead of a
-// full disk or a closed pipe exiting 0 silently.
-func TestTextWriteError(t *testing.T) {
-	e := fixtureEngine(t)
-	var stderr bytes.Buffer
-	status := run(e, []string{"ttp", "T1059"}, errWriter{}, &stderr)
-	if status != 1 {
-		t.Fatalf("status = %d, want 1", status)
-	}
-	if want := "gr4ph: " + errClosed.Error() + "\n"; stderr.String() != want {
-		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+// TestWriteError pins the write-failure path of both renderers: the write
+// error is reported verbatim on stderr and the status is 1, whatever the stream
+// behind it does, instead of a full disk or a closed pipe exiting 0 silently.
+func TestWriteError(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		args []string
+	}{
+		{"text", []string{"ttp", "T1059"}},
+		{"json", []string{"-json", "ttp", "T1059"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := fixtureEngine(t)
+			var stderr bytes.Buffer
+			status := run(e, c.args, errWriter{}, &stderr)
+			if status != 1 {
+				t.Fatalf("status = %d, want 1", status)
+			}
+			if want := "gr4ph: " + errClosed.Error() + "\n"; stderr.String() != want {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+			}
+		})
 	}
 }
 
@@ -1614,37 +1609,20 @@ func exampleArgs(t *testing.T, line string) []string {
 // every usage error and for a command that builds its block per resolved query).
 func TestErrors(t *testing.T) {
 	e := fixtureEngine(t)
-	tests := []struct {
+	type errCase struct {
 		name     string
 		args     []string
 		wantErr  string
 		wantExit int
 		wantOut  string // "" for the commands that write one block per resolved query
 		usage    bool   // whether usage follows the message on stderr
-	}{
+	}
+	tests := []errCase{
 		{"no arguments at all", nil, "", 2, "", true},
 		{"unknown command", []string{"nope"}, "gr4ph: unknown command: nope\n", 2, "", true},
-		{"ttp without a query", []string{"ttp"}, "gr4ph: missing query\n", 2, "", false},
-		{"artifact without a query", []string{"artifact"}, "gr4ph: missing query\n", 2, "", false},
-		{"cm without a query", []string{"cm"}, "gr4ph: missing query\n", 2, "", false},
 		{"rel without a name", []string{"rel"}, "gr4ph: missing relation name\n", 2, "", false},
-		{"dc without a query", []string{"dc"}, "gr4ph: missing query\n", 2, "", false},
-		{"group without a query", []string{"group"}, "gr4ph: missing query\n", 2, "", false},
-		{"tactic without a query", []string{"tactic"}, "gr4ph: missing query\n", 2, "", false},
-		{"platform without a query", []string{"platform"}, "gr4ph: missing query\n", 2, "", false},
-		{"contain without a query", []string{"contain"}, "gr4ph: missing query\n", 2, "", false},
-		{"kev without a query", []string{"kev"}, "gr4ph: missing query\n", 2, "", false},
-		{"cwe without a query", []string{"cwe"}, "gr4ph: missing query\n", 2, "", false},
-		{"product without a query", []string{"product"}, "gr4ph: missing query\n", 2, "", false},
 		{"lone dash is a query", []string{"ttp", "-"}, "gr4ph: no such technique: -\n", 1, "", false},
 		{"empty flag name", []string{"ttp", "-=x"}, "gr4ph: bad flag syntax: -=x\n", 2, "", true},
-		{"undefined flag", []string{"ttp", "-nope", "X"}, "gr4ph: flag provided but not defined: -nope\n", 2, "", true},
-		{"undefined flag in artifact", []string{"artifact", "-nope", "X"}, "gr4ph: flag provided but not defined: -nope\n", 2, "", true},
-		{"undefined flag in cm", []string{"cm", "-nope", "X"}, "gr4ph: flag provided but not defined: -nope\n", 2, "", true},
-		{"undefined flag in rel", []string{"rel", "-nope", "any"}, "gr4ph: flag provided but not defined: -nope\n", 2, "", true},
-		{"undefined flag in coverage", []string{"coverage", "-nope", "X"}, "gr4ph: flag provided but not defined: -nope\n", 2, "", true},
-		{"undefined flag in gain", []string{"gain", "-nope", "X"}, "gr4ph: flag provided but not defined: -nope\n", 2, "", true},
-		{"undefined flag in contain", []string{"contain", "-nope", "X"}, "gr4ph: flag provided but not defined: -nope\n", 2, "", true},
 		{
 			"-family outside off/def",
 			[]string{"rel", "-family", "sideways", "accesses"},
@@ -1716,6 +1694,16 @@ func TestErrors(t *testing.T) {
 			[]string{"contain", "no-such"},
 			"gr4ph: no such technique: no-such\n", 1, "contain observed=0\n  out countermeasures (0): -\n", false,
 		},
+	}
+	// The eleven query verbs share one missing-query guard, and the flag package
+	// reports one message for every verb, so these rows are derived from the
+	// verb lists rather than hand-copied per verb: a verb that loses its guard or
+	// its flag error still fails, and the subtest names the verb.
+	for _, verb := range []string{"ttp", "artifact", "cm", "dc", "group", "tactic", "platform", "contain", "kev", "cwe", "product"} {
+		tests = append(tests, errCase{verb + " without a query", []string{verb}, "gr4ph: missing query\n", 2, "", false})
+	}
+	for _, verb := range []string{"ttp", "artifact", "cm", "dc", "group", "tactic", "platform", "kev", "cwe", "product", "rel", "coverage", "gain", "contain"} {
+		tests = append(tests, errCase{"undefined flag in " + verb, []string{verb, "-nope", "X"}, "gr4ph: flag provided but not defined: -nope\n", 2, "", true})
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

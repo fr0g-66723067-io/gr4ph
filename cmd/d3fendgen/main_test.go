@@ -248,11 +248,12 @@ func TestAssembleRejectsBadHierarchy(t *testing.T) {
 	}
 }
 
-// TestAssembleShapeDrift: a graph that is structurally fine but does not match
-// the pinned release must fail the shape gate rather than emit mismatched
-// indices. assemble itself no longer gates; run does.
-func TestAssembleShapeDrift(t *testing.T) {
-	d := &d3fendData{
+// shapeFixture is the smallest graph that assembles: one technique with no
+// ATT&CK object (so assemble tags it SPARTA and gives it no parent), one
+// artifact, one countermeasure, one relation per family, one edge of each kind
+// and one defends-against pair.
+func shapeFixture() *d3fendData {
+	return &d3fendData{
 		ttpLabel:    map[string]map[string]bool{"T1": {"One": true}},
 		artLabel:    map[string]string{"A": "A"},
 		artOff:      map[string]bool{"A": true},
@@ -264,77 +265,49 @@ func TestAssembleShapeDrift(t *testing.T) {
 		defends:     map[[2]string]bool{{"CM", "T1"}: true},
 		parentOf:    map[string]map[string]bool{},
 		parentLabel: map[string]string{},
-	}
-	m, err := assemble(map[string]*ttpInfo{}, emptyGraph(), d)
-	if err != nil {
-		t.Fatalf("assemble: %v", err)
-	}
-	if err := m.checkShape(pinnedShape); err == nil || !strings.Contains(err.Error(), "shape drift") {
-		t.Fatalf("err = %v, want a shape-drift error", err)
 	}
 }
 
-// TestCheckShapeHistogram covers the domain-histogram arm of the shape gate: a
-// graph whose counts match but whose domain tags do not must still fail.
-func TestCheckShapeHistogram(t *testing.T) {
-	d := &d3fendData{
-		ttpLabel:    map[string]map[string]bool{"T1": {"One": true}},
-		artLabel:    map[string]string{"A": "A"},
-		artOff:      map[string]bool{"A": true},
-		cmLabel:     map[string]string{"CM": "CM"},
-		offRel:      map[string]bool{"accesses": true},
-		defRel:      map[string]bool{"analyzes": true},
-		offEdge:     map[[3]string]bool{{"T1", "A", "accesses"}: true},
-		defEdge:     map[[3]string]bool{{"CM", "A", "analyzes"}: true},
-		defends:     map[[2]string]bool{{"CM", "T1"}: true},
-		parentOf:    map[string]map[string]bool{},
-		parentLabel: map[string]string{},
-	}
-	m, err := assemble(map[string]*ttpInfo{}, emptyGraph(), d)
-	if err != nil {
-		t.Fatalf("assemble: %v", err)
-	}
-	// The single technique has no ATT&CK object, so assemble tags it SPARTA.
-	small := shape{
-		ttps: 1, artifacts: 1, cms: 1, offRels: 1, defRels: 1,
-		offEdges: 1, defEdges: 1, defends: 1, offPairs: 1,
-	}
-	if err := m.checkShape(small); err == nil || !strings.Contains(err.Error(), "domain histogram") {
-		t.Fatalf("err = %v, want a domain-histogram error", err)
-	}
+// assembledShape is what shapeFixture assembles to: the counts, the distinct
+// technique/artifact pairs, the domain and group histograms and the hierarchy
+// all agree with it.
+var assembledShape = shape{
+	ttps: 1, artifacts: 1, cms: 1, offRels: 1, defRels: 1,
+	offEdges: 1, defEdges: 1, defends: 1, offPairs: 1, sparta: 1, topLevel: 1,
 }
 
-// TestCheckShapeHierarchy covers the hierarchy arm of the shape gate: a graph
-// whose counts and domain histogram match but whose hierarchy does not must
-// still fail.
-func TestCheckShapeHierarchy(t *testing.T) {
-	d := &d3fendData{
-		ttpLabel:    map[string]map[string]bool{"T1": {"One": true}},
-		artLabel:    map[string]string{"A": "A"},
-		artOff:      map[string]bool{"A": true},
-		artDef:      map[string]bool{},
-		cmLabel:     map[string]string{"CM": "CM"},
-		offRel:      map[string]bool{"accesses": true},
-		defRel:      map[string]bool{"analyzes": true},
-		offEdge:     map[[3]string]bool{{"T1", "A", "accesses"}: true},
-		defEdge:     map[[3]string]bool{{"CM", "A", "analyzes"}: true},
-		defends:     map[[2]string]bool{{"CM", "T1"}: true},
-		parentOf:    map[string]map[string]bool{},
-		parentLabel: map[string]string{},
-	}
-	m, err := assemble(map[string]*ttpInfo{}, emptyGraph(), d)
+// TestCheckShape covers the arms of the shape gate in checkShape's own order,
+// each with the shape that reaches it: a graph that is structurally fine but is
+// not the pinned release (the arm run applies to the whole table, so such a
+// table fails the gate rather than emitting mismatched indices), one whose
+// counts match but whose domain histogram does not, and one that differs only in
+// the hierarchy. The nil case first proves the fixture clears the arms the other
+// cases exercise.
+func TestCheckShape(t *testing.T) {
+	m, err := assemble(map[string]*ttpInfo{}, emptyGraph(), shapeFixture())
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
 	}
-	// Everything matches except the hierarchy: the single technique has no
-	// parent, so topLevel is 1 and subs 0.
-	want := shape{
-		ttps: 1, artifacts: 1, cms: 1, offRels: 1, defRels: 1,
-		offEdges: 1, defEdges: 1, defends: 1, offPairs: 1, sparta: 1,
-		topLevel: 0, subs: 1,
+	if err := m.checkShape(assembledShape); err != nil {
+		t.Fatalf("checkShape(assembled) = %v, want nil", err)
 	}
-	if err := m.checkShape(want); err == nil || !strings.Contains(err.Error(), "hierarchy") {
-		t.Fatalf("err = %v, want a hierarchy error", err)
+	histogram, hierarchy := assembledShape, assembledShape
+	histogram.sparta = 0                      // the lone technique is sparta-tagged
+	hierarchy.topLevel, hierarchy.subs = 0, 1 // ... and has no children
+	for _, c := range []struct {
+		name string
+		want shape
+		err  string
+	}{
+		{"counts drift", pinnedShape, "techniques, want"},
+		{"domain histogram", histogram, "domain histogram"},
+		{"hierarchy", hierarchy, "hierarchy"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if err := m.checkShape(c.want); err == nil || !strings.Contains(err.Error(), c.err) {
+				t.Fatalf("err = %v, want a %s error", err, c.err)
+			}
+		})
 	}
 }
 
