@@ -290,16 +290,16 @@ func BenchmarkTTPsMapped(b *testing.B) {
 	}
 }
 
+// fixKEVEdges is the fixture's weakness-edge count: enough distinct pairs to
+// populate the rows without depending on any catalog release.
+const fixKEVEdges = 1689
+
 // kevEngine is a standalone KEV fixture, kept separate from the ATT&CK
 // fixtures so their stride contracts stay untouched. It registers fixKEV
 // entries, fixCWE weaknesses and fixProduct products with fixKEVEdges distinct
-// weakness edges and one product edge per entry: a fixture sized to exercise
-// the 28/3/12-word rows, not a copy of any catalog release, so a re-pin never
-// edits this file.
-// fixKEVEdges is the fixture's own weakness-edge count: enough distinct pairs
-// to populate the rows without pinning a catalog release's shape.
-const fixKEVEdges = 1689
-
+// weakness edges and one product edge per entry: a fixture sized to exercise the
+// 28/3/12-word rows through this package's fixture constants, so a catalog roll
+// never edits this file.
 func kevEngine(tb testing.TB) *Engine {
 	tb.Helper()
 	b := NewBuilder()
@@ -365,8 +365,8 @@ func kevEngine(tb testing.TB) *Engine {
 	return e
 }
 
-// BenchmarkKEVsForProducts is the asset-inventory query: the union of 50 of the
-// ProductCount productKEV rows, one kevCWE row per entry named.
+// BenchmarkKEVsForProducts is the asset-inventory query: the union of the first
+// 50 productKEV rows, one kevCWE row per entry named.
 func BenchmarkKEVsForProducts(b *testing.B) {
 	e := kevEngine(b)
 	sel := make([]uint64, e.WordsPerRow(KindProduct))
