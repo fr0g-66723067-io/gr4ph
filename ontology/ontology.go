@@ -40,9 +40,11 @@ var ErrBuilderNotEmpty = errors.New("ontology: Register requires a fresh builder
 // Register requires a fresh, unbuilt builder: pre-registered relations or nodes
 // would shift every dense id and silently misalign the tables, so an
 // already-built or non-empty builder returns ErrBuilderNotEmpty. If the
-// committed arrays disagree with the generated constants (a hand-edited or
-// half-written table), Register returns an error naming the family instead of
-// indexing out of range.
+// committed KEV arrays disagree with the generated constants (a hand-edited or
+// half-written table — the failure mode a rolling feed's regeneration can
+// produce), Register returns an error naming the family instead of indexing out
+// of range. The versioned ATT&CK/D3FEND columns are not length-guarded here:
+// cmd/d3fendgen rebuilds that file whole.
 //
 // Callers own the builder; use NewBuilder, Register, Build for the frozen
 // engine.
@@ -54,7 +56,9 @@ func Register(b *gr4ph.Builder) error {
 		return ErrBuilderNotEmpty
 	}
 	// A generated table whose arrays and constants disagree cannot load: report
-	// which family is short instead of indexing out of range below.
+	// which family is short instead of indexing out of range below. Only the KEV
+	// family is checked: it is the one regenerated from a rolling feed, so a
+	// truncated or half-written edit is plausible there.
 	for _, c := range []struct {
 		family string
 		want   int
