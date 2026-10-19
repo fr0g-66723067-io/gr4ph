@@ -1245,6 +1245,13 @@ func TestOntologyValues(t *testing.T) {
 		p1 = gr4ph.Product(1)
 	}
 	key := func(p gr4ph.Product) string { return e.KEVProductVendor(p) + "/" + e.KEVProductName(p) }
+	// The product key the catalog does not carry, used by both failure paths
+	// below: derived from the widest product plus a suffix and checked absent, so
+	// a catalog re-pin cannot turn those checks into data pins.
+	absent := key(p0) + "-absent"
+	if _, ok := e.Product(e.KEVProductVendor(p0), e.KEVProductName(p0)+"-absent"); ok {
+		t.Fatalf("%q unexpectedly resolves; pick another suffix", absent)
+	}
 	scratchK := make([]uint64, e.WordsPerRow(gr4ph.KindKEV))
 	sel := make([]uint64, e.WordsPerRow(gr4ph.KindProduct))
 	outP, stderr, status := runCase(t, e, "product", key(p0), key(p1))
@@ -1273,7 +1280,7 @@ func TestOntologyValues(t *testing.T) {
 	}{
 		{"unknown KEV entry", []string{"kev", "CVE-2099-99999"}, "gr4ph: no such KEV entry: CVE-2099-99999\n"},
 		{"unknown weakness", []string{"cwe", "CWE-9999"}, "gr4ph: no such cwe: CWE-9999\n"},
-		{"unknown product", []string{"product", "Apache/Log4j"}, "gr4ph: no such product: Apache/Log4j\n"},
+		{"unknown product", []string{"product", absent}, "gr4ph: no such product: " + absent + "\n"},
 		{"product query without a slash", []string{"product", "Log4j2"}, "gr4ph: product query must be Vendor/Product: Log4j2\n"},
 	}
 	for _, tt := range kevFailures {
@@ -1292,13 +1299,14 @@ func TestOntologyValues(t *testing.T) {
 	}
 
 	// A partial product selection keeps the block of the queries that did
-	// resolve, exactly as the per-node verbs do.
-	out, stderr, status = runCase(t, e, "product", "Apache/Log4j2", "Apache/Log4j")
-	if status != 1 || stderr != "gr4ph: no such product: Apache/Log4j\n" {
+	// resolve, exactly as the per-node verbs do. The resolving key and its count
+	// come from the tables, so a catalog re-pin cannot turn this into a data pin.
+	out, stderr, status = runCase(t, e, "product", key(p0), absent)
+	if status != 1 || stderr != "gr4ph: no such product: "+absent+"\n" {
 		t.Fatalf("status = %d, stderr = %q, want 1 and the failure", status, stderr)
 	}
-	if count, _ := setLine(t, out, "out entries"); count != 2 {
-		t.Errorf("partial product entries = %d, want 2", count)
+	if count, _ := setLine(t, out, "out entries"); count != productDegree[best] {
+		t.Errorf("partial product entries = %d, want %d", count, productDegree[best])
 	}
 
 	// The overlay verbs on the committed tables: one deployment's three states
