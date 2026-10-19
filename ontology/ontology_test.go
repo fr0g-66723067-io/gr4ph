@@ -233,16 +233,17 @@ func TestRegisterAcceptsZeroValueBuilder(t *testing.T) {
 	}
 }
 
-// TestOntologySizes pins the engine's partitions to the generated constants and
-// every emitted array to the count that describes it; the release itself is
-// pinned once, by cmd/kevgen's pinnedShape.
+// TestOntologySizes pins the engine's partitions to the generated constants,
+// the KEV arrays to the constants that describe them, and the versioned
+// ATT&CK/D3FEND counts to their release literals (the other half of
+// cmd/d3fendgen's pinnedShape).
 func TestOntologySizes(t *testing.T) {
 	e := build(t)
 
-	// The engine must match the generated table sizes, and those sizes must
-	// match the pinned release (the release itself is pinned once, by
-	// cmd/kevgen's pinnedShape; the KEV rows below only tie each emitted array
-	// to the constant that describes it).
+	// The engine must match the generated table sizes. The ATT&CK/D3FEND rows
+	// are the release pins (cmd/d3fendgen's pinnedShape, restated); the KEV rows
+	// tie each emitted array to the constant that describes it, so a catalog
+	// roll moves them with the generated table.
 	sizes := []struct {
 		name string
 		got  int
@@ -366,8 +367,8 @@ func TestOntologyLayoutArithmetic(t *testing.T) {
 	wTactic, wPlatform := 1, 1                // one uint64 mask per technique
 
 	// Every block's size is planes × rows × row stride. All of these are literal
-	// pins: those releases are versioned, so a change here is a deliberate
-	// release event, not a catalog roll.
+	// pins: ATT&CK and D3FEND are versioned releases, so a change here is a
+	// deliberate release event, not a catalog roll.
 	blocks := []struct {
 		name  string
 		words int
