@@ -287,7 +287,7 @@ $ ./gr4ph -json rel blocks
 ```
 
 `examples/scenarios.sh` is a plain list of `gr4ph` commands — all fourteen commands, the relation and
-family filters, several queries per call, `-json`, the failures and `help` — grouped into defence and
+family filters, several queries per call, `-json` and the failures — grouped into defence and
 attack scenarios, each scenario under a banner heading and each command labelled with the invocation that
 produced the block below it. Nothing is checked and nothing is trimmed: it prints each answer in full, so
 run it after `make build` and read the output.
