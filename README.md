@@ -412,7 +412,8 @@ of the generated constants (`ontology.NTTP`, `NArtifact`, `NCountermeasure`, `ND
 and `wX` its row stride, `ceil(nX/64)`, so every row holds for any pinned release; `nRel`/`nDefRel` are the
 plane counts (`NRel+1`, `NDefRel+1`), because plane 0 of each family is the union. The grouping partition has
 no `Kind`, so `wGrp = ceil(nGrp/64)` is the one stride `WordsPerRow` does not publish, and the attribute
-masks are one word (`wTactic = wPlatform = 1`). `go doc ./ontology` prints the current values.
+masks are one word (`wTactic = wPlatform = 1`). `GOEXPERIMENT=simd go doc -all ./ontology` prints the
+current values.
 
 | block | planes | words | bytes |
 |---|---|---|---|
@@ -676,11 +677,14 @@ assumed, and a run reports exactly what it measured: `cmd/d3fendgen` prints one 
 (`ttps`, `artifacts`, `countermeasures`, `relations`, `edges`, `hierarchy`, `revoked`, `tactics`, `data
 components`, `groups`) with the counts it measured, and `cmd/kevgen` prints `catalog`, `entries`,
 `weaknesses` and `products`. The values are whatever the pinned sources measure; `make gen` prints them,
-and `go doc ./ontology` prints the counts the committed tables carry.
+and `GOEXPERIMENT=simd go doc -all ./ontology` prints the counts the committed tables carry.
 
-If a future upstream release changes any of those, the generator fails with the actual counts instead
-of emitting tables whose indices no longer match — re-pin the sources; the suite derives every expected
-value from the generated constants, so re-pinning is the whole edit.
+If a future upstream release changes any of those, the generator fails with the actual counts instead of
+emitting tables whose indices no longer match. Re-pinning a versioned ATT&CK/D3FEND release is a
+deliberate edit: `cmd/d3fendgen`'s release URLs and `pinnedShape`, the literal counts in the ontology
+tests, and the release numbers this README quotes all move together. A KEV catalog roll is the exception:
+`cmd/kevgen` re-pins itself, and the suite derives every KEV expectation from the emitted constants, so
+nothing else is edited.
 
 KEV is a rolling feed, unlike the three versioned ATT&CK releases: CISA revises the catalog in place and
 bumps its `catalogVersion`. When the fetched version differs from the pinned one, `cmd/kevgen` re-pins
@@ -847,10 +851,10 @@ checked by `make all`/`make stock` and by CI:
 
 What a `v0.x` minor bump may change without a major bump: the exported Go API (adding or renaming a
 method, changing a stride or the memory layout, changing an error string or a panic), the CLI's output
-text, and the pinned upstream sources — the generator fails rather than emitting tables whose indices
-no longer match, and the README's sizes are formulas over the generated constants, so a re-pin edits no
-prose. Nothing in this module is deprecated: there are no shims, aliases or compatibility re-exports to
-carry.
+text, and the pinned upstream sources — each generator fails rather than emitting tables whose indices no
+longer match; a versioned ATT&CK/D3FEND bump moves the literal release counts with it, while a KEV
+catalog roll re-pins itself and edits no prose. Nothing in this module is deprecated: there are no shims,
+aliases or compatibility re-exports to carry.
 
 ## License
 
