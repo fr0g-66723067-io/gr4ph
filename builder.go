@@ -361,7 +361,7 @@ func NewBuilder() *Builder {
 	return b
 }
 
-// normalize is the single key-normalisation rule for the cold path: trim, then
+// normalize is the single key-normalization rule for the cold path: trim, then
 // lower-case. Every lookup method applies exactly this.
 func normalize(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
@@ -462,7 +462,7 @@ func (b *Builder) ProductCount() int { return len(b.productVendors) }
 // wordsFor returns the number of 64-bit words needed for n bits.
 func wordsFor(n int) int { return (n + 63) / 64 }
 
-// Build freezes the graph into an immutable Engine: it materialises every
+// Build freezes the graph into an immutable Engine: it materializes every
 // matrix block and its transpose, folds each union plane 0 from the predicate
 // planes, and copies the per-technique attribute masks and the group-kind
 // column. The builder must not be used afterwards: every Add* then returns

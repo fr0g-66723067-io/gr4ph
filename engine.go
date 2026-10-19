@@ -63,7 +63,7 @@ type Engine struct {
 	wPlatform       int // one word per technique (the platform mask)
 
 	// Six matrix blocks. Every row is exactly one stride long (no padding),
-	// and every directed relation is materialised in both directions.
+	// and every directed relation is materialized in both directions.
 	ttpArt []uint64 // [nRel][nTTP][wArt]    technique-major over artifacts
 	artTTP []uint64 // [nRel][nArt][wTTP]    artifact-major transpose
 	cmArt  []uint64 // [nDefRel][nCM][wArt]  countermeasure-major over artifacts
@@ -93,7 +93,7 @@ type Engine struct {
 	softwareGrp []uint64 // [nGrp][wGrp]      software -> groups
 
 	// The KEV catalog: the entry partition, the weakness vocabulary it names
-	// and the product vocabulary it is about. Both families are materialised in
+	// and the product vocabulary it is about. Both families are materialized in
 	// both directions, and every row is exactly one stride long.
 	kevCWE     []uint64 // [nKEV][wCWE]      entry -> weakness
 	cweKEV     []uint64 // [nCWE][wKEV]      weakness -> entry (transpose)

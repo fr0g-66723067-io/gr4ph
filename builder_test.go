@@ -24,7 +24,7 @@ func TestBuilderIdempotencyAndDenseOrder(t *testing.T) {
 		t.Fatalf("AddTTP repeat: %v", err)
 	}
 	if again != t0 {
-		t.Fatalf("repeat AddTTP = %d, want %d (normalised key)", again, t0)
+		t.Fatalf("repeat AddTTP = %d, want %d (normalized key)", again, t0)
 	}
 	if b.TTPCount() != 1 {
 		t.Fatalf("TTPCount = %d, want 1", b.TTPCount())
@@ -172,7 +172,7 @@ func TestBuilderLiveLabelBeatsRevoked(t *testing.T) {
 	}
 }
 
-// TestBuilderGroupLiveLabelBeatsRevoked is the grouping analogue of
+// TestBuilderGroupLiveLabelBeatsRevoked is the grouping analog of
 // TestBuilderLiveLabelBeatsRevoked, on the pair that made the difference: on the
 // pinned 19.2 tables the label "TRITON" is carried by the deprecated S0609 and
 // the live S1009, and resolving a shared label to the first registration handed

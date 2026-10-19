@@ -10,7 +10,7 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **SIMD bitmatrix engine** over MITRE ATT&CK (enterprise, ICS, mobile) crossed
   with MITRE D3FEND and the CISA Known Exploited Vulnerabilities catalog,
   flattened into a frozen set of structure-of-arrays bitmatrix planes. Every
-  directed relation is materialised in both directions, so a traversal is one
+  directed relation is materialized in both directions, so a traversal is one
   row fetch plus vector bitwise ops — no pointer chasing, no per-edge
   allocation and no strings on the hot path.
 - **Seven node partitions**: techniques (TTPs, sub-techniques included),
@@ -46,6 +46,6 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (4.645 MiB) across the twenty-one frozen arrays.
 - **Zero allocation** on the hot path, enforced by `AllocsPerRun` tests, plus a
   `-race` pass over concurrent queries of the immutable engine.
-- **Licence**: Apache-2.0 — see [LICENSE](LICENSE). The MITRE ATT&CK/D3FEND,
+- **License**: Apache-2.0 — see [LICENSE](LICENSE). The MITRE ATT&CK/D3FEND,
   The Aerospace Corporation SPARTA and CISA KEV notices are in
   [NOTICE](NOTICE).

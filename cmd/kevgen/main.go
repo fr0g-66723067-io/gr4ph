@@ -20,13 +20,13 @@
 // measurement that keeps the emitted tables honest.
 //
 // Three ingestion rules keep the emitted dense ids equal to the ones the builder
-// assigns: entries are sorted by normalised CVE id (the feed's own order is
+// assigns: entries are sorted by normalized CVE id (the feed's own order is
 // neither sorted nor stable), every ingested string is trimmed and lower-cased
 // (the feed carries surrounding whitespace on 27 names, 6 vendors and 13
 // products, and three product names differ only in case; the ten product pairs
 // that collapse are why the pinned product count is 722 rather than the 732 raw
 // spellings), and every vocabulary and per-entry reference list is deduped on
-// that normalised key — one element per node the builder registers, so the
+// that normalized key — one element per node the builder registers, so the
 // emitted arrays and the engine's partitions stay index for index.
 //
 //	go run ./cmd/kevgen -out ontology/kev_gen.go
@@ -219,7 +219,7 @@ type catalog struct {
 // indexes a key the way it looks it up (trimmed and lower-cased), so the raw
 // form would make a stored label render differently from the way it resolves —
 // and, for products, would give the generator ten more indices than the builder
-// has nodes (732 raw spellings, 722 keys). cwes holds the normalised keys of the
+// has nodes (732 raw spellings, 722 keys). cwes holds the normalized keys of the
 // entry's references, deduped, which is what the builder resolves.
 type entry struct {
 	id, name, added string
@@ -229,8 +229,8 @@ type entry struct {
 }
 
 // model is the parsed catalog as the dense ids the ontology registers: entries
-// sorted by normalised CVE id, the CWE and product vocabularies sorted by
-// normalised key, and the weakness family as parallel index slices.
+// sorted by normalized CVE id, the CWE and product vocabularies sorted by
+// normalized key, and the weakness family as parallel index slices.
 type model struct {
 	catalog string
 
@@ -254,7 +254,7 @@ type model struct {
 // so sorting is what keeps `make gen` byte-identical across fetches, and the
 // sort order is the dense id order the emitted arrays and the builder share.
 // Every key is the builder's key — the id, the weakness and the product pair are
-// all sorted and deduped on the normalised (trimmed, lower-cased) form, so the
+// all sorted and deduped on the normalized (trimmed, lower-cased) form, so the
 // emitted arrays have one element per node the builder registers.
 func parse(data []byte) (*model, error) {
 	var c catalog
@@ -288,7 +288,7 @@ func parse(data []byte) (*model, error) {
 			cwes: normalizedDedup(v.CWEs),
 		})
 	}
-	// The sort key is the normalised id, which is the key the builder registers:
+	// The sort key is the normalized id, which is the key the builder registers:
 	// two spellings of one CVE are one node there, so they must be one entry
 	// here. The raw id breaks a tie, so the order is deterministic either way.
 	sort.Slice(entries, func(i, j int) bool {
@@ -300,7 +300,7 @@ func parse(data []byte) (*model, error) {
 	})
 	for i := 1; i < len(entries); i++ {
 		if normalize(entries[i].id) == normalize(entries[i-1].id) {
-			return nil, fmt.Errorf("duplicate cveID %s (same normalised key as %s)", entries[i].id, entries[i-1].id)
+			return nil, fmt.Errorf("duplicate cveID %s (same normalized key as %s)", entries[i].id, entries[i-1].id)
 		}
 	}
 
@@ -405,7 +405,7 @@ func normalizedDedup(vals []string) []string {
 	return slicesCompact(out)
 }
 
-// compactKeys sorts vals in place by normalised key (the raw spelling as
+// compactKeys sorts vals in place by normalized key (the raw spelling as
 // tie-break) and keeps the byte-smallest raw spelling of each key: one element
 // per node the builder registers, holding the label that node stores, because
 // the first registration of a key is the one that names it.
@@ -624,7 +624,7 @@ func repinFile(measured shape) error {
 var repinTarget = generatorPath
 
 // repinPath rewrites the two literals in the generator source at path. Exactly
-// those two are replaced and format.Source normalises the result; the rest of
+// those two are replaced and format.Source normalizes the result; the rest of
 // the file is untouched. Each anchor must occur exactly once, so a comment that
 // happens to carry a marker can never be rewritten instead of the literal.
 func repinPath(measured shape, path string) error {

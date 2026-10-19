@@ -8,7 +8,7 @@ names — flattened into a frozen set of
 structure-of-arrays bitmatrix planes, plus the per-technique ATT&CK attribute masks (tactics, platforms,
 sub-technique flag).
 
-Every directed relation is materialised in **both** directions, so a traversal is one row fetch plus
+Every directed relation is materialized in **both** directions, so a traversal is one row fetch plus
 vector bitwise ops: no pointer chasing, no per-edge allocation, no strings on the hot path.
 Sub-technique roll-up is explicit (`ArtifactsRollup`, `ArtifactsRollupRel`, `TTPsRollup`, `TTPsRollupRel`,
 `CountermeasuresForTTPRollup`, `TTPsForCountermeasureRollup`, `TTPsForGroupRollup`,
@@ -143,7 +143,7 @@ Each verb answers a different kind of question, and the table above names the se
   weakness classes it names, the entries of one weakness class, and the union of the entries filed under
   any of the products a selection names, so `product Apache/Log4j2 Apache/Struts` is the inventory
   question "which exploited vulnerabilities are in the software we run?".
-* `coverage`, `gain` and `contain` — whole-deployment answers rather than one node's neighbourhood:
+* `coverage`, `gain` and `contain` — whole-deployment answers rather than one node's neighborhood:
   several countermeasures become one deployment, `gain` ranks what adding one more would cover, and
   `contain` reads an observed technique set.
 * `rel` — a plane instead of a node: one line per family the name is registered in.
@@ -288,7 +288,7 @@ $ ./gr4ph -json rel blocks
 
 `examples/scenarios.sh` is a plain list of `gr4ph` commands — all fourteen commands, the relation and
 family filters, several queries per call, `-json` and the failures — grouped into defense and
-attack scenarios, each scenario under a banner heading and each command labelled with the invocation that
+attack scenarios, each scenario under a banner heading and each command labeled with the invocation that
 produced the block below it. Nothing is checked and nothing is trimmed: it prints each answer in full, so
 run it after `make build` and read the output.
 
@@ -298,7 +298,7 @@ resolved query instead of text.
 
 ### Coverage and containment
 
-The three overlay commands answer whole-set questions instead of one node's neighbourhood, over the same
+The three overlay commands answer whole-set questions instead of one node's neighborhood, over the same
 mask-driven kernel family (`TTPsCovered`, `TTPsBlind`, `TTPsMapped`, `CoverageGain`, `CoverageGains`,
 `CountermeasuresForObserved`). `coverage` resolves its queries into a **deployed** set of
 countermeasures and classifies every technique of the tables: **defended** (a deployed countermeasure
@@ -468,7 +468,7 @@ unchanged.
 ### KEV and the product partition
 
 The vulnerability family is two joins over the same entries: **KEV → CWE** (1679 edges over 189
-weaknesses, reaching 1564 of the 1739 entries — 175 catalogued vulnerabilities carry no weakness class at
+weaknesses, reaching 1564 of the 1739 entries — 175 cataloged vulnerabilities carry no weakness class at
 all) and **KEV → product** (exactly one edge per entry, over 722 vendor products; the 732 raw product
 spellings of the feed collapse to those 722 keys). Both are stored in both directions, because both are
 asked: `cwe CWE-78` walks `cweKEV` (110 entries) while `kev CVE-2021-44228` walks `kevCWE` (3 classes),
@@ -481,7 +481,7 @@ hierarchical, so every one of them follows edges exactly.
 There is deliberately **no KEV ↔ ATT&CK `software` block**, because the two name different things: the
 catalog names the victim-side products that were exploited (`Microsoft Windows`, `Apache Log4j2`, `Cisco
 IOS`), while ATT&CK's 957 malware and tool nodes name attacker tooling (`Mimikatz`, `Cobalt Strike`). The
-measurement over the pinned sources: normalising the 957 software node names and their aliases (1252
+measurement over the pinned sources: normalizing the 957 software node names and their aliases (1252
 distinct keys) and comparing them with the 722 product names matches 3 — `Spark` (S0543), `Cobalt
 Strike` (S0154) and `ScreenConnect`, an alias of the `ConnectWise` node S0591 — which is 0.4%, and a
 token-set comparison that ignores word order matches the same 3. A join on that overlap would be a
@@ -554,7 +554,7 @@ Builder (cold path; the builder is single-use and then frozen by `Build`):
 | `AddArtifact(name, label)` `AddCountermeasure(id, label, aliases…)` | |
 | `AddDataComponent(id, label)` `AddGroup(id, label, kind)` | `ErrUnknownGroupKind` on a kind outside the three constants |
 | `AddTactic(id, label)` `AddPlatform(name)` | dense ids in registration order (≤ 64: `ErrTooManyTactics` / `ErrTooManyPlatforms`, the width of the `uint64` mask each technique carries) |
-| `AddKEV(id, name, added, ransomware)` | idempotent on the normalised CVE id, which is the only key: a second call with the same id ignores its other arguments |
+| `AddKEV(id, name, added, ransomware)` | idempotent on the normalized CVE id, which is the only key: a second call with the same id ignores its other arguments |
 | `AddCWE(id, label)` `AddProduct(vendor, name)` | the weakness and product vocabularies, dense ids in registration order |
 | `AddEdge(t, a, r)` `AddDefEdge(cm, a, dr)` `AddDefendsEdge(cm, t)` `AddTacticEdge(t, ta)` `AddPlatformEdge(t, p)` `AddDetectsEdge(dc, t)` `AddGroupUsesEdge(g, t)` `AddGroupSoftwareEdge(from, to)` `AddKEVWeaknessEdge(k, c)` `AddKEVProductEdge(k, p)` | edges are ORed into the planes; an unregistered endpoint is `ErrUnknownTTP` / `ErrUnknownArtifact` / `ErrUnknownCountermeasure` / `ErrUnknownTactic` / `ErrUnknownPlatform` / `ErrUnknownDataComponent` / `ErrUnknownGroup` / `ErrUnknownKEV` / `ErrUnknownCWE` / `ErrUnknownProduct` |
 | `Built()` `Build()` | `Build` is single-use: `ErrBuilderUsed` afterwards; `ErrKEVWithoutProduct` / `ErrKEVMultipleProducts` when the graph breaks the one-product-per-entry invariant the KEV accessors read |
@@ -712,11 +712,11 @@ condition into a hard error instead (`KEV catalog <pinned> expected, got <fetche
 version is the contract, the counts are the measurement that keeps the emitted tables honest.
 
 Three ingestion rules keep the emitted dense ids equal to the ones the builder assigns: entries are sorted
-by normalised CVE id (the feed's own order is neither sorted nor stable), every ingested string is trimmed
+by normalized CVE id (the feed's own order is neither sorted nor stable), every ingested string is trimmed
 and lower-cased — the feed carries surrounding whitespace on 27 names, 6 vendors and 13 products, three
 product names differ only in case, and the ten product pairs that collapse are why the pinned product
 count is 722 rather than the 732 raw spellings — and every vocabulary and per-entry reference list is
-deduped on that normalised key, one element per node the builder registers.
+deduped on that normalized key, one element per node the builder registers.
 
 Registration order is load-bearing (`ontology.Register`): relations first (so `RelNames[i]` becomes
 plane `i+1`, matching the generated constants) and then the tactic and platform vocabularies (so
@@ -825,7 +825,7 @@ verb ranked every candidate with its own `CoverageGain` call, so each of the 160
 candidates re-derived the same covered union, and both gain methods now clear the retired techniques a
 candidate would otherwise be credited for. `CoverageGains` derives the union once and writes one marginal
 gain per countermeasure, which is what `gain -all` and every round of `gain -greedy ContentQuarantine` now
-walk; the swap is behaviour-preserving at the point it landed — the two verbs printed byte-identical
+walk; the swap is behavior-preserving at the point it landed — the two verbs printed byte-identical
 output against a worktree of the previous commit — and the retired mask that later widened the difference
 is the subject of the coverage section above.
 

@@ -638,7 +638,7 @@ func TestOntologySynthesisedParents(t *testing.T) {
 func TestOntologyColdPath(t *testing.T) {
 	e := build(t)
 
-	// Normalisation: id, label and alias are all keys, trimmed and
+	// Normalization: id, label and alias are all keys, trimmed and
 	// case-insensitive.
 	want := ttp(t, e, "T1003.001")
 	for _, alert := range []string{"t1003.001", "T1003.001", "LSASS Memory", "  lsass memory  ", " lsass MEMORY "} {
@@ -1335,7 +1335,7 @@ var ontologySink int
 // TestZeroAllocOntology repeats the allocation contract against the real
 // engine: 1186x247x157 with 19/4/3-word rows must not allocate either. Every
 // result is folded into ontologySink, so an inlined pure call cannot be
-// optimised away, and the case count is pinned to the root package's.
+// optimized away, and the case count is pinned to the root package's.
 func TestZeroAllocOntology(t *testing.T) {
 	e := build(t)
 	bufT := make([]gr4ph.TTP, e.TTPCount())
@@ -1694,7 +1694,7 @@ func TestOntologyAttributes(t *testing.T) {
 	if tsum != 1431 || psum != 2527 {
 		t.Errorf("assignment totals = %d/%d, want 1431/2527", tsum, psum)
 	}
-	// The two directions are materialised from one edge list, so the tactic
+	// The two directions are materialized from one edge list, so the tactic
 	// masks and the reverse rows must agree exactly over the whole space.
 	for i := 0; i < e.TacticCount(); i++ {
 		tac := gr4ph.Tactic(i)
@@ -1717,7 +1717,7 @@ func TestOntologyAttributes(t *testing.T) {
 	}
 
 	// The same two-direction agreement for the other four pairs: each is
-	// materialised from one edge list, so a transposed or mis-strided row would
+	// materialized from one edge list, so a transposed or mis-strided row would
 	// leave a carrier count and a reverse row disagreeing.
 	for i := 0; i < e.PlatformCount(); i++ {
 		p := gr4ph.Platform(i)

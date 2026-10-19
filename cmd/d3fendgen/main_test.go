@@ -714,7 +714,7 @@ func TestAssembleSynthesisedParents(t *testing.T) {
 	if _, err := assemble(map[string]*ttpInfo{}, emptyGraph(),
 		parse(t, header+row("D-1.1", "D One One", "D-1", ""))); err == nil ||
 		!strings.Contains(err.Error(), "no off_tech_parent_label") {
-		t.Fatalf("unlabelled parent err = %v, want a missing-label error", err)
+		t.Fatalf("unlabeled parent err = %v, want a missing-label error", err)
 	}
 
 	// A three-level id is a depth error, not a missing-label one, even though
@@ -1105,9 +1105,9 @@ func TestParseD3FENDLabelOrder(t *testing.T) {
 		"http://x#CM", "http://x#analyzes", "http://x#A", "", "", "", "")
 	// The offensive row carries no label of its own, so the defensive spelling
 	// is the only candidate; with a label, the offensive spelling must win.
-	offensiveUnlabelled := csvRow("", "", "", "", "", "One", "",
+	offensiveUnlabeled := csvRow("", "", "", "", "", "One", "",
 		"", "", "", "http://x#A", "http://x#accesses", "http://x#T1", "")
-	offensiveLabelled := csvRow("", "", "", "Offensive Name", "", "One", "",
+	offensiveLabeled := csvRow("", "", "", "Offensive Name", "", "One", "",
 		"", "", "", "http://x#A", "http://x#accesses", "http://x#T1", "")
 
 	for _, tc := range []struct {
@@ -1115,10 +1115,10 @@ func TestParseD3FENDLabelOrder(t *testing.T) {
 		rows []string
 		want string
 	}{
-		{"defensive first, no offensive label", []string{defensive, offensiveUnlabelled}, "Defensive Name"},
-		{"offensive first, no offensive label", []string{offensiveUnlabelled, defensive}, "Defensive Name"},
-		{"defensive first, offensive label", []string{defensive, offensiveLabelled}, "Offensive Name"},
-		{"offensive first, offensive label", []string{offensiveLabelled, defensive}, "Offensive Name"},
+		{"defensive first, no offensive label", []string{defensive, offensiveUnlabeled}, "Defensive Name"},
+		{"offensive first, no offensive label", []string{offensiveUnlabeled, defensive}, "Defensive Name"},
+		{"defensive first, offensive label", []string{defensive, offensiveLabeled}, "Offensive Name"},
+		{"offensive first, offensive label", []string{offensiveLabeled, defensive}, "Offensive Name"},
 	} {
 		d, err := parseD3FEND([]byte(csvHeader + strings.Join(tc.rows, "")))
 		if err != nil {
@@ -1130,10 +1130,10 @@ func TestParseD3FENDLabelOrder(t *testing.T) {
 	}
 }
 
-// TestParseD3FENDUnlabelledEndpoint pins the symmetric node rule: an edge
+// TestParseD3FENDUnlabeledEndpoint pins the symmetric node rule: an edge
 // endpoint whose own label cell is empty still becomes a node, named by its id
 // (the same fallback artifacts get), instead of aborting the run.
-func TestParseD3FENDUnlabelledEndpoint(t *testing.T) {
+func TestParseD3FENDUnlabeledEndpoint(t *testing.T) {
 	// off_tech_label and def_tech_label are both empty.
 	csv := csvHeader + csvRow("", "analyzes", "A Label", "A Label", "accesses", "", "",
 		"http://x#CM", "http://x#analyzes", "http://x#A", "http://x#A", "http://x#accesses", "http://x#T1", "")

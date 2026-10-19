@@ -27,7 +27,7 @@ func runCoverage(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
 	}
 	// No query is a valid invocation here: the empty deployment is a real
 	// question ("what does nothing cover?"), and its answer is the state of an
-	// organisation that has bought no countermeasure yet.
+	// organization that has bought no countermeasure yet.
 	buf := newBuffers(e)
 	failures := make([]string, 0)
 	deployed := make([]uint64, e.WordsPerRow(gr4ph.KindCountermeasure))

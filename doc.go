@@ -9,7 +9,7 @@
 // weakness and product vocabularies the catalog names — into a frozen set of
 // structure-of-arrays bitmatrix planes, plus the per-technique ATT&CK attribute
 // masks (tactics, platforms, sub-technique flag). Every directed relation is
-// materialised in both directions, so a traversal is a row fetch plus vector
+// materialized in both directions, so a traversal is a row fetch plus vector
 // bitwise ops: no pointer chasing, no per-edge allocation, no strings on the
 // hot path.
 //

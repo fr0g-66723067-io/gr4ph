@@ -45,7 +45,7 @@ var testShape = shape{
 // two vocabularies keyed and deduped the way the builder keys them (trimmed and
 // lower-cased, one element per node), one pair per distinct weakness reference,
 // one product index per entry, and the surrounding whitespace trimmed (the
-// engine's key normalisation trims, so a stored label must not keep it).
+// engine's key normalization trims, so a stored label must not keep it).
 func TestParseSortsAndTrims(t *testing.T) {
 	m, err := parse([]byte(testKEV))
 	if err != nil {
@@ -66,12 +66,12 @@ func TestParseSortsAndTrims(t *testing.T) {
 	if !m.kevRansom[0] || m.kevRansom[1] || m.kevRansom[2] || m.kevRansom[3] {
 		t.Errorf("kevRansom = %v, want only the Known entry", m.kevRansom)
 	}
-	// One element per normalised key, holding the byte-smallest spelling of it:
+	// One element per normalized key, holding the byte-smallest spelling of it:
 	// entry 2 names CWE-79 twice under two spellings, and the key it resolves to
 	// is one node in the builder, so the vocabulary is three elements and not
 	// four (a fourth would shift every index after it).
 	if got := strings.Join(m.cweIDs, ","); got != "CWE-20,CWE-502,CWE-79" {
-		t.Errorf("cweIDs = %s, want one element per normalised key", got)
+		t.Errorf("cweIDs = %s, want one element per normalized key", got)
 	}
 	// The duplicated CWE-20 of entry 0 collapses to one pair, and the pairs stay
 	// sorted by (entry, cwe).
@@ -400,7 +400,7 @@ func TestParseRejects(t *testing.T) {
 			"duplicate cveID CVE-1",
 		},
 		{
-			// The builder registers one node per normalised key, so two
+			// The builder registers one node per normalized key, so two
 			// spellings of one CVE are a duplicate here, not two entries.
 			"case-variant duplicate id",
 			`{"catalogVersion":"1","vulnerabilities":[

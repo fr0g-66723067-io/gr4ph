@@ -1041,7 +1041,7 @@ func TestEngineAttributes(t *testing.T) {
 	}
 
 	if ta, ok := e.Tactic("ta0001"); !ok || ta != 0 {
-		t.Errorf("Tactic(ta0001) = %v %v, want 0 true (normalised)", ta, ok)
+		t.Errorf("Tactic(ta0001) = %v %v, want 0 true (normalized)", ta, ok)
 	}
 	if _, ok := e.Tactic("Initial Access"); ok {
 		t.Error("Tactic(label) resolved: tactic labels repeat across domains, the TA id is the key")

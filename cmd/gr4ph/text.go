@@ -118,7 +118,7 @@ func writeJSON(w io.Writer, res result) error {
 	return json.NewEncoder(w).Encode(res)
 }
 
-// artNodes materialises the first n artifact ids of ids as cold-key nodes.
+// artNodes materializes the first n artifact ids of ids as cold-key nodes.
 func artNodes(e *gr4ph.Engine, ids []gr4ph.Artifact, n int) []node {
 	nodes := make([]node, 0, n)
 	for _, a := range ids[:n] {
@@ -128,7 +128,7 @@ func artNodes(e *gr4ph.Engine, ids []gr4ph.Artifact, n int) []node {
 	return nodes
 }
 
-// ttpNodes materialises the first n technique ids of ids as cold-key nodes.
+// ttpNodes materializes the first n technique ids of ids as cold-key nodes.
 func ttpNodes(e *gr4ph.Engine, ids []gr4ph.TTP, n int) []node {
 	nodes := make([]node, 0, n)
 	for _, t := range ids[:n] {
@@ -138,7 +138,7 @@ func ttpNodes(e *gr4ph.Engine, ids []gr4ph.TTP, n int) []node {
 	return nodes
 }
 
-// cmNodes materialises the first n countermeasure ids of ids as cold-key nodes.
+// cmNodes materializes the first n countermeasure ids of ids as cold-key nodes.
 func cmNodes(e *gr4ph.Engine, ids []gr4ph.Countermeasure, n int) []node {
 	nodes := make([]node, 0, n)
 	for _, cm := range ids[:n] {
@@ -148,7 +148,7 @@ func cmNodes(e *gr4ph.Engine, ids []gr4ph.Countermeasure, n int) []node {
 	return nodes
 }
 
-// dcNodes materialises the first n data-component ids of ids as cold-key nodes.
+// dcNodes materializes the first n data-component ids of ids as cold-key nodes.
 func dcNodes(e *gr4ph.Engine, ids []gr4ph.DataComponent, n int) []node {
 	nodes := make([]node, 0, n)
 	for _, dc := range ids[:n] {
@@ -158,7 +158,7 @@ func dcNodes(e *gr4ph.Engine, ids []gr4ph.DataComponent, n int) []node {
 	return nodes
 }
 
-// groupNodes materialises the first n grouping-node ids of ids as cold-key
+// groupNodes materializes the first n grouping-node ids of ids as cold-key
 // nodes: actors, software and campaigns share one partition, so the kind is
 // answered per node by `group`, not by this list.
 func groupNodes(e *gr4ph.Engine, ids []gr4ph.Group, n int) []node {
@@ -170,7 +170,7 @@ func groupNodes(e *gr4ph.Engine, ids []gr4ph.Group, n int) []node {
 	return nodes
 }
 
-// cweNodes materialises the first n weakness ids of ids as cold-key nodes. A
+// cweNodes materializes the first n weakness ids of ids as cold-key nodes. A
 // weakness has no separate label, so every node prints its id alone.
 func cweNodes(e *gr4ph.Engine, ids []gr4ph.CWE, n int) []node {
 	nodes := make([]node, 0, n)
@@ -180,7 +180,7 @@ func cweNodes(e *gr4ph.Engine, ids []gr4ph.CWE, n int) []node {
 	return nodes
 }
 
-// kevNodes materialises the first n KEV entry ids of ids as cold-key nodes: the
+// kevNodes materializes the first n KEV entry ids of ids as cold-key nodes: the
 // CVE id is the name and the vulnerability title the label, as in the kev
 // header.
 func kevNodes(e *gr4ph.Engine, ids []gr4ph.KEV, n int) []node {

@@ -382,7 +382,7 @@ rel blocks defensive plane 3/3 (countermeasure -> artifact): edges=1 sources=1
 `
 )
 
-// TestTextFixture pins the text encoder byte for byte, one case per behaviour,
+// TestTextFixture pins the text encoder byte for byte, one case per behavior,
 // against the hand-built fixture graph.
 func TestTextFixture(t *testing.T) {
 	e := fixtureEngine(t)

@@ -7,12 +7,12 @@ import "strings"
 // --- registration: relation planes, vocabularies, nodes and edges ---
 //
 // The relation, vocabulary and node registrations are idempotent on the
-// normalised key, seed the zero value first, and reject a used Builder with
+// normalized key, seed the zero value first, and reject a used Builder with
 // ErrBuilderUsed. The edge registrations append to their index lists instead,
 // where a duplicate is harmless (each edge method says so).
 
 // AddRel registers an offensive relation predicate and returns its plane id
-// (1..255). Idempotent on the normalised name. The name "any" is reserved for the
+// (1..255). Idempotent on the normalized name. The name "any" is reserved for the
 // union plane (RelAny) and returns ErrReservedName.
 func (b *Builder) AddRel(name string) (Rel, error) {
 	if b.Built() {
@@ -39,7 +39,7 @@ func (b *Builder) AddRel(name string) (Rel, error) {
 }
 
 // AddDefRel registers a defensive relation predicate and returns its plane id
-// (1..255). Idempotent on the normalised name. The name "any" is reserved for the
+// (1..255). Idempotent on the normalized name. The name "any" is reserved for the
 // union plane (DefRelAny) and returns ErrReservedName.
 func (b *Builder) AddDefRel(name string) (DefRel, error) {
 	if b.Built() {
@@ -66,7 +66,7 @@ func (b *Builder) AddDefRel(name string) (DefRel, error) {
 }
 
 // AddTactic registers an ATT&CK tactic and returns its dense id (0..63). It is
-// idempotent on the normalised TA id. The TA id is the only lookup key: tactic
+// idempotent on the normalized TA id. The TA id is the only lookup key: tactic
 // labels repeat across domains ("Impact" is TA0040, TA0105 and TA0034), so a
 // label key would be ambiguous.
 //
@@ -96,7 +96,7 @@ func (b *Builder) AddTactic(id, label string) (Tactic, error) {
 }
 
 // AddPlatform registers a platform and returns its dense id (0..63). It is
-// idempotent on the normalised name. The space is 64 for the same reason
+// idempotent on the normalized name. The space is 64 for the same reason
 // AddTactic's is: a technique's platform mask is one uint64.
 func (b *Builder) AddPlatform(name string) (Platform, error) {
 	if b.Built() {
@@ -120,8 +120,8 @@ func (b *Builder) AddPlatform(name string) (Platform, error) {
 }
 
 // AddDataComponent registers a data component and returns its dense id.
-// Idempotent on the normalised id; the label is a lookup key too. Ids and labels
-// share one key map, so a key that normalises to an existing one returns that
+// Idempotent on the normalized id; the label is a lookup key too. Ids and labels
+// share one key map, so a key that normalizes to an existing one returns that
 // node as well: first registration wins.
 func (b *Builder) AddDataComponent(id, label string) (DataComponent, error) {
 	if b.Built() {
@@ -147,7 +147,7 @@ func (b *Builder) AddDataComponent(id, label string) (DataComponent, error) {
 }
 
 // AddGroup registers a grouping node — an actor, a piece of software or a
-// campaign — and returns its dense id. Idempotent on the normalised id; the label
+// campaign — and returns its dense id. Idempotent on the normalized id; the label
 // is a lookup key too, resolved live-first as a technique's label is: a live node
 // takes a shared label from a revoked holder, and the earliest registration keeps
 // it between holders of the same standing. kind must be one of the three
@@ -182,15 +182,15 @@ func (b *Builder) AddGroup(id, label string, kind GroupKind, revoked bool) (Grou
 }
 
 // AddTTP registers a technique and returns its dense id. Idempotent on the
-// normalised id: a second call with the same id returns the stored id and
+// normalized id: a second call with the same id returns the stored id and
 // ignores its other arguments (label, domain, parent, revoked, aliases). Labels
-// and aliases are lookup keys too, so an id that normalises to an existing label
+// and aliases are lookup keys too, so an id that normalizes to an existing label
 // or alias returns that node as well: first registration wins, except that a
 // live technique takes a label or alias from a revoked holder — see claimTTP.
 // revoked marks an ATT&CK technique that has been revoked or deprecated; it only
 // decides who wins a shared label or alias. parent must be
 // NoParent or an already-registered top-level technique whose child block the
-// new node extends contiguously. An id that normalises to the empty string
+// new node extends contiguously. An id that normalizes to the empty string
 // returns ErrEmptyKey; a dom other than the four Domain constants returns
 // ErrUnknownDomain.
 func (b *Builder) AddTTP(id, label string, dom Domain, parent TTP, revoked bool, aliases ...string) (TTP, error) {
@@ -245,9 +245,9 @@ func (b *Builder) AddTTP(id, label string, dom Domain, parent TTP, revoked bool,
 }
 
 // AddArtifact registers an artifact and returns its dense id. Idempotent on the
-// normalised name; the label is registered as a lookup key too. It takes no
+// normalized name; the label is registered as a lookup key too. It takes no
 // aliases: artifacts are looked up by name or label only. Names and labels share
-// one key map, so a name that normalises to an existing label returns that node
+// one key map, so a name that normalizes to an existing label returns that node
 // as well: first registration wins.
 func (b *Builder) AddArtifact(name, label string) (Artifact, error) {
 	if b.Built() {
@@ -273,8 +273,8 @@ func (b *Builder) AddArtifact(name, label string) (Artifact, error) {
 }
 
 // AddCountermeasure registers a countermeasure and returns its dense id.
-// Idempotent on the normalised id; label and aliases are lookup keys. Ids,
-// labels and aliases share one key map, so a key that normalises to an existing
+// Idempotent on the normalized id; label and aliases are lookup keys. Ids,
+// labels and aliases share one key map, so a key that normalizes to an existing
 // one returns that node as well: first registration wins.
 func (b *Builder) AddCountermeasure(id, label string, aliases ...string) (Countermeasure, error) {
 	if b.Built() {
@@ -447,7 +447,7 @@ func (b *Builder) AddGroupSoftwareEdge(from, to Group) error {
 // AddCWE registers a weakness id and returns its dense id. The KEV catalog
 // carries no CWE name, so the caller passes the id as its own label:
 // AddCWE("CWE-78", "CWE-78"). Ids and labels share one key map, so a key that
-// normalises to an existing one returns that node as well: first registration
+// normalizes to an existing one returns that node as well: first registration
 // wins.
 func (b *Builder) AddCWE(id, label string) (CWE, error) {
 	if b.Built() {
@@ -475,7 +475,7 @@ func (b *Builder) AddCWE(id, label string) (CWE, error) {
 // AddProduct registers one (vendor, product) pair as the asset-side node of the
 // KEV partition and returns its dense id. The pair is the key and there is no
 // separate vendor id space, because no query intersects vendor bits. Idempotent
-// on the normalised pair: a pair already registered returns its node, so a
+// on the normalized pair: a pair already registered returns its node, so a
 // product is one node however many entries name it. An empty vendor or product
 // returns ErrEmptyKey.
 func (b *Builder) AddProduct(vendor, name string) (Product, error) {
@@ -503,7 +503,7 @@ func (b *Builder) AddProduct(vendor, name string) (Product, error) {
 
 // AddKEV registers one Known Exploited Vulnerabilities entry: its CVE id, the
 // vulnerability name, the date it was added to the catalog and whether CISA
-// links it to a known ransomware campaign. Idempotent on the normalised CVE id:
+// links it to a known ransomware campaign. Idempotent on the normalized CVE id:
 // a second call with the same id returns the stored id and ignores its other
 // arguments. The CVE id is the only key — vulnerability names repeat across
 // entries, so a name key would be ambiguous.
