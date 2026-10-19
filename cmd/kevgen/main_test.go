@@ -98,6 +98,32 @@ func TestParseSortsAndTrims(t *testing.T) {
 	}
 }
 
+// TestParseSortsAndDedupesEntryCWEs pins the per-entry key list: the feed's order
+// is not a contract, so an unsorted list with a non-adjacent duplicate must come
+// out sorted and collapsed — otherwise the pair arrays would hold more references
+// than the matrix has bits and NKEVCWE would exceed the built table.
+func TestParseSortsAndDedupesEntryCWEs(t *testing.T) {
+	m, err := parse([]byte(`{"catalogVersion":"2026.10.16","vulnerabilities":[
+	  {"cveID":"CVE-1","vendorProject":"V","product":"P","vulnerabilityName":"N",
+	   "dateAdded":"2020-01-01","knownRansomwareCampaignUse":"Unknown",
+	   "cwes":["CWE-79","CWE-20","CWE-79"]}]}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := strings.Join(m.cweIDs, ","); got != "CWE-20,CWE-79" {
+		t.Errorf("cweIDs = %s, want the two keys in sorted order", got)
+	}
+	if got := toInts(m.weakCWE); got != "0,1" {
+		t.Errorf("weakCWE = %s, want 0,1 (sorted, duplicate collapsed)", got)
+	}
+	if got := toInts(m.weakKEV); got != "0,0" {
+		t.Errorf("weakKEV = %s, want 0,0", got)
+	}
+	if got := m.shape().cweEdges; got != 2 {
+		t.Errorf("cweEdges = %d, want 2 (one per distinct class)", got)
+	}
+}
+
 // TestRunEndToEnd drives the offline pipeline on the fixture: load -> parse ->
 // shape gate -> emit -> write, and pins the generated source and the summary the
 // generator prints.
