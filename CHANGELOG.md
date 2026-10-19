@@ -44,8 +44,9 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Sizes are the generated constants**: every node, predicate and vocabulary
   count lives in `ontology` (`NTTP`, `NArtifact`, `NCountermeasure`, `NKEV`,
   `NCWE`, `NProduct`, …) and the README's memory table is written as formulas
-  over them, so a source re-pin needs no prose or test edit; `go doc ./ontology`
-  prints the current values.
+  over them, so a KEV catalog roll needs no prose or test edit; a versioned
+  ATT&CK/D3FEND bump moves the literal release counts with it.
+  `GOEXPERIMENT=simd go doc -all ./ontology` prints the current values.
 - **Zero allocation** on the hot path, enforced by `AllocsPerRun` tests, plus a
   `-race` pass over concurrent queries of the immutable engine.
 - **License**: Apache-2.0 — see [LICENSE](LICENSE). The MITRE ATT&CK/D3FEND,
