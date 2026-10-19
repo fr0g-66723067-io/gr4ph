@@ -32,7 +32,7 @@ type readmeCase struct {
 // TestReadmeBlocks replays every documented command and compares its merged
 // stderr+stdout with the block, line for line. A block that is not complete
 // output, a command that no longer resolves and a table that moved all fail
-// here, which is what keeps the 17 blocks from drifting again.
+// here, which is what keeps the 17 replayed commands from drifting again.
 func TestReadmeBlocks(t *testing.T) {
 	e, err := readmeEngine()
 	if err != nil {

@@ -408,9 +408,11 @@ one more row: `ttpRevokedRow`, the 19-word live mask of the cold `ttpRevoked` co
 
 Rows are exact-length (no padding), LSB-first within each `uint64`. The sizes below are written in terms
 of the generated constants (`ontology.NTTP`, `NArtifact`, `NCountermeasure`, `NDataComponent`, `NGroup`,
-`NKEV`, `NCWE`, `NProduct`, `NTactic`, `NPlatform`, `NRel`, `NDefRel`), with `w*` the row stride of the
-partition named in the shape column, so every row holds for any pinned release; `go doc ./ontology`
-prints the current values.
+`NKEV`, `NCWE`, `NProduct`, `NTactic`, `NPlatform`, `NRel`, `NDefRel`), with `nX` the count of partition X
+and `wX` its row stride, `ceil(nX/64)`, so every row holds for any pinned release; `nRel`/`nDefRel` are the
+plane counts (`NRel+1`, `NDefRel+1`), because plane 0 of each family is the union. The grouping partition has
+no `Kind`, so `wGrp = ceil(nGrp/64)` is the one stride `WordsPerRow` does not publish, and the attribute
+masks are one word (`wTactic = wPlatform = 1`). `go doc ./ontology` prints the current values.
 
 | block | planes | words | bytes |
 |---|---|---|---|

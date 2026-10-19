@@ -7,7 +7,7 @@ import "math/bits"
 // Bit helpers over a single bitmatrix row ([]uint64, LSB-first within each
 // word: bit i lives in word i>>6, mask 1<<(i&63)).
 //
-// For the pinned tables the matrix rows are a few words wide (2-28 words: the
+// For the pinned tables the matrix rows are a handful of words wide (the
 // data-component rows are the narrowest, the weakness and product rows over the
 // entries the widest; the tactic and platform masks are one word each), so bit
 // *scanning* is scalar: there is no SIMD instruction that enumerates set-bit

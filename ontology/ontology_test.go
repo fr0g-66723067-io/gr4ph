@@ -233,7 +233,9 @@ func TestRegisterAcceptsZeroValueBuilder(t *testing.T) {
 	}
 }
 
-// TestOntologySizes pins the frozen table sizes against the pinned release.
+// TestOntologySizes pins the engine's partitions to the generated constants and
+// every emitted array to the count that describes it; the release itself is
+// pinned once, by cmd/kevgen's pinnedShape.
 func TestOntologySizes(t *testing.T) {
 	e := build(t)
 
