@@ -39,7 +39,10 @@ var ErrBuilderNotEmpty = errors.New("ontology: Register requires a fresh builder
 //
 // Register requires a fresh, unbuilt builder: pre-registered relations or nodes
 // would shift every dense id and silently misalign the tables, so an
-// already-built or non-empty builder returns ErrBuilderNotEmpty.
+// already-built or non-empty builder returns ErrBuilderNotEmpty. If the
+// committed arrays disagree with the generated constants (a hand-edited or
+// half-written table), Register returns an error naming the family instead of
+// indexing out of range.
 //
 // Callers own the builder; use NewBuilder, Register, Build for the frozen
 // engine.
@@ -49,6 +52,25 @@ func Register(b *gr4ph.Builder) error {
 		b.DataComponentCount() != 0 || b.GroupCount() != 0 ||
 		b.KEVCount() != 0 || b.CWECount() != 0 || b.ProductCount() != 0 {
 		return ErrBuilderNotEmpty
+	}
+	// A generated table whose arrays and constants disagree cannot load: report
+	// which family is short instead of indexing out of range below.
+	for _, c := range []struct {
+		family string
+		want   int
+		got    []int
+	}{
+		{"kev entry columns", NKEV, []int{len(KEVIDs), len(KEVNames), len(KEVAdded), len(KEVRansomware)}},
+		{"kev weakness pairs", NKEVCWE, []int{len(KEVWeaknessKEV), len(KEVWeaknessCWE)}},
+		{"kev product index", NKEV, []int{len(KEVProductIndex)}},
+		{"product vocabulary", NProduct, []int{len(KEVProductVendors), len(KEVProductNames)}},
+		{"weakness vocabulary", NCWE, []int{len(CWEIDs)}},
+	} {
+		for _, n := range c.got {
+			if n != c.want {
+				return fmt.Errorf("ontology: %s: array lengths %v, want %d", c.family, c.got, c.want)
+			}
+		}
 	}
 	for _, name := range RelNames {
 		if _, err := b.AddRel(name); err != nil {
