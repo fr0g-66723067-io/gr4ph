@@ -289,7 +289,7 @@ func TestRunRepins(t *testing.T) {
 	}
 
 	wantRepin := "kevgen: re-pinned " + sourceFile() + "@" + stale.catalog + " -> @" + testShape.catalog +
-		" (re-measure the count pins in ontology/ontology_test.go and cmd/gr4ph/main_test.go, and the README's numbers by hand)\n"
+		" (review this file's pinnedShape diff; tests and docs derive from the generated constants, so make all must pass with no edits)\n"
 	if got := buf.String(); !strings.HasPrefix(got, wantRepin+"kevgen: wrote "+out+"\n") {
 		t.Errorf("output does not start with the re-pin line then the summary\n--- got ---\n%s--- want ---\n%s", got, wantRepin)
 	}

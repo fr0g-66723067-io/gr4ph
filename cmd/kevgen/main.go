@@ -142,7 +142,7 @@ func run(kevSrc, out string, w io.Writer, want shape, repin bool) error {
 		if err := repinFile(measured); err != nil {
 			return err
 		}
-		fmt.Fprintf(w, "kevgen: re-pinned %s@%s -> @%s (re-measure the count pins in ontology/ontology_test.go and cmd/gr4ph/main_test.go, and the README's numbers by hand)\n",
+		fmt.Fprintf(w, "kevgen: re-pinned %s@%s -> @%s (review this file's pinnedShape diff; tests and docs derive from the generated constants, so make all must pass with no edits)\n",
 			sourceFile(), want.catalog, measured.catalog)
 		// The literals just became the measurement, so there is nothing left to
 		// compare the counts against: the suite's own pins are the gate.
