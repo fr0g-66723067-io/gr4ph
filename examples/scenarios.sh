@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# scenarios.sh — the ways to ask the gr4ph CLI a question, on defence and attack data.
+# scenarios.sh — the ways to ask the gr4ph CLI a question, on defense and attack data.
 # Every command prints the tool's complete answer; a set is one line, however long its
 # node list is, so let the terminal wrap it.
 #
@@ -15,7 +15,7 @@ fi
 
 echo
 echo '==============================================================================='
-echo 'Defence 1 — an alert arrives as a label, not as an id'
+echo 'Defense 1 — an alert arrives as a label, not as an id'
 echo '==============================================================================='
 
 echo
@@ -24,7 +24,7 @@ echo "--- ./gr4ph ttp 'lsass memory'"
 
 echo
 echo '==============================================================================='
-echo 'Defence 2 — this sub-technique, or its whole family rolled up'
+echo 'Defense 2 — this sub-technique, or its whole family rolled up'
 echo '==============================================================================='
 
 echo
@@ -37,7 +37,7 @@ echo '--- ./gr4ph ttp T1003'
 
 echo
 echo '==============================================================================='
-echo 'Defence 3 — start from the artifact, then narrow either direction'
+echo 'Defense 3 — start from the artifact, then narrow either direction'
 echo '==============================================================================='
 
 echo
@@ -54,7 +54,7 @@ echo '--- ./gr4ph artifact -defrel suspends Process'
 
 echo
 echo '==============================================================================='
-echo 'Defence 4 — start from a countermeasure'
+echo 'Defense 4 — start from a countermeasure'
 echo '==============================================================================='
 
 echo
@@ -67,7 +67,7 @@ echo '--- ./gr4ph cm -defrel hardens CredentialHardening'
 
 echo
 echo '==============================================================================='
-echo 'Defence 5 — several questions in one invocation'
+echo 'Defense 5 — several questions in one invocation'
 echo '==============================================================================='
 
 echo
@@ -76,7 +76,7 @@ echo '--- ./gr4ph artifact Process File'
 
 echo
 echo '==============================================================================='
-echo 'Defence 6 — the relation planes themselves'
+echo 'Defense 6 — the relation planes themselves'
 echo '==============================================================================='
 
 echo
@@ -114,7 +114,7 @@ echo '--- ./gr4ph ttp T0821'
 
 echo
 echo '==============================================================================='
-echo 'Defence 7 — the ATT&CK attributes and the two new partitions'
+echo 'Defense 7 — the ATT&CK attributes and the two new partitions'
 echo '==============================================================================='
 
 echo
