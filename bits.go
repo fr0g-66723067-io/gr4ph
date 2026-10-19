@@ -7,13 +7,13 @@ import "math/bits"
 // Bit helpers over a single bitmatrix row ([]uint64, LSB-first within each
 // word: bit i lives in word i>>6, mask 1<<(i&63)).
 //
-// For the pinned tables the matrix rows are 2-28 words long (the 2-word
-// data-component rows are the narrowest, the 28-word weakness and product rows
-// over the 1748 entries the widest; the tactic and platform masks are one word
-// each), so bit *scanning* is scalar: there is no SIMD instruction that
-// enumerates set-bit indices, and math/bits compiles to single tzcnt/popcnt
-// instructions. Only the bulk row arithmetic (OR/AND/COPY) is vectorised, in
-// kernel_simd.go. The engine itself admits up to 1024-word rows at MaxNodes.
+// For the pinned tables the matrix rows are a few words wide (2-28 words: the
+// data-component rows are the narrowest, the weakness and product rows over the
+// entries the widest; the tactic and platform masks are one word each), so bit
+// *scanning* is scalar: there is no SIMD instruction that enumerates set-bit
+// indices, and math/bits compiles to single tzcnt/popcnt instructions. Only the
+// bulk row arithmetic (OR/AND/COPY) is vectorised, in kernel_simd.go. The
+// engine itself admits up to 1024-word rows at MaxNodes.
 
 // setBit sets bit i of row.
 func setBit(row []uint64, i int) {

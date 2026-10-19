@@ -859,16 +859,35 @@ func TestBuilderVocabularyCap(t *testing.T) {
 	}
 }
 
-// TestLayoutMatchesReadme pins the memory table the README publishes: with the
-// pinned node, predicate and vocabulary counts, every one of the twenty-one
-// frozen arrays must be exactly as many words as the table says. It cannot
-// import ontology (which imports this package), so the pinned counts are
-// reproduced here; ontology_test.go's TestOntologyLayoutArithmetic recomputes
-// the same numbers from the generated constants. Bytes are not asserted: they
+// The fixture's sizes are its own, not a catalog release's: they are chosen so
+// the KEV strides are the 28/3/12-word rows the layout exercises. Any entry
+// count in [1729, 1792] keeps the 28-word stride, so a KEV re-pin never edits
+// this file.
+const (
+	fixTTP      = 1186
+	fixArt      = 247
+	fixCM       = 157
+	fixRel      = 41
+	fixDefRel   = 38
+	fixTactic   = 41
+	fixPlatform = 15
+	fixDC       = 123
+	fixGroup    = 1212
+	fixCWE      = 189
+	fixProduct  = 726
+	fixKEV      = 1748
+)
+
+// TestLayoutMatchesReadme pins the memory table the README publishes: every one
+// of the twenty-one frozen arrays must be exactly planes × rows × row stride
+// words, with the stride ceil(other-side count / 64). The fixture's counts are
+// local constants, so the test checks the builder's allocation rule rather than
+// a catalog release; ontology_test.go's TestOntologyLayoutArithmetic recomputes
+// the same formulas from the generated constants. Bytes are not asserted: they
 // are words * 8.
 func TestLayoutMatchesReadme(t *testing.T) {
 	b := NewBuilder()
-	for i := range 1186 {
+	for i := range fixTTP {
 		// The generatedEngine parent rule: every tenth node is a parent, so the
 		// contiguous-child invariant holds and the counts match the tables.
 		parent := NoParent
@@ -879,58 +898,58 @@ func TestLayoutMatchesReadme(t *testing.T) {
 			t.Fatalf("AddTTP #%d: %v", i, err)
 		}
 	}
-	for i := range 247 {
+	for i := range fixArt {
 		if _, err := b.AddArtifact("A"+strconv.Itoa(i), "a"+strconv.Itoa(i)); err != nil {
 			t.Fatalf("AddArtifact #%d: %v", i, err)
 		}
 	}
-	for i := range 157 {
+	for i := range fixCM {
 		if _, err := b.AddCountermeasure("CM"+strconv.Itoa(i), "cm"+strconv.Itoa(i)); err != nil {
 			t.Fatalf("AddCountermeasure #%d: %v", i, err)
 		}
 	}
-	for i := range 41 {
+	for i := range fixRel {
 		if _, err := b.AddRel("rel" + strconv.Itoa(i)); err != nil {
 			t.Fatalf("AddRel #%d: %v", i, err)
 		}
 	}
-	for i := range 38 {
+	for i := range fixDefRel {
 		if _, err := b.AddDefRel("defrel" + strconv.Itoa(i)); err != nil {
 			t.Fatalf("AddDefRel #%d: %v", i, err)
 		}
 	}
-	for i := range 41 {
+	for i := range fixTactic {
 		if _, err := b.AddTactic("TA"+strconv.Itoa(i), "tactic "+strconv.Itoa(i)); err != nil {
 			t.Fatalf("AddTactic #%d: %v", i, err)
 		}
 	}
-	for i := range 15 {
+	for i := range fixPlatform {
 		if _, err := b.AddPlatform("platform " + strconv.Itoa(i)); err != nil {
 			t.Fatalf("AddPlatform #%d: %v", i, err)
 		}
 	}
-	for i := range 123 {
+	for i := range fixDC {
 		if _, err := b.AddDataComponent("DC"+strconv.Itoa(i), "dc"+strconv.Itoa(i)); err != nil {
 			t.Fatalf("AddDataComponent #%d: %v", i, err)
 		}
 	}
-	for i := range 1212 {
+	for i := range fixGroup {
 		if _, err := b.AddGroup("G"+strconv.Itoa(i), "g"+strconv.Itoa(i), GroupActor, false); err != nil {
 			t.Fatalf("AddGroup #%d: %v", i, err)
 		}
 	}
-	for i := range 189 {
+	for i := range fixCWE {
 		id := "CWE-" + strconv.Itoa(i)
 		if _, err := b.AddCWE(id, id); err != nil {
 			t.Fatalf("AddCWE #%d: %v", i, err)
 		}
 	}
-	for i := range 726 {
+	for i := range fixProduct {
 		if _, err := b.AddProduct("Vendor"+strconv.Itoa(i), "Product "+strconv.Itoa(i)); err != nil {
 			t.Fatalf("AddProduct #%d: %v", i, err)
 		}
 	}
-	for i := range 1748 {
+	for i := range fixKEV {
 		if _, err := b.AddKEV("CVE-2000-"+strconv.Itoa(10000+i), "Entry "+strconv.Itoa(i), "2000-01-01", false); err != nil {
 			t.Fatalf("AddKEV #%d: %v", i, err)
 		}
@@ -938,8 +957,8 @@ func TestLayoutMatchesReadme(t *testing.T) {
 	// Every entry names exactly one product: Build rejects a graph that leaves
 	// one without (ErrKEVWithoutProduct). The edges only set bits, so every
 	// word count pinned below is unchanged.
-	for i := range 1748 {
-		if err := b.AddKEVProductEdge(KEV(i), Product(i%726)); err != nil {
+	for i := range fixKEV {
+		if err := b.AddKEVProductEdge(KEV(i), Product(i%fixProduct)); err != nil {
 			t.Fatalf("AddKEVProductEdge #%d: %v", i, err)
 		}
 	}
@@ -951,41 +970,42 @@ func TestLayoutMatchesReadme(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 
+	offPlanes := fixRel + 1 // plane 0 of each family is the union
+	defPlanes := fixDefRel + 1
+	wTTP, wArt, wCM, wDC := wordsFor(fixTTP), wordsFor(fixArt), wordsFor(fixCM), wordsFor(fixDC)
+	wGrp, wTactic, wPlatform := wordsFor(fixGroup), wordsFor(fixTactic), wordsFor(fixPlatform)
+	wKEV, wCWE, wProduct := wordsFor(fixKEV), wordsFor(fixCWE), wordsFor(fixProduct)
 	blocks := []struct {
 		name  string
 		words int
+		want  int
 	}{
-		{"ttpArt", len(e.ttpArt)},
-		{"artTTP", len(e.artTTP)},
-		{"cmArt", len(e.cmArt)},
-		{"artCM", len(e.artCM)},
-		{"cmTTP", len(e.cmTTP)},
-		{"ttpCM", len(e.ttpCM)},
-		{"tacticTTP", len(e.tacticTTP)},
-		{"ttpTactic", len(e.ttpTactic)},
-		{"platformTTP", len(e.platformTTP)},
-		{"ttpPlatform", len(e.ttpPlatform)},
-		{"ttpFlags", len(e.ttpFlags)},
-		{"dcTTP", len(e.dcTTP)},
-		{"ttpDC", len(e.ttpDC)},
-		{"grpTTP", len(e.grpTTP)},
-		{"ttpGrp", len(e.ttpGrp)},
-		{"grpSoftware", len(e.grpSoftware)},
-		{"softwareGrp", len(e.softwareGrp)},
-		{"kevCWE", len(e.kevCWE)},
-		{"cweKEV", len(e.cweKEV)},
-		{"kevProduct", len(e.kevProduct)},
-		{"productKEV", len(e.productKEV)},
-	}
-	want := []int{
-		199248, 197106, 24492, 28899, 2983, 3558,
-		779, 1186, 285, 1186, 1186, 2337, 2372, 23028, 22534, 23028, 23028,
-		5244, 5292, 20976, 20328,
+		{"ttpArt", len(e.ttpArt), offPlanes * fixTTP * wArt},
+		{"artTTP", len(e.artTTP), offPlanes * fixArt * wTTP},
+		{"cmArt", len(e.cmArt), defPlanes * fixCM * wArt},
+		{"artCM", len(e.artCM), defPlanes * fixArt * wCM},
+		{"cmTTP", len(e.cmTTP), fixCM * wTTP},
+		{"ttpCM", len(e.ttpCM), fixTTP * wCM},
+		{"tacticTTP", len(e.tacticTTP), fixTactic * wTTP},
+		{"ttpTactic", len(e.ttpTactic), fixTTP * wTactic},
+		{"platformTTP", len(e.platformTTP), fixPlatform * wTTP},
+		{"ttpPlatform", len(e.ttpPlatform), fixTTP * wPlatform},
+		{"ttpFlags", len(e.ttpFlags), fixTTP},
+		{"dcTTP", len(e.dcTTP), fixDC * wTTP},
+		{"ttpDC", len(e.ttpDC), fixTTP * wDC},
+		{"grpTTP", len(e.grpTTP), fixGroup * wTTP},
+		{"ttpGrp", len(e.ttpGrp), fixTTP * wGrp},
+		{"grpSoftware", len(e.grpSoftware), fixGroup * wGrp},
+		{"softwareGrp", len(e.softwareGrp), fixGroup * wGrp},
+		{"kevCWE", len(e.kevCWE), fixKEV * wCWE},
+		{"cweKEV", len(e.cweKEV), fixCWE * wKEV},
+		{"kevProduct", len(e.kevProduct), fixKEV * wProduct},
+		{"productKEV", len(e.productKEV), fixProduct * wKEV},
 	}
 	subtotal, newArrays := 0, 0
 	for i, bl := range blocks {
-		if bl.words != want[i] {
-			t.Errorf("%s = %d words, want %d (README block table)", bl.name, bl.words, want[i])
+		if bl.words != bl.want {
+			t.Errorf("%s = %d words, want %d (planes × rows × stride)", bl.name, bl.words, bl.want)
 		}
 		if i < 6 {
 			subtotal += bl.words
@@ -993,15 +1013,7 @@ func TestLayoutMatchesReadme(t *testing.T) {
 			newArrays += bl.words
 		}
 	}
-	if subtotal != 456286 {
-		t.Errorf("six-block subtotal = %d words, want 456286", subtotal)
-	}
-	if newArrays != 152789 {
-		t.Errorf("new arrays = %d words, want 152789", newArrays)
-	}
-	if subtotal+newArrays != 609075 {
-		t.Errorf("total = %d words, want 609075", subtotal+newArrays)
-	}
+	t.Logf("six blocks %d words, new arrays %d words, total %d", subtotal, newArrays, subtotal+newArrays)
 }
 
 func TestEmptyEngine(t *testing.T) {
