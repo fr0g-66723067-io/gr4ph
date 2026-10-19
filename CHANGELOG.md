@@ -5,6 +5,32 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-19
+
+### Fixed
+
+- **A KEV catalog roll re-pins itself**: `cmd/kevgen` rewrites its own
+  `pinnedShape` acknowledgement and `ontology/kev_gen.go`, so `make gen` after a
+  CISA revision leaves a two-file diff and needs no hand edits. A count change
+  under an unchanged `catalogVersion` is now an error instead of a silent
+  rewrite, and a malformed catalog date is rejected at parse time.
+- **`ontology.Register` validates the emitted array lengths** before indexing
+  them, returning `ontology: <family>: array lengths …, want …` instead of
+  panicking part-way through registration on a short table.
+- **The KEV expectations are derived, not quoted**: the ontology, CLI and
+  benchmark tests compute every KEV count, stride, class and union from the
+  generated constants and the engine; the synthetic fixture keeps its own
+  constants. The README and this changelog state formulas over `ontology.N*`
+  instead of the counts the pinned catalog happened to carry.
+- **Documentation corrections**: `GOEXPERIMENT=simd go doc -all ./ontology`
+  prints every generated count (the plain `go doc` form elides all but the
+  first constant of each group), and the re-pin notes scope "edits nothing
+  else" to a KEV catalog roll — a versioned ATT&CK/D3FEND bump moves its
+  release URLs, `pinnedShape`, the literal counts in the ontology tests and the
+  numbers the README quotes together.
+
+## [0.1.0] - 2026-10-14
+
 ### Added
 
 - **SIMD bitmatrix engine** over MITRE ATT&CK (enterprise, ICS, mobile) crossed
@@ -41,12 +67,6 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Offline at runtime**: the tables pinned by the `ontology.Source*` constants
   are generated and committed; the runtime never touches the network. Only
   `make gen` needs it.
-- **Sizes are the generated constants**: every node, predicate and vocabulary
-  count lives in `ontology` (`NTTP`, `NArtifact`, `NCountermeasure`, `NKEV`,
-  `NCWE`, `NProduct`, …) and the README's memory table is written as formulas
-  over them, so a KEV catalog roll needs no prose or test edit; a versioned
-  ATT&CK/D3FEND bump moves the literal release counts with it.
-  `GOEXPERIMENT=simd go doc -all ./ontology` prints the current values.
 - **Zero allocation** on the hot path, enforced by `AllocsPerRun` tests, plus a
   `-race` pass over concurrent queries of the immutable engine.
 - **License**: Apache-2.0 — see [LICENSE](LICENSE). The MITRE ATT&CK/D3FEND,
