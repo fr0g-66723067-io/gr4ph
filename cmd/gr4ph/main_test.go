@@ -1177,7 +1177,7 @@ func TestOntologyValues(t *testing.T) {
 		{
 			"weakness class",
 			[]string{"cwe", "CWE-78"},
-			"cwe CWE-78", "in entries", 110,
+			"cwe CWE-78", "in entries", 111,
 			`CVE-2014-6271 "GNU Bourne-Again Shell (Bash) Arbitrary Code Execution Vulnerability"`, "", true,
 		},
 		{

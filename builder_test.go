@@ -925,12 +925,12 @@ func TestLayoutMatchesReadme(t *testing.T) {
 			t.Fatalf("AddCWE #%d: %v", i, err)
 		}
 	}
-	for i := range 722 {
+	for i := range 726 {
 		if _, err := b.AddProduct("Vendor"+strconv.Itoa(i), "Product "+strconv.Itoa(i)); err != nil {
 			t.Fatalf("AddProduct #%d: %v", i, err)
 		}
 	}
-	for i := range 1739 {
+	for i := range 1748 {
 		if _, err := b.AddKEV("CVE-2000-"+strconv.Itoa(10000+i), "Entry "+strconv.Itoa(i), "2000-01-01", false); err != nil {
 			t.Fatalf("AddKEV #%d: %v", i, err)
 		}
@@ -938,8 +938,8 @@ func TestLayoutMatchesReadme(t *testing.T) {
 	// Every entry names exactly one product: Build rejects a graph that leaves
 	// one without (ErrKEVWithoutProduct). The edges only set bits, so every
 	// word count pinned below is unchanged.
-	for i := range 1739 {
-		if err := b.AddKEVProductEdge(KEV(i), Product(i%722)); err != nil {
+	for i := range 1748 {
+		if err := b.AddKEVProductEdge(KEV(i), Product(i%726)); err != nil {
 			t.Fatalf("AddKEVProductEdge #%d: %v", i, err)
 		}
 	}
@@ -980,7 +980,7 @@ func TestLayoutMatchesReadme(t *testing.T) {
 	want := []int{
 		199248, 197106, 24492, 28899, 2983, 3558,
 		779, 1186, 285, 1186, 1186, 2337, 2372, 23028, 22534, 23028, 23028,
-		5217, 5292, 20868, 20216,
+		5244, 5292, 20976, 20328,
 	}
 	subtotal, newArrays := 0, 0
 	for i, bl := range blocks {
@@ -996,11 +996,11 @@ func TestLayoutMatchesReadme(t *testing.T) {
 	if subtotal != 456286 {
 		t.Errorf("six-block subtotal = %d words, want 456286", subtotal)
 	}
-	if newArrays != 152542 {
-		t.Errorf("new arrays = %d words, want 152542", newArrays)
+	if newArrays != 152789 {
+		t.Errorf("new arrays = %d words, want 152789", newArrays)
 	}
-	if subtotal+newArrays != 608828 {
-		t.Errorf("total = %d words, want 608828", subtotal+newArrays)
+	if subtotal+newArrays != 609075 {
+		t.Errorf("total = %d words, want 609075", subtotal+newArrays)
 	}
 }
 

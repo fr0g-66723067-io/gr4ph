@@ -24,7 +24,7 @@
 // neither sorted nor stable), every ingested string is trimmed and lower-cased
 // (the feed carries surrounding whitespace on 27 names, 6 vendors and 13
 // products, and three product names differ only in case; the ten product pairs
-// that collapse are why the pinned product count is 722 rather than the 732 raw
+// that collapse are why the pinned product count is 726 rather than the 736 raw
 // spellings), and every vocabulary and per-entry reference list is deduped on
 // that normalized key — one element per node the builder registers, so the
 // emitted arrays and the engine's partitions stay index for index.
@@ -60,7 +60,7 @@ const (
 	// whether the input came from the URL or from a local file. A different
 	// release cannot slip through unnoticed — the shape assertions below are
 	// calibrated to exactly this version.
-	sourceKEV = "known_exploited_vulnerabilities.json@2026.10.08"
+	sourceKEV = "known_exploited_vulnerabilities.json@2026.10.16"
 )
 
 // sourceFile is the upstream file name sourceKEV pins a release of.
@@ -95,17 +95,17 @@ type shape struct {
 	ransomware               int
 }
 
-// products is 722, not the 732 distinct spellings the feed carries: trimming
+// products is 726, not the 736 distinct spellings the feed carries: trimming
 // merges seven pairs that differ only in surrounding whitespace
-// ("Microsoft"/"Windows " against "Microsoft"/"Windows", 174 entries, six more
+// ("Microsoft"/"Windows " against "Microsoft"/"Windows", 175 entries, six more
 // like it) and lower-casing merges three that differ only in the case of a
 // product name ("Cisco"/"IOS software" against "Cisco"/"IOS Software"). The
 // builder indexes a product by its key — trimmed, then lower-cased — so the raw
 // spellings would make the generator's indices disagree with the nodes the
 // builder assigns.
 var pinnedShape = shape{
-	catalog: "2026.10.08",
-	entries: 1739, cweEdges: 1679, entriesWithCWE: 1564, cwes: 189, products: 722, ransomware: 361,
+	catalog: "2026.10.16",
+	entries: 1748, cweEdges: 1689, entriesWithCWE: 1573, cwes: 189, products: 726, ransomware: 361,
 }
 
 func main() {
@@ -219,7 +219,7 @@ type catalog struct {
 // indexes a key the way it looks it up (trimmed and lower-cased), so the raw
 // form would make a stored label render differently from the way it resolves —
 // and, for products, would give the generator ten more indices than the builder
-// has nodes (732 raw spellings, 722 keys). cwes holds the normalized keys of the
+// has nodes (736 raw spellings, 726 keys). cwes holds the normalized keys of the
 // entry's references, deduped, which is what the builder resolves.
 type entry struct {
 	id, name, added string
@@ -373,7 +373,7 @@ func parse(data []byte) (*model, error) {
 // vocabulary must be that *key* space rather than the feed's spelling space,
 // because the builder assigns one node per key: three pairs differ only in the
 // case of the product name ("Cisco"/"IOS Software" against "Cisco"/"IOS
-// software", two more like it), and 725 spellings are 722 keys.
+// software", two more like it), and 729 spellings are 726 keys.
 func normalize(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
 }

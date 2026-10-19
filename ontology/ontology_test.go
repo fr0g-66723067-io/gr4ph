@@ -298,11 +298,11 @@ func TestOntologySizes(t *testing.T) {
 		{"engine KEV entries / NKEV", e.KEVCount(), NKEV},
 		{"engine weaknesses / NCWE", e.CWECount(), NCWE},
 		{"engine products / NProduct", e.ProductCount(), NProduct},
-		{"NKEV", NKEV, 1739},
-		{"NKEVCWE", NKEVCWE, 1679},
-		{"NKEVWithCWE", NKEVWithCWE, 1564},
+		{"NKEV", NKEV, 1748},
+		{"NKEVCWE", NKEVCWE, 1689},
+		{"NKEVWithCWE", NKEVWithCWE, 1573},
 		{"NCWE", NCWE, 189},
-		{"NProduct", NProduct, 722},
+		{"NProduct", NProduct, 726},
 		{"NKEVRansomware", NKEVRansomware, 361},
 	}
 	for _, s := range sizes {
@@ -325,7 +325,7 @@ func TestOntologySizes(t *testing.T) {
 	if got := e.WordsPerRow(gr4ph.KindDataComponent); got != 2 {
 		t.Fatalf("WordsPerRow(DataComponent) = %d, want 2", got)
 	}
-	// 1739/64 = 28, 189/64 = 3, 722/64 = 12.
+	// 1748/64 = 28, 189/64 = 3, 726/64 = 12.
 	if got := e.WordsPerRow(gr4ph.KindKEV); got != 28 {
 		t.Fatalf("WordsPerRow(KEV) = %d, want 28", got)
 	}
@@ -423,7 +423,7 @@ func TestOntologyLayoutArithmetic(t *testing.T) {
 	want := []int{
 		199248, 197106, 24492, 28899, 2983, 3558,
 		779, 1186, 285, 1186, 1186, 2337, 2372, 23028, 22534, 23028, 23028,
-		5217, 5292, 20868, 20216,
+		5244, 5292, 20976, 20328,
 	}
 	subtotal, newArrays := 0, 0
 	for i, bl := range blocks {
@@ -436,8 +436,8 @@ func TestOntologyLayoutArithmetic(t *testing.T) {
 			newArrays += bl.words
 		}
 	}
-	if subtotal != 456286 || newArrays != 152542 || subtotal+newArrays != 608828 {
-		t.Errorf("six-block subtotal %d, new arrays %d, total %d, want 456286/152542/608828",
+	if subtotal != 456286 || newArrays != 152789 || subtotal+newArrays != 609075 {
+		t.Errorf("six-block subtotal %d, new arrays %d, total %d, want 456286/152789/609075",
 			subtotal, newArrays, subtotal+newArrays)
 	}
 }
@@ -1880,7 +1880,7 @@ func TestOntologyKEV(t *testing.T) {
 		t.Fatalf("KEVProductIndex = %d, want %d", len(KEVProductIndex), NKEV)
 	}
 
-	// The weakness matrix: 1679 edges over 1564 of the 1739 entries, at most 4
+	// The weakness matrix: 1689 edges over 1573 of the 1748 entries, at most 4
 	// per entry, and no entry names a weakness twice.
 	dstCWE := make([]gr4ph.CWE, e.CWECount())
 	degSum, withCWE, maxDeg, ransom := 0, 0, 0, 0
@@ -1950,13 +1950,13 @@ func TestOntologyKEV(t *testing.T) {
 		want int
 	}{
 		{"CWE-20", 119},
-		{"CWE-78", 110},
+		{"CWE-78", 111},
 		{"CWE-787", 105},
 		{"CWE-416", 93},
 		{"CWE-119", 88},
-		{"CWE-22", 81},
+		{"CWE-22", 82},
 		{"CWE-502", 71},
-		{"CWE-94", 71},
+		{"CWE-94", 72},
 		{"CWE-79", 33},
 		{"CWE-89", 32},
 		{"CWE-400", 5},
@@ -1990,8 +1990,8 @@ func TestOntologyKEV(t *testing.T) {
 		}
 		return n, sum
 	}
-	if n, sum := union("CWE-79", "CWE-89", "CWE-78"); n != 175 || sum != 175 {
-		t.Errorf("union of the top three classes = %d of %d ids, want 175 (disjoint)", n, sum)
+	if n, sum := union("CWE-79", "CWE-89", "CWE-78"); n != 176 || sum != 176 {
+		t.Errorf("union of the top three classes = %d of %d ids, want 176 (disjoint)", n, sum)
 	}
 	if n, sum := union("CWE-20", "CWE-400", "CWE-502"); n != 191 || sum != 195 {
 		t.Errorf("union of the Log4j classes = %d of %d ids, want 191 of 195", n, sum)

@@ -9,7 +9,7 @@ import "math/bits"
 //
 // For the pinned tables the matrix rows are 2-28 words long (the 2-word
 // data-component rows are the narrowest, the 28-word weakness and product rows
-// over the 1739 entries the widest; the tactic and platform masks are one word
+// over the 1748 entries the widest; the tactic and platform masks are one word
 // each), so bit *scanning* is scalar: there is no SIMD instruction that
 // enumerates set-bit indices, and math/bits compiles to single tzcnt/popcnt
 // instructions. Only the bulk row arithmetic (OR/AND/COPY) is vectorised, in
