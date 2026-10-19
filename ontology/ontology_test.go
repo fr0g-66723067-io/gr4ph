@@ -344,12 +344,12 @@ func TestOntologySizes(t *testing.T) {
 	}
 }
 
-// TestOntologyLayoutArithmetic recomputes the README's block table from the
-// tables themselves — the generated counts and the engine's own strides — so a
-// re-pin that moves a count cannot leave the published arithmetic green.
-// builder_test.go's TestLayoutMatchesReadme reads the same numbers off a
-// registered builder, which is what pins the table's shape; this test pins the
-// arithmetic the row widths and plane counts imply.
+// TestOntologyLayoutArithmetic recomputes the versioned ATT&CK/D3FEND block
+// sizes from the generated counts and the engine's own strides, so a release
+// bump that moves a count cannot leave the published arithmetic green. The four
+// KEV rows are not asserted here: this package has no accessor for a block's
+// length, and builder_test.go's TestLayoutMatchesReadme evaluates the same
+// formula for every row on a fixture sized to the same strides.
 func TestOntologyLayoutArithmetic(t *testing.T) {
 	e := build(t)
 
@@ -357,24 +357,19 @@ func TestOntologyLayoutArithmetic(t *testing.T) {
 	wArt := e.WordsPerRow(gr4ph.KindArtifact)
 	wCM := e.WordsPerRow(gr4ph.KindCountermeasure)
 	wDC := e.WordsPerRow(gr4ph.KindDataComponent)
-	wKEV := e.WordsPerRow(gr4ph.KindKEV)
-	wCWE := e.WordsPerRow(gr4ph.KindCWE)
-	wProduct := e.WordsPerRow(gr4ph.KindProduct)
 	// The grouping partition has no Kind, so its row width is the one stride
 	// WordsPerRow does not publish.
 	wGrp := (NGroup + 63) / 64
 	offPlanes, defPlanes := NRel+1, NDefRel+1 // plane 0 of each family is the union
 	wTactic, wPlatform := 1, 1                // one uint64 mask per technique
 
-	// Every block's size is planes × rows × row stride. The ATT&CK/D3FEND
-	// blocks are literal pins: those releases are versioned, so a change there
-	// is a deliberate release event. The four KEV blocks are derived from the
-	// generated counts, because the catalog is a rolling feed and must be able
-	// to move without an edit here.
+	// Every block's size is planes × rows × row stride. All of these are literal
+	// pins: those releases are versioned, so a change here is a deliberate
+	// release event, not a catalog roll.
 	blocks := []struct {
 		name  string
 		words int
-		want  int // 0: derived from the generated KEV counts
+		want  int
 	}{
 		{"ttpArt", offPlanes * NTTP * wArt, 199248},
 		{"artTTP", offPlanes * NArtifact * wTTP, 197106},
@@ -393,14 +388,10 @@ func TestOntologyLayoutArithmetic(t *testing.T) {
 		{"ttpGrp", NTTP * wGrp, 22534},
 		{"grpSoftware", NGroup * wGrp, 23028},
 		{"softwareGrp", NGroup * wGrp, 23028},
-		{"kevCWE", NKEV * wCWE, 0},
-		{"cweKEV", NCWE * wKEV, 0},
-		{"kevProduct", NKEV * wProduct, 0},
-		{"productKEV", NProduct * wKEV, 0},
 	}
 	subtotal, newArrays := 0, 0
 	for i, bl := range blocks {
-		if bl.want != 0 && bl.words != bl.want {
+		if bl.words != bl.want {
 			t.Errorf("%s = %d words, want %d (README block table)", bl.name, bl.words, bl.want)
 		}
 		if i < 6 {
@@ -412,7 +403,7 @@ func TestOntologyLayoutArithmetic(t *testing.T) {
 	if subtotal != 456286 {
 		t.Errorf("six-block subtotal %d, want 456286 (README block table)", subtotal)
 	}
-	t.Logf("six blocks %d words, new arrays %d words, total %d", subtotal, newArrays, subtotal+newArrays)
+	t.Logf("six blocks %d words, eleven other arrays %d words, total %d", subtotal, newArrays, subtotal+newArrays)
 }
 
 // TestOntologyRelationConstants pins every generated constant to its plane, so
