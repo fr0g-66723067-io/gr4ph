@@ -112,33 +112,6 @@ func defRel(tb testing.TB, e *gr4ph.Engine, name string) gr4ph.DefRel {
 	return r
 }
 
-func kev(tb testing.TB, e *gr4ph.Engine, id string) gr4ph.KEV {
-	tb.Helper()
-	v, ok := e.KEV(id)
-	if !ok {
-		tb.Fatalf("unknown KEV entry %q", id)
-	}
-	return v
-}
-
-func cwe(tb testing.TB, e *gr4ph.Engine, id string) gr4ph.CWE {
-	tb.Helper()
-	v, ok := e.CWE(id)
-	if !ok {
-		tb.Fatalf("unknown CWE %q", id)
-	}
-	return v
-}
-
-func prod(tb testing.TB, e *gr4ph.Engine, vendor, name string) gr4ph.Product {
-	tb.Helper()
-	v, ok := e.Product(vendor, name)
-	if !ok {
-		tb.Fatalf("unknown product %q/%q", vendor, name)
-	}
-	return v
-}
-
 // eqTTPs compares ids against expected technique names, in order.
 func eqTTPs(tb testing.TB, label string, e *gr4ph.Engine, got []gr4ph.TTP, want ...string) {
 	tb.Helper()
