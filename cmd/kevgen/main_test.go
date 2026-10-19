@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // testKEV is the offline fixture: four entries in a deliberately unsorted order,
@@ -298,6 +299,21 @@ func TestRunRepins(t *testing.T) {
 	}
 }
 
+// TestCommittedTableMatchesPin ties the label of the committed table to this
+// generator's pin. Both are written by the same run, so a pin rewritten after a
+// failed emit, or a table emitted from a different catalog, cannot sit in the
+// tree unnoticed.
+func TestCommittedTableMatchesPin(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "ontology", "kev_gen.go"))
+	if err != nil {
+		t.Fatalf("read committed table: %v", err)
+	}
+	want := "const SourceKEV = " + strconv.Quote(sourceFile()+"@"+pinnedShape.catalog)
+	if !strings.Contains(string(data), want) {
+		t.Errorf("ontology/kev_gen.go does not carry %s; regenerate with make gen", want)
+	}
+}
+
 // TestRepinPath rewrites a copy of this generator's own source and pins what
 // changed: the two literals, and nothing else.
 func TestRepinPath(t *testing.T) {
@@ -389,12 +405,12 @@ func TestParseRejects(t *testing.T) {
 		want string
 	}{
 		{"no version", `{"vulnerabilities":[{"cveID":"CVE-1","vendorProject":"V","product":"P"}]}`, "catalogVersion is empty"},
-		{"no entries", `{"catalogVersion":"1","vulnerabilities":[]}`, "no vulnerabilities"},
-		{"no cveID", `{"catalogVersion":"1","vulnerabilities":[{"vendorProject":"V","product":"P"}]}`, "has no cveID"},
-		{"no product", `{"catalogVersion":"1","vulnerabilities":[{"cveID":"CVE-1","vendorProject":"V"}]}`, "empty vendor or product"},
+		{"no entries", `{"catalogVersion":"2026.10.16","vulnerabilities":[]}`, "no vulnerabilities"},
+		{"no cveID", `{"catalogVersion":"2026.10.16","vulnerabilities":[{"vendorProject":"V","product":"P"}]}`, "has no cveID"},
+		{"no product", `{"catalogVersion":"2026.10.16","vulnerabilities":[{"cveID":"CVE-1","vendorProject":"V"}]}`, "empty vendor or product"},
 		{
 			"duplicate id",
-			`{"catalogVersion":"1","vulnerabilities":[
+			`{"catalogVersion":"2026.10.16","vulnerabilities":[
 			  {"cveID":"CVE-1","vendorProject":"V","product":"P"},
 			  {"cveID":"CVE-1","vendorProject":"W","product":"Q"}]}`,
 			"duplicate cveID CVE-1",
@@ -403,11 +419,12 @@ func TestParseRejects(t *testing.T) {
 			// The builder registers one node per normalized key, so two
 			// spellings of one CVE are a duplicate here, not two entries.
 			"case-variant duplicate id",
-			`{"catalogVersion":"1","vulnerabilities":[
+			`{"catalogVersion":"2026.10.16","vulnerabilities":[
 			  {"cveID":"CVE-1","vendorProject":"V","product":"P"},
 			  {"cveID":"cve-1","vendorProject":"W","product":"Q"}]}`,
 			"duplicate cveID cve-1",
 		},
+		{"undated version", `{"catalogVersion":"2026-10-16","vulnerabilities":[{"cveID":"CVE-1","vendorProject":"V","product":"P"}]}`, "is not a YYYY.MM.DD date"},
 		{"malformed", `{`, "parse json"},
 	}
 	for _, tt := range tests {
@@ -432,13 +449,16 @@ func TestLoadErrors(t *testing.T) {
 }
 
 // TestPinnedShapeIsTheCatalogShape pins the version agreement of the two
-// literals and the internal consistency of the counts: a literal that cannot
-// describe any catalog is caught here. The counts themselves are crossed against
-// the feed by run's checkShape, and after a re-pin by the count pins in
-// ontology/ontology_test.go and cmd/gr4ph/main_test.go.
+// literals, the date shape of the catalog label and the internal consistency of
+// the counts: a literal that cannot describe any catalog is caught here. The
+// counts themselves are crossed against the feed by run's checkShape, and the
+// tests derive their expectations from the emitted constants.
 func TestPinnedShapeIsTheCatalogShape(t *testing.T) {
 	if sourceKEV != sourceFile()+"@"+pinnedShape.catalog {
 		t.Fatalf("sourceKEV %q and pinnedShape.catalog %q disagree", sourceKEV, pinnedShape.catalog)
+	}
+	if _, err := time.Parse("2006.01.02", pinnedShape.catalog); err != nil {
+		t.Fatalf("pinnedShape.catalog %q is not a YYYY.MM.DD date: %v", pinnedShape.catalog, err)
 	}
 	if pinnedShape.entriesWithCWE > pinnedShape.entries || pinnedShape.cweEdges < pinnedShape.entriesWithCWE ||
 		pinnedShape.ransomware > pinnedShape.entries || pinnedShape.products > pinnedShape.entries {

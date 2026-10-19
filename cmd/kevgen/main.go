@@ -8,26 +8,27 @@
 // the tables can be regenerated on a stock toolchain; the file it writes is
 // tagged and lives in the ontology package.
 //
-// KEV is a rolling feed: CISA revises the catalog and bumps catalogVersion.
-// When the fetched version differs from the pinned one this generator re-pins
-// its own sourceKEV and pinnedShape literals in place, emits with the freshly
-// measured counts and prints the one line that says so — the count pins in
-// ontology/ontology_test.go and cmd/gr4ph/main_test.go then fail until they are
-// re-measured, which is the forcing function. The README's own numbers are read
-// by no test: re-measure them by hand in the same pass. `-re-pin=false` turns
-// that into a hard error instead, and a count change under an unchanged version
-// is always an error: the version is the contract, the counts are the
-// measurement that keeps the emitted tables honest.
+// KEV is a rolling feed labelled by date: CISA revises the catalog and bumps
+// catalogVersion, which must be a YYYY.MM.DD date. When the fetched version
+// differs from the pinned one this generator re-pins its own sourceKEV and
+// pinnedShape literals in place, emits with the freshly measured counts and
+// prints the one line that says so. That pinnedShape diff is the whole review:
+// the tests read the generated constants and the tables themselves, and the
+// README's sizes are formulas over those constants, so nothing else is
+// re-measured by hand. `-re-pin=false` turns a version move into a hard error
+// instead, and a count change under an unchanged version is always an error: the
+// version is the contract, the counts are the measurement that keeps the emitted
+// tables honest.
 //
 // Three ingestion rules keep the emitted dense ids equal to the ones the builder
 // assigns: entries are sorted by normalized CVE id (the feed's own order is
 // neither sorted nor stable), every ingested string is trimmed and lower-cased
-// (the feed carries surrounding whitespace on 27 names, 6 vendors and 13
-// products, and three product names differ only in case; the ten product pairs
-// that collapse are why the pinned product count is 726 rather than the 736 raw
-// spellings), and every vocabulary and per-entry reference list is deduped on
-// that normalized key — one element per node the builder registers, so the
-// emitted arrays and the engine's partitions stay index for index.
+// (the feed carries surrounding whitespace on some names, vendors and products,
+// and some product names differ only in case; the product pairs that collapse
+// are why the pinned product count is smaller than the feed's raw spellings),
+// and every vocabulary and per-entry reference list is deduped on that
+// normalized key — one element per node the builder registers, so the emitted
+// arrays and the engine's partitions stay index for index.
 //
 //	go run ./cmd/kevgen -out ontology/kev_gen.go
 //	go run ./cmd/kevgen -kev /tmp/kev.json -out /tmp/kev_gen.go
@@ -95,14 +96,15 @@ type shape struct {
 	ransomware               int
 }
 
-// products is 726, not the 736 distinct spellings the feed carries: trimming
-// merges seven pairs that differ only in surrounding whitespace
-// ("Microsoft"/"Windows " against "Microsoft"/"Windows", 175 entries, six more
-// like it) and lower-casing merges three that differ only in the case of a
+// products counts keys, not the feed's distinct spellings: trimming merges the
+// pairs that differ only in surrounding whitespace ("Microsoft"/"Windows "
+// against "Microsoft"/"Windows", and several like it, some covering many
+// entries) and lower-casing merges those that differ only in the case of a
 // product name ("Cisco"/"IOS software" against "Cisco"/"IOS Software"). The
 // builder indexes a product by its key — trimmed, then lower-cased — so the raw
 // spellings would make the generator's indices disagree with the nodes the
-// builder assigns.
+// builder assigns. The counts themselves are the measurement (`make gen`
+// prints them), never a literal here.
 var pinnedShape = shape{
 	catalog: "2026.10.16",
 	entries: 1748, cweEdges: 1689, entriesWithCWE: 1573, cwes: 189, products: 726, ransomware: 361,
@@ -215,12 +217,12 @@ type catalog struct {
 }
 
 // entry is one vulnerability with its strings trimmed: the feed carries
-// surrounding whitespace on 27 names, 6 vendors and 13 products, and the engine
+// surrounding whitespace on some names, vendors and products, and the engine
 // indexes a key the way it looks it up (trimmed and lower-cased), so the raw
 // form would make a stored label render differently from the way it resolves —
-// and, for products, would give the generator ten more indices than the builder
-// has nodes (736 raw spellings, 726 keys). cwes holds the normalized keys of the
-// entry's references, deduped, which is what the builder resolves.
+// and, for products, would give the generator more indices than the builder has
+// nodes. cwes holds the normalized keys of the entry's references, deduped,
+// which is what the builder resolves.
 type entry struct {
 	id, name, added string
 	ransom          bool
@@ -263,6 +265,11 @@ func parse(data []byte) (*model, error) {
 	}
 	if c.CatalogVersion == "" {
 		return nil, errors.New("catalogVersion is empty")
+	}
+	// The catalog is labelled by date; the label becomes SourceKEV and the
+	// pinned version, so a malformed one must not reach either.
+	if _, err := time.Parse("2006.01.02", c.CatalogVersion); err != nil {
+		return nil, fmt.Errorf("catalogVersion %q is not a YYYY.MM.DD date", c.CatalogVersion)
 	}
 	if len(c.Vulnerabilities) == 0 {
 		return nil, errors.New("the catalog has no vulnerabilities")
@@ -371,9 +378,9 @@ func parse(data []byte) (*model, error) {
 
 // normalize is the engine's key rule: trim, then lower-case. The emitted product
 // vocabulary must be that *key* space rather than the feed's spelling space,
-// because the builder assigns one node per key: three pairs differ only in the
+// because the builder assigns one node per key: some pairs differ only in the
 // case of the product name ("Cisco"/"IOS Software" against "Cisco"/"IOS
-// software", two more like it), and 729 spellings are 726 keys.
+// software"), so the feed's spellings outnumber the keys.
 func normalize(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
 }
