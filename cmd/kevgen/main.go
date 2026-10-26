@@ -61,7 +61,7 @@ const (
 	// whether the input came from the URL or from a local file. A different
 	// release cannot slip through unnoticed — the shape assertions below are
 	// calibrated to exactly this version.
-	sourceKEV = "known_exploited_vulnerabilities.json@2026.10.16"
+	sourceKEV = "known_exploited_vulnerabilities.json@2026.10.23"
 )
 
 // sourceFile is the upstream file name sourceKEV pins a release of.
@@ -106,8 +106,8 @@ type shape struct {
 // builder assigns. The counts themselves are the measurement (`make gen`
 // prints them), never a literal here.
 var pinnedShape = shape{
-	catalog: "2026.10.16",
-	entries: 1748, cweEdges: 1689, entriesWithCWE: 1573, cwes: 189, products: 726, ransomware: 361,
+	catalog: "2026.10.23",
+	entries: 1756, cweEdges: 1697, entriesWithCWE: 1581, cwes: 190, products: 729, ransomware: 361,
 }
 
 func main() {
