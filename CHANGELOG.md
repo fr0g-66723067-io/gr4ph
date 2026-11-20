@@ -5,6 +5,21 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-11-19
+
+### Changed
+
+- **The pinned dataset is the CISA KEV catalog of 2026-11-18.** `make gen`
+  re-pinned `known_exploited_vulnerabilities.json@2026.11.18` in place — the
+  generator's own `sourceKEV` and `pinnedShape` plus `ontology/kev_gen.go`, a
+  two-file diff with no hand edits, adding seventeen entries and the weakness
+  and product references that came with them (three weakness classes and twelve
+  product keys the previous catalog did not name). No code, API, CLI text or
+  prose changed: the tests and the README sizes derive from the generated
+  constants, and `make all`/`make stock` pass unedited. The ATT&CK 19.2 ×
+  D3FEND 1.6.0 release pins are untouched, so a consumer on `v0.2.2` sees the
+  older catalog until it moves.
+
 ## [0.2.2] - 2026-11-07
 
 ### Changed
