@@ -8,13 +8,14 @@ import (
 	"go/token"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/fr0g-66723067-io/gr4ph/internal/sourcefetch"
 )
 
 // TestParseAttackDedup covers the STIX rules: only attack-pattern objects with
@@ -339,46 +340,41 @@ func TestSortedTriplesOrder(t *testing.T) {
 	}
 }
 
-// TestLoadHTTP covers both transports: an HTTP fetch, an HTTP error status, an
-// unreachable host and a missing local file.
-func TestLoadHTTP(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/missing" {
-			http.NotFound(w, r)
-			return
+// TestDefaultSourcesAreAllowlisted pins the allowlist to the pinned release
+// URLs: every default source passes Fetch without a dial, and an outside host is
+// refused.
+func TestDefaultSourcesAreAllowlisted(t *testing.T) {
+	ok := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: 200,
+			Status:     "200 OK",
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader("ok")),
+		}, nil
+	})
+	f := sourcefetch.Fetcher{Origins: d3fendOrigins, Transport: ok}
+	for _, src := range []string{defaultEnterprise, defaultICS, defaultMobile, defaultD3FEND} {
+		if got, err := f.Fetch(src); err != nil {
+			t.Errorf("Fetch(%s) = %q, %v; want it allowlisted", src, got, err)
 		}
-		_, _ = w.Write([]byte("hello"))
-	}))
-	defer srv.Close()
+	}
+	if _, err := f.Fetch("https://example.com/enterprise-attack-19.2.json"); err == nil ||
+		!strings.Contains(err.Error(), "not an allowlisted source") {
+		t.Fatalf("Fetch(outside host) err = %v, want the host refusal", err)
+	}
+}
 
-	got, err := load(srv.URL + "/ok")
-	if err != nil {
-		t.Fatalf("load(ok): %v", err)
-	}
-	if string(got) != "hello" {
-		t.Fatalf("load(ok) = %q, want hello", got)
-	}
-
-	if _, err := load(srv.URL + "/missing"); err == nil || !strings.Contains(err.Error(), "404") {
-		t.Fatalf("load(404) err = %v, want a 404 error", err)
-	}
-	if _, err := load("http://127.0.0.1:1/x"); err == nil {
-		t.Fatal("load(unreachable) must fail")
-	}
+// TestLoadLocalFile pins the file branch.
+func TestLoadLocalFile(t *testing.T) {
 	if _, err := load(filepath.Join(t.TempDir(), "missing")); err == nil || !strings.Contains(err.Error(), "read") {
 		t.Fatalf("load(missing file) err = %v, want a read error", err)
 	}
-
-	// A body shorter than its Content-Length fails in io.ReadAll.
-	truncated := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Length", "100")
-		_, _ = w.Write([]byte("short"))
-	}))
-	defer truncated.Close()
-	if _, err := load(truncated.URL); err == nil {
-		t.Fatal("a truncated body must fail")
-	}
 }
+
+// roundTripFunc lets a test answer Fetch without a server.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 // Shared fixtures for the offline pipeline tests.
 //

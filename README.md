@@ -26,14 +26,15 @@ techniques that touch it".
 
 The engine is built on Go 1.27's experimental `simd` package, whose files are all gated behind the
 `goexperiment.simd` build tag. Every file here (except `cmd/d3fendgen`, `cmd/kevgen`,
-`internal/atomicfile`, `internal/simdcheck` and `internal/hotmethods`) carries the same tag, so
+`internal/atomicfile`, `internal/sourcefetch`, `internal/simdcheck` and `internal/hotmethods`) carries the same tag, so
 `GOEXPERIMENT=simd` is required
 for the library. On a
 stock toolchain
 `go build .` fails with `build constraints exclude all Go files`, and `internal/simdcheck` makes
 `go build ./...` / `go test ./...` fail the same way — without it they would silently skip every gated
 package and report success while testing nothing. `go test ./cmd/d3fendgen ./cmd/kevgen` works without
-the experiment, as does the untagged `internal/atomicfile` the two generators write their output with.
+the experiment, as do the untagged `internal/atomicfile` the two generators write their output with and
+`internal/sourcefetch` the two generators fetch through.
 
 ```sh
 GOEXPERIMENT=simd go build ./...     # the Makefile exports this for every target except `make stock`, which unsets it
@@ -684,9 +685,13 @@ make gen        # go run ./cmd/d3fendgen -out ontology/attack_gen.go   (network 
 ```
 
 `cmd/d3fendgen` and `cmd/kevgen` are untagged and import nothing gated from this module (their only
-import is the untagged `internal/atomicfile`), so they regenerate on
+imports are the untagged `internal/atomicfile` and `internal/sourcefetch`), so they regenerate on
 a stock toolchain; `-enterprise`/`-ics`/`-mobile`/`-d3fend` and `-kev` accept local paths for an offline
-rerun, and the output is byte-identical either way. Both write the table through
+rerun, and the output is byte-identical either way. A URL source must be HTTPS on one of the pinned
+origins — `raw.githubusercontent.com/mitre-attack/attack-stix-data/`,
+`d3fend.mitre.org/ontologies/d3fend/`, `www.cisa.gov/sites/default/files/feeds/` — with redirects
+refused; any other host, path, `http://` URL or userinfo is rejected before a connection is made
+(`internal/sourcefetch`). Both write the table through
 `internal/atomicfile`: a temporary file in the destination directory, renamed over the target, so an
 interrupted `make gen` (or a full disk) cannot leave a truncated table, and a `format.Source` failure
 writes nothing at all. `cmd/kevgen` re-pins its own source the same way. The generated shape is asserted, not
@@ -864,7 +869,7 @@ checked by `make all`/`make stock` and by CI:
   experimental `simd` build tag, which `go.mod` cannot express; a consumer must export the experiment
   in the environment that runs `go build`/`go test`, or the build fails with the explicit
   `build constraints exclude all Go files` error. Consumers that cannot export it are limited to
-  `cmd/d3fendgen`, `cmd/kevgen` and `internal/atomicfile`.
+  `cmd/d3fendgen`, `cmd/kevgen`, `internal/atomicfile` and `internal/sourcefetch`.
 * **No third-party dependencies** — standard library only, no `go.sum`; the tables pinned by the
   `ontology.Source*` constants are committed, and the runtime never touches the network.
 

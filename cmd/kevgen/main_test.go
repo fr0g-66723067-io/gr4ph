@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"go/parser"
 	"go/token"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -11,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fr0g-66723067-io/gr4ph/internal/sourcefetch"
 )
 
 // testKEV is the offline fixture: four entries in a deliberately unsorted order,
@@ -466,13 +470,47 @@ func TestParseRejects(t *testing.T) {
 	}
 }
 
-// TestLoadErrors pins the file branch: a missing path is an error, not an empty
-// catalog.
+// TestLoadErrors pins the file branch and the URL refusals: a missing path is an
+// error, not an empty catalog, and only the pinned origin may be dialed.
 func TestLoadErrors(t *testing.T) {
 	if _, err := load(filepath.Join(t.TempDir(), "missing.json")); err == nil || !strings.Contains(err.Error(), "read") {
 		t.Errorf("load(missing) = %v, want a read error", err)
 	}
+	if _, err := load("http://www.cisa.gov/sites/default/files/feeds/x.json"); err == nil ||
+		!strings.Contains(err.Error(), `scheme "http" is not https`) {
+		t.Errorf("load(http) = %v, want the scheme refusal", err)
+	}
+	if _, err := load("https://example.com/x.json"); err == nil ||
+		!strings.Contains(err.Error(), "not an allowlisted source") {
+		t.Errorf("load(outside host) = %v, want the host refusal", err)
+	}
 }
+
+// TestDefaultKEVSourceIsAllowlisted pins the allowlist to the pinned feed URL:
+// the default source passes Fetch without a dial, and an outside host is refused.
+func TestDefaultKEVSourceIsAllowlisted(t *testing.T) {
+	ok := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: 200,
+			Status:     "200 OK",
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader("ok")),
+		}, nil
+	})
+	f := sourcefetch.Fetcher{Origins: kevOrigins, Transport: ok}
+	if got, err := f.Fetch(defaultKEV); err != nil {
+		t.Fatalf("Fetch(defaultKEV) = %q, %v; want it allowlisted", got, err)
+	}
+	if _, err := f.Fetch("https://evil.example/known_exploited_vulnerabilities.json"); err == nil ||
+		!strings.Contains(err.Error(), "not an allowlisted source") {
+		t.Fatalf("Fetch(outside host) err = %v, want the host refusal", err)
+	}
+}
+
+// roundTripFunc lets a test answer Fetch without a server.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 // TestPinnedShapeIsTheCatalogShape pins the version agreement of the two
 // literals, the date shape of the catalog label and the internal consistency of

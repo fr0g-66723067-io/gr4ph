@@ -2,12 +2,12 @@
 // tables for MITRE ATT&CK (enterprise, ICS, mobile) crossed with D3FEND.
 //
 // It is deliberately untagged (no goexperiment.simd) and imports nothing from
-// this module except the untagged, standard-library-only internal/atomicfile, so
-// the tables can be regenerated on a stock toolchain; the file it writes is
-// tagged and does import the engine package.
+// this module except the untagged, standard-library-only internal/atomicfile and
+// internal/sourcefetch, so the tables can be regenerated on a stock toolchain;
+// the file it writes is tagged and does import the engine package.
 //
-// Sources are pinned by version and fetched over HTTP unless a local path is
-// given. Nothing is cached: the raw ~80 MB of STIX/CSV never enters git, only
+// Sources are pinned by version and fetched over HTTPS from an allowlisted
+// origin unless a local path is given. Nothing is cached: the raw ~80 MB of STIX/CSV never enters git, only
 // the generated Go tables do.
 //
 //	go run ./cmd/d3fendgen -out ontology/attack_gen.go
@@ -22,13 +22,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/fr0g-66723067-io/gr4ph/internal/atomicfile"
+	"github.com/fr0g-66723067-io/gr4ph/internal/sourcefetch"
 )
 
 const (
@@ -95,7 +94,8 @@ var pinnedShape = shape{
 }
 
 // domain mirrors gr4ph.Domain, kept local so this package imports nothing gated
-// (its only module import is the untagged internal/atomicfile).
+// (its only module imports are the untagged internal/atomicfile and
+// internal/sourcefetch).
 type domain uint8
 
 const (
@@ -203,23 +203,19 @@ func run(entSrc, icsSrc, mobSrc, d3Src, out string, w io.Writer, want shape) err
 	return nil
 }
 
-// load reads src from disk, or over HTTP when it looks like a URL.
+// d3fendOrigins are the only origins a source URL may name: the pinned ATT&CK
+// STIX releases and the D3FEND ontology export. A local path is read directly,
+// so an offline rerun needs no network at all.
+var d3fendOrigins = []sourcefetch.Origin{
+	{Host: "raw.githubusercontent.com", Path: "/mitre-attack/attack-stix-data/"},
+	{Host: "d3fend.mitre.org", Path: "/ontologies/d3fend/"},
+}
+
+// load reads src from disk, or over HTTPS from an allowlisted origin when it
+// looks like a URL.
 func load(src string) ([]byte, error) {
 	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
-		client := &http.Client{Timeout: 30 * time.Second}
-		resp, err := client.Get(src)
-		if err != nil {
-			return nil, fmt.Errorf("fetch %s: %w", src, err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("fetch %s: %s", src, resp.Status)
-		}
-		data, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("fetch %s: %w", src, err)
-		}
-		return data, nil
+		return sourcefetch.Fetcher{Origins: d3fendOrigins}.Fetch(src)
 	}
 	data, err := os.ReadFile(src)
 	if err != nil {

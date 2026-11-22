@@ -4,9 +4,9 @@
 // vendor/product pairs name.
 //
 // It is deliberately untagged (no goexperiment.simd) and imports nothing from
-// this module except the untagged, standard-library-only internal/atomicfile, so
-// the tables can be regenerated on a stock toolchain; the file it writes is
-// tagged and lives in the ontology package.
+// this module except the untagged, standard-library-only internal/atomicfile and
+// internal/sourcefetch, so the tables can be regenerated on a stock toolchain;
+// the file it writes is tagged and lives in the ontology package.
 //
 // KEV is a rolling feed labelled by date: CISA revises the catalog and bumps
 // catalogVersion, which must be a YYYY.MM.DD date. When the fetched version
@@ -42,7 +42,6 @@ import (
 	"fmt"
 	"go/format"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -51,6 +50,7 @@ import (
 	"time"
 
 	"github.com/fr0g-66723067-io/gr4ph/internal/atomicfile"
+	"github.com/fr0g-66723067-io/gr4ph/internal/sourcefetch"
 )
 
 const (
@@ -80,8 +80,9 @@ const (
 )
 
 // maxNodes mirrors gr4ph.MaxNodes (the uint16 id space) without importing the
-// gated library: apart from the untagged internal/atomicfile, this package
-// imports nothing from this module, like cmd/d3fendgen.
+// gated library: apart from the untagged internal/atomicfile and
+// internal/sourcefetch, this package imports nothing from this module, like
+// cmd/d3fendgen.
 const maxNodes = 65536
 
 // shape is the measured shape of the pinned catalog. kevgen re-pins these
@@ -177,23 +178,18 @@ func run(kevSrc, out string, w io.Writer, want shape, repin bool) error {
 	return nil
 }
 
-// load reads src from disk, or over HTTP when it looks like a URL.
+// kevOrigins are the only origins a -kev URL may name: CISA publishes the KEV
+// catalog under its feeds directory. A local path is read directly, so an
+// offline rerun needs no network at all.
+var kevOrigins = []sourcefetch.Origin{
+	{Host: "www.cisa.gov", Path: "/sites/default/files/feeds/"},
+}
+
+// load reads src from disk, or over HTTPS from an allowlisted origin when it
+// looks like a URL.
 func load(src string) ([]byte, error) {
 	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
-		client := &http.Client{Timeout: 30 * time.Second}
-		resp, err := client.Get(src)
-		if err != nil {
-			return nil, fmt.Errorf("fetch %s: %w", src, err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("fetch %s: %s", src, resp.Status)
-		}
-		data, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("fetch %s: %w", src, err)
-		}
-		return data, nil
+		return sourcefetch.Fetcher{Origins: kevOrigins}.Fetch(src)
 	}
 	data, err := os.ReadFile(src)
 	if err != nil {

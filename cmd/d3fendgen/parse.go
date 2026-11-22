@@ -210,7 +210,8 @@ type groupNode struct {
 }
 
 // groupKind mirrors gr4ph.GroupKind, kept local so this package imports nothing
-// gated (its only module import is the untagged internal/atomicfile).
+// gated (its only module imports are the untagged internal/atomicfile and
+// internal/sourcefetch).
 type groupKind uint8
 
 const (
