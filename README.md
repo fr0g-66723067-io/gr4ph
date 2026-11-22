@@ -59,6 +59,22 @@ If a stock-toolchain build is ever required, add `kernel_portable.go` with
 drop the tag from the other files. No API change. Adding that portable kernel also means deleting
 `internal/simdcheck`, whose only purpose is to make a stock `./...` build fail.
 
+## Install
+
+Every tag publishes five static `gr4ph` binaries and `SHA256SUMS`; replace
+`vX.Y.Z` with the newest tag. [docs/release.md](docs/release.md) documents the
+release process.
+
+```sh
+# released lookup CLI (linux/amd64 shown; all five targets are on the release)
+curl -LO https://github.com/fr0g-66723067-io/gr4ph/releases/download/vX.Y.Z/gr4ph_vX.Y.Z_linux_amd64
+curl -LO https://github.com/fr0g-66723067-io/gr4ph/releases/download/vX.Y.Z/SHA256SUMS
+sha256sum -c SHA256SUMS --ignore-missing
+
+# or use the module (Go 1.27 with GOEXPERIMENT=simd exported)
+GOEXPERIMENT=simd go get github.com/fr0g-66723067-io/gr4ph@vX.Y.Z
+```
+
 ## The two flows
 
 ```mermaid
@@ -834,9 +850,11 @@ than row by row.
 ## Versioning and stability
 
 The module is versioned with semantic import versioning: `v0.x` releases declare no compatibility
-promise, and a tag is the release unit — `go get github.com/fr0g-66723067-io/gr4ph@v0.1.0` pins the
+promise, and a tag is the release unit — `go get github.com/fr0g-66723067-io/gr4ph@vX.Y.Z` pins the
 committed tables, the API and the pinned upstream sources together, and the undeclared `@latest`
-pseudo-version of `main` is not a release. Every tag's notes live in [CHANGELOG.md](CHANGELOG.md).
+pseudo-version of `main` is not a release. Every tag's notes live in [CHANGELOG.md](CHANGELOG.md);
+[docs/release.md](docs/release.md) is the release process, and every tag publishes five static
+binaries plus `SHA256SUMS`.
 
 Two release requirements come from the toolchain rather than from this module's API, and both are
 checked by `make all`/`make stock` and by CI:
