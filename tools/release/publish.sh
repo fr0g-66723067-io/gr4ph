@@ -10,6 +10,7 @@ v*) : ;;
 *) echo "publish: tag must start with v: $tag" >&2; exit 1 ;;
 esac
 root=$(cd "$(dirname "$0")/../.." && pwd)
+cd "$root"
 slug=${GITHUB_REPOSITORY:-}
 repo=${slug#*/}
 [ -n "$slug" ] || repo=$(basename "$root")
