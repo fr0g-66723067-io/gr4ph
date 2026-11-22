@@ -22,6 +22,10 @@ import (
 	"github.com/fr0g-66723067-io/gr4ph/ontology"
 )
 
+// version is stamped by the build with -ldflags "-X main.version=vX.Y.Z"; a
+// plain `go build` reports dev, which is what a tree without a tag should say.
+var version = "dev"
+
 const usage = `usage: gr4ph <command> [flags] <query> [<query>...]
 
   ttp <query>        resolve a technique id, label or alias; list its artifacts, the
@@ -48,6 +52,7 @@ const usage = `usage: gr4ph <command> [flags] <query> [<query>...]
                      they would newly cover
   contain <ttp>...   resolve techniques as the observed set; list the countermeasures that touch any
                      of them
+  version            print the version
   help               print this message
 
 flags (before or after the queries; -json may also precede the command, and every
@@ -198,6 +203,9 @@ func run(e *gr4ph.Engine, args []string, stdout, stderr io.Writer) int {
 	switch cmd {
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
+		return 0
+	case "version", "-version", "--version":
+		fmt.Fprintf(stdout, "gr4ph %s\n", version)
 		return 0
 	case "ttp":
 		return runTTP(e, rest, stdout, stderr)

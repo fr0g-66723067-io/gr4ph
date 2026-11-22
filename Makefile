@@ -11,6 +11,8 @@ export GOEXPERIMENT=simd
 
 GO ?= go
 BIN ?= gr4ph
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS ?= -X main.version=$(VERSION)
 
 .PHONY: all build vet test gen bench fmt check clean stock
 
@@ -20,7 +22,7 @@ all: check vet test
 # library's build tag, so it needs the experiment exported above, exactly like
 # the library; the stock-toolchain failure is pinned by `make stock`.
 build:
-	$(GO) build -o $(BIN) ./cmd/gr4ph
+	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/gr4ph
 
 vet:
 	$(GO) vet ./...

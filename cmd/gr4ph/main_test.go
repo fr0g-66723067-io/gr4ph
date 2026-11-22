@@ -1890,3 +1890,16 @@ func splitNodes(list string) []string {
 	}
 	return append(nodes, list[start:])
 }
+
+// TestVersionNamesTheTool pins the command the release verifier calls: the
+// binary must identify itself as gr4ph with the ldflags stamp (or "dev" on a
+// plain build), not print usage or touch the engine.
+func TestVersionNamesTheTool(t *testing.T) {
+	var out, stderr bytes.Buffer
+	if code := run(nil, []string{"version"}, &out, &stderr); code != 0 {
+		t.Fatalf("version exited %d: %s", code, stderr.String())
+	}
+	if got, want := out.String(), "gr4ph "+version+"\n"; got != want {
+		t.Fatalf("version = %q, want %q", got, want)
+	}
+}
