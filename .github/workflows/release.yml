@@ -1,0 +1,51 @@
+name: release
+
+# A tag is the only thing that produces a release. This file is byte-identical
+# in every public fr0g-66723067-io repo; `make release-gate` and
+# tools/release/{verify,publish}.sh are the per-repo contract.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  # A tag mirrored to git.localhost:3000 has no GitHub token and must not fail:
+  # the guard makes both jobs skip there and run normally on github.com.
+  gate:
+    if: github.server_url == 'https://github.com'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: release gate
+        run: make release-gate
+      - name: the tag has a CHANGELOG section
+        run: sh tools/release/notes.sh "$GITHUB_REF_NAME" > /dev/null
+
+  publish:
+    needs: gate
+    if: github.server_url == 'https://github.com'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: build and verify the artifacts
+        run: |
+          make release-binaries VERSION="$GITHUB_REF_NAME"
+          sh tools/release/verify.sh dist "$GITHUB_REF_NAME"
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: sh tools/release/publish.sh "$GITHUB_REF_NAME"

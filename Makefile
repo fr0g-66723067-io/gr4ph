@@ -14,7 +14,12 @@ BIN ?= gr4ph
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS ?= -X main.version=$(VERSION)
 
-.PHONY: all build vet test gen bench fmt check clean stock
+# Every public repo publishes the same five targets and one SHA256SUMS.
+RELEASE_TARGETS ?= linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
+DIST ?= dist
+RELEASE_LDFLAGS ?= -s -w $(LDFLAGS)
+
+.PHONY: all build vet test gen bench fmt check clean stock release-gate release-binaries verify-release release
 
 all: check vet test
 
@@ -23,6 +28,29 @@ all: check vet test
 # the library; the stock-toolchain failure is pinned by `make stock`.
 build:
 	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/gr4ph
+
+# The gate a tag must pass. The release workflow runs this before it builds
+# anything, so a failing gate publishes nothing.
+release-gate: all stock
+
+release-binaries:
+	rm -rf $(DIST)
+	mkdir -p $(DIST)
+	@set -e; for t in $(RELEASE_TARGETS); do \
+	  goos=$${t%/*}; goarch=$${t#*/}; \
+	  out=$(DIST)/$(BIN)_$(VERSION)_$${goos}_$${goarch}; \
+	  [ "$$goos" = windows ] && out=$$out.exe; \
+	  echo "  build $$out"; \
+	  GOOS=$$goos GOARCH=$$goarch CGO_ENABLED=0 $(GO) build -trimpath \
+	    -ldflags "$(RELEASE_LDFLAGS)" -o $$out ./cmd/$(BIN); \
+	done
+	cd $(DIST) && sha256sum $(BIN)_* | sort -k2 > SHA256SUMS
+	@echo "  $(DIST)/SHA256SUMS"
+
+verify-release:
+	sh tools/release/verify.sh $(DIST) $(VERSION)
+
+release: release-binaries verify-release
 
 vet:
 	$(GO) vet ./...
@@ -71,3 +99,4 @@ check:
 clean:
 	$(GO) clean -testcache
 	rm -f $(BIN) d3fendgen kevgen
+	rm -rf $(DIST)

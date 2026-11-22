@@ -16,6 +16,9 @@
 /gr4ph
 /cmd/gr4ph/gr4ph
 
+# `make release-binaries` writes the release artifacts here.
+/dist/
+
 # Editor and OS droppings.
 .DS_Store
 *~
