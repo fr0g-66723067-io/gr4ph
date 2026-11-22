@@ -50,6 +50,7 @@ else
 	cat <<EOF
 \`\`\`sh
 sha256sum -c SHA256SUMS --ignore-missing
+chmod +x ./${repo}_${tag}_linux_amd64
 ./${repo}_${tag}_linux_amd64 version
 \`\`\`
 
