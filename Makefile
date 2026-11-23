@@ -2,10 +2,10 @@
 #
 # Every library file is gated behind `goexperiment.simd` (only the two
 # generators `cmd/d3fendgen` and `cmd/kevgen`, `internal/simdcheck`,
-# `internal/hotmethods` and `internal/atomicfile` are outside the tag), so
-# GOEXPERIMENT=simd is required for build, vet and test. The generators and
-# their atomicfile helper are untagged so that they can regenerate the ontology
-# tables on a stock toolchain.
+# `internal/hotmethods`, `internal/atomicfile` and `internal/sourcefetch` are
+# outside the tag), so GOEXPERIMENT=simd is required for build, vet and test.
+# The generators and their atomicfile and sourcefetch helpers are untagged so
+# that they can regenerate the ontology tables on a stock toolchain.
 
 export GOEXPERIMENT=simd
 
@@ -85,6 +85,7 @@ stock:
 	env -u GOEXPERIMENT $(GO) build -o /dev/null ./cmd/d3fendgen
 	env -u GOEXPERIMENT $(GO) test ./cmd/kevgen
 	env -u GOEXPERIMENT $(GO) build -o /dev/null ./cmd/kevgen
+	env -u GOEXPERIMENT $(GO) test ./internal/sourcefetch
 	! env -u GOEXPERIMENT $(GO) build ./...
 
 fmt:
